@@ -229,6 +229,7 @@ test("public host agent-bound MCP isolation experiment", { timeout: 180_000 }, a
     });
     await session.disconnect();
     assert.equal(provider.counts().failures, 0, "PROVIDER_FAILED");
+    assert.ok(cases.every((item) => item.passed), "BOUND_ISOLATION_REGRESSION");
     completed = true;
   } catch (error) {
     if (error instanceof Error && /^[A-Z_]+$/.test(error.message)) failureCode = error.message;
