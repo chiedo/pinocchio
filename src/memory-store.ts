@@ -54,6 +54,7 @@ function view(row: unknown) {
 const SELECT_CURRENT = `
 SELECT r.*, v.content, v.kind, v.evidence_json, v.source_at, v.confirmed_at, v.recorded_at
 FROM records r JOIN revisions v ON v.record_id=r.id AND v.revision=r.revision`;
+export type MemorySearchResult = { status: "ok" | "no_match"; items: ReturnType<typeof view>[] };
 
 export class MemoryStore {
   readonly #reference: Readonly<BindingReference>;
@@ -269,6 +270,10 @@ export class MemoryStore {
     }));
   }
   search(query: string, pagination: { limit?: number; offset?: number } = {}) {
+    return this.searchSnapshot(query, pagination, (result) => result);
+  }
+  searchSnapshot<T>(query: string, pagination: { limit?: number; offset?: number },
+    consume: (result: MemorySearchResult) => T | Promise<T>) {
     validate(z.string().min(1).max(500).refine((value) => Boolean(value.trim())), query);
     const terms = keywords(query);
     if (terms.length > 64) throw new MemoryError("INVALID_INPUT");
@@ -284,7 +289,7 @@ export class MemoryStore {
         AND (instr(k.literal_text,?)>0 ${keywordMatch})
         ORDER BY (instr(k.literal_text,?)>0) DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)
         .all(this.#scope, literal, ...(terms.length ? [...terms, terms.length] : []), literal, limit, offset);
-      return { status: rows.length ? "ok" as const : "no_match" as const, items: rows.map(view) };
+      return consume({ status: rows.length ? "ok" : "no_match", items: rows.map(view) });
     });
   }
   inspect(recordId: string, pagination: { limit?: number; offset?: number } = {}) {
