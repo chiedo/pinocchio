@@ -125,8 +125,33 @@ drives host lifecycle and delegation scenarios.
 
 ## Reopening the gate
 
+**Upstream dependency:** [github/copilot-sdk#2611](https://github.com/github/copilot-sdk/issues/2611).
+The request asks for either a supported existing correlation contract or
+host-provided call-scoped metadata. Adding optional fields only to the SDK types
+would not solve this: the executing host must populate and validate them.
+
+Review of the pinned public SDK's dispatch implementation confirms that it passes
+session/tool-call IDs, arguments, tracing and cancellation to the handler, not a
+definition binding. The event alternative is also incomplete:
+
+| Public surface | Missing authority |
+|---|---|
+| `tool.execution_start` | Optional helper instance ID, but no resolved definition/origin snapshot |
+| `subagent.started` / `subagent.selected` | Names/types, not a complete call-time definition binding |
+| `tasks.list` | Execution/type information, not the definition snapshot used at invocation |
+| `agent.list` / `agent.getCurrent` | Current definitions/selection, not an in-flight call's historical binding |
+
+These observations establish a contract gap, not a proof that every possible
+host integration is impossible. Maintainer confirmation of a supported event
+join could also unblock implementation; a guessed ordering cannot.
+
 A future public-host contract must bind each call to its executing definition
 ID and origin, repository/global scope and a verifiable live generation. Re-run
 foreground plus two helpers, duplicate names/origins, concurrent switching,
 reload/resume and the one-second failure cases on a pinned public release before
 adding a success path or unblocking step 2.
+
+Landing order: resolve the upstream contract; implement the Pinocchio adapter
+against it; demonstrate successful namespace bindings in the public-host suite;
+merge that change and close #2; then implement storage under #3. Merging the
+fail-closed scaffold alone does not satisfy the gate.
