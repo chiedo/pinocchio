@@ -92,6 +92,12 @@ that all covered calls fail closed within the deadline. It does not establish a
 trusted definition/origin binding. The JSON artifact remains the machine-readable
 source for each CI run.
 
+During concurrent foreground switching, the public host can reject a call because
+the selected tool catalog is temporarily unavailable. The shared-extension probe
+records that exact failure as `HOST_TOOL_UNAVAILABLE_DURING_SWITCH`, rather than
+parsing it as an adapter response. Other failures and deadline violations still
+fail the suite. No such rejection counts as successful identity resolution.
+
 ## Coverage and limits
 
 | Layer | Evidence |

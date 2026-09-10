@@ -119,6 +119,7 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     scenario: string,
     args: Record<string, string> = {},
     expectedCode = "HOST_IDENTITY_UNSUPPORTED",
+    allowSwitchRejection = false,
   ) {
     stage = scenario;
     const start = performance.now();
@@ -129,6 +130,15 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     assert.notEqual(typeof result, "string", "Expected a structured failure result");
     if (typeof result === "string") throw new Error("UNSTRUCTURED_TOOL_RESULT");
     assert.equal(result.resultType, "failure");
+    if (
+      allowSwitchRejection &&
+      result.textResultForLlm.startsWith(`Tool '${IDENTITY_TOOL_NAME}' does not exist.`)
+    ) {
+      const durationMs = Math.ceil(performance.now() - start);
+      observations.push({ scenario, code: "HOST_TOOL_UNAVAILABLE_DURING_SWITCH", durationMs });
+      assert.ok(durationMs < IDENTITY_DEADLINE_MS, `${scenario}: rejection deadline exceeded`);
+      return;
+    }
     const data: unknown = JSON.parse(result.textResultForLlm);
     assert.ok(isRecord(data));
     assert.equal(data.code, expectedCode);
@@ -217,8 +227,8 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
 
     stage = "concurrent-switch";
     await Promise.all([
-      dispatch(session, "concurrent-call-alpha"),
-      dispatch(session, "concurrent-call-beta"),
+      dispatch(session, "concurrent-call-alpha", {}, "HOST_IDENTITY_UNSUPPORTED", true),
+      dispatch(session, "concurrent-call-beta", {}, "HOST_IDENTITY_UNSUPPORTED", true),
       selectAgent(session, alpha.id),
     ]);
     await dispatch(session, "after-foreground-switch");
