@@ -22,7 +22,11 @@ const wireName = (name: Name, scope: "repository" | "global" = "repository") =>
   `memory_${name}_${scope}-identity_status`;
 
 function diagnostic(text: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(text);
+  // The public host can prefix an MCP isError text block with its error label.
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) throw new Error("MISSING_DIAGNOSTIC_RESPONSE");
+  const value: unknown = JSON.parse(text.slice(start, end + 1));
   if (!isRecord(value) || (value.status !== "bound" && value.status !== "unavailable")) {
     throw new Error("INVALID_DIAGNOSTIC_RESPONSE");
   }
@@ -90,7 +94,7 @@ test("production binding gate on the pinned public CLI", { timeout: 180_000 }, a
       starts.delete(event.data.toolCallId);
       const content = event.data.result?.content;
       let data: Record<string, unknown> = { code: "HOST_REJECTED" };
-      if (content?.startsWith("{")) {
+      if (content?.includes("{")) {
         try { data = diagnostic(content); }
         catch { data = { code: "INVALID_DIAGNOSTIC_RESPONSE" }; }
       }
