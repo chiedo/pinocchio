@@ -1,8 +1,11 @@
 # Identity compatibility gate
 
-**Gate: NO-GO.** No caller-to-definition binding has been proven. Do not close
-issue #2, start transactional memory (step 2), or enroll profiles on the strength
-of a green synthetic test run.
+**Production identity gate: NO-GO. Agent-bound MCP experiment: PASS.**
+The shared extension still cannot infer a trusted caller definition.
+Configuration-bound MCP servers passed the isolation experiment below, providing
+an alternative that does not require a new caller-metadata API. Production
+definition enrollment and lifecycle validation remain required before closing
+issue #2 or starting transactional memory.
 
 ## Public baseline
 
@@ -89,6 +92,12 @@ that all covered calls fail closed within the deadline. It does not establish a
 trusted definition/origin binding. The JSON artifact remains the machine-readable
 source for each CI run.
 
+During concurrent foreground switching, the public host can reject a call because
+the selected tool catalog is temporarily unavailable. The shared-extension probe
+records that exact failure as `HOST_TOOL_UNAVAILABLE_DURING_SWITCH`, rather than
+parsing it as an adapter response. Other failures and deadline violations still
+fail the suite. No such rejection counts as successful identity resolution.
+
 ## Coverage and limits
 
 | Layer | Evidence |
@@ -97,6 +106,10 @@ source for each CI run.
 | Public host | Extension loading; native dispatch; selected-agent changes; concurrent calls; real foreground/delegated model-tool dispatch with scripted responses; reload/cold resume; repository changes |
 | Deadline | Synchronous adapter rejection; individual observed host dispatches must finish in less than 1,000 ms |
 | Not proven | Any successful namespace binding, persistent identity, memory isolation, storage or real-model behavior |
+
+This table describes the original shared-extension adapter. The separate
+configuration-bound experiment below proves a narrower, positive tool-routing
+property; it does not enable that adapter's success path.
 
 Foreground and helper IDs observed by the test harness are **not** passed into
 the adapter as authorization. No model output, query argument, environment
@@ -123,10 +136,62 @@ The extension registers no prompt hooks, submits no prompts, starts no agents,
 switches no models and forces no continuation. Only the synthetic test harness
 drives host lifecycle and delegation scenarios.
 
+## Configuration-bound MCP workaround
+
+**Measured result: 33/33 isolation cases PASS** on September 10, 2026, using
+public CLI 1.0.83 / SDK 1.0.13 and Node 22.18.0 on Linux x64.
+[CI evidence](https://github.com/chiedo/pinocchio/actions/runs/34531710033).
+Reproduce with the same `npm ci && npm test` command; the full suite now has
+11 tests and publishes `test-results/bound-mcp.json` alongside the original report.
+
+Instead of asking a shared tool which agent called it, give each configured
+agent its own stdio MCP server. The server receives immutable synthetic
+definition/repository IDs at launch. Its no-argument tool cannot retarget itself.
+Per-agent `mcpServers` and explicit tool allowlists are both part of this tested
+configuration. Unrestricted tool inheritance is not certified.
+
+| Public-host check | Result |
+|---|---|
+| Foreground and two definitions with identical display names | Each reaches its own binding |
+| Direct attempts to invoke another agent's tool | No request reaches the other server |
+| Model deliberately emits an unoffered cross-agent tool call | No request reaches the other server |
+| Delegated helpers, including concurrent helpers | Each reaches its own binding; cross-agent attempts denied |
+| Model-supplied owner argument | Rejected without an accepted server invocation |
+| Foreground switches while a server call is in flight | Original binding returned; no dispatch to newly selected agent's server |
+| Definition reload, warm resume and cold process restart | Explicit bindings remain correctly routed; cross-agent calls denied |
+| Same definition launched for a second repository | Second binding used; first repository's server not reused |
+
+These are execution checks, not just checks of the tools advertised to a model.
+Each fixture server records accepted calls to a private synthetic journal.
+Assertions compare before/after counts and the in-flight result. Only aggregate
+counts are published; the journal is deleted with the temporary workspace.
+An isolation regression fails CI. The scripted provider intentionally emits
+unoffered tools during negative cases; ordinary provider behavior is unchanged.
+
+The fixture in `test/support/bound-mcp-server.ts` is a minimal protocol peer,
+**not** a production memory server or enrollment tool. Its IDs are invented
+launch constants, not an implementation of canonical definition discovery.
+Tool isolation remains distinct from OS isolation: agents with shell/file access
+could access same-user files, as already described in the privacy policy.
+
+### What remains before closing #2
+
+Implement a trusted local binding registry keyed by canonical definition origin
+and stable ID, not display name. Validate configuration roots, duplicate origins,
+repository/global scope, invalid and missing bindings, and stale-result
+invalidation. Wire it to the tested MCP configuration without accepting owner
+arguments from the model. Prove those production bindings across the same host
+cases before allowing memory I/O.
+
+This path requires explicit configuration/enrollment and may use one process
+per agent binding rather than one shared extension process. It does not require
+changing models, adding a hidden agent, or waiting for a new public SDK API.
+
 ## Reopening the gate
 
-A future public-host contract must bind each call to its executing definition
-ID and origin, repository/global scope and a verifiable live generation. Re-run
+Either a host caller-metadata contract or trusted configuration-bound tools must
+bind each call to its definition ID and origin, repository/global scope and a
+verifiable live generation. Re-run
 foreground plus two helpers, duplicate names/origins, concurrent switching,
 reload/resume and the one-second failure cases on a pinned public release before
 adding a success path or unblocking step 2.

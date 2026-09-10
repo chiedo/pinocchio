@@ -11,6 +11,9 @@ The source contains a minimal diagnostic extension and a fail-closed identity
 adapter. It selects no namespace and stores nothing. The
 [public-host compatibility gate](docs/COMPATIBILITY.md) remains **NO-GO**;
 downstream memory work is blocked.
+An [agent-bound MCP experiment](docs/COMPATIBILITY.md#configuration-bound-mcp-workaround)
+has passed public-host isolation checks; production binding/enrollment is not
+implemented yet.
 
 ## The idea
 

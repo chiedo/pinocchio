@@ -2,7 +2,12 @@ import { createServer } from "node:http";
 import { isRecord } from "../../src/identity.js";
 import { IDENTITY_TOOL_NAME } from "../../src/tool.js";
 
-export async function startSyntheticProvider() {
+export interface SyntheticProviderOptions {
+  selectTool?: (messages: Record<string, unknown>[]) => string;
+  allowUnofferedTool?: boolean;
+}
+
+export async function startSyntheticProvider(options: SyntheticProviderOptions = {}) {
   let requests = 0;
   let toolRequests = 0;
   let failures = 0;
@@ -31,6 +36,7 @@ export async function startSyntheticProvider() {
         throw new Error("SYNTHETIC_REQUEST_LIMIT");
       }
       const messages = input.messages.filter(isRecord);
+      const toolName = options.selectTool?.(messages) ?? IDENTITY_TOOL_NAME;
       const lastUser = messages.findLastIndex((item) => item.role === "user");
       const replied = messages
         .slice(lastUser + 1)
@@ -41,9 +47,9 @@ export async function startSyntheticProvider() {
           (tool: unknown) =>
             isRecord(tool) &&
             isRecord(tool.function) &&
-            tool.function.name === IDENTITY_TOOL_NAME,
+            tool.function.name === toolName,
         );
-        if (!offered) {
+        if (!offered && !options.allowUnofferedTool) {
           throw new Error("IDENTITY_TOOL_NOT_OFFERED");
         }
         toolRequests += 1;
@@ -52,7 +58,7 @@ export async function startSyntheticProvider() {
         {
           id: `synthetic-tool-${requests}`,
           type: "function",
-          function: { name: IDENTITY_TOOL_NAME, arguments: "{}" },
+          function: { name: toolName, arguments: "{}" },
         },
       ];
       const message = replied

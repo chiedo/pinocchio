@@ -3,7 +3,8 @@
 **Status:** Proposed, not implemented.
 
 The [step-1 diagnostic and compatibility report](COMPATIBILITY.md) are available.
-The identity gate is **NO-GO**; the memory design below is not implemented.
+The production identity gate is **NO-GO**; an agent-bound MCP isolation experiment
+has passed, but the memory design below is not implemented.
 
 Pinocchio gives each enrolled named custom agent its own persistent memory,
 whether that agent is used directly or as a delegated helper. It is a local
@@ -87,6 +88,15 @@ to a particular model.
 | Delegated model-tool call | Trusted caller execution identity mapped to that helper's definition. |
 | Administrative command | Explicit, unambiguous namespace and repository/global scope; no active conversation required. |
 | Unknown or ambiguous identity | Deny visibly; never guess from query text or a model-supplied agent name. |
+
+An alternative to caller-metadata lookup is **configuration-bound ownership**:
+trusted local setup binds an agent-specific MCP server to a stable definition
+and repository scope, and the host restricts that agent to its own memory tools.
+The model never supplies the owner. This replaces runtime caller discovery with
+explicit enrollment; it does not remove origin, scope or stale-binding checks.
+The [public-host experiment](COMPATIBILITY.md#configuration-bound-mcp-workaround)
+proves routing isolation for explicitly configured synthetic bindings. Production
+registry/enrollment and full identity-gate acceptance are still pending.
 
 The implementation must map execution identity to a stable definition ID and
 origin, including canonical definition location where available. Distinct
