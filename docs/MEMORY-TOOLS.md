@@ -37,6 +37,9 @@ usage counters and delivered record/revision IDs are stored there: no prompt,
 query or recalled note text. Back up this directory together with private stores
 when preserving ongoing sessions. Do not delete it to reset an active session's
 allowance. Filesystem access by the same user is not an OS security boundary.
+The extension also registers `pinocchio_memory_context_status`, a bounded,
+content-free service-health diagnostic. It does not select an owner or expose
+session identifiers, usage history or notes.
 
 Blocking SQLite and identity/file work run in lazy worker threads, outside MCP
 dispatch. A context extension and each bound MCP process own a worker; this is

@@ -12,6 +12,7 @@ import { MemoryWorker } from "../src/memory-worker-client.js";
 import { createMemoryMcpServer, memoryLaunch } from "../src/memory-mcp.js";
 import { CONTEXT_META, SAVE_TOOL, SEARCH_TOOL } from "../src/memory-protocol.js";
 import { enroll, removeEnrollment } from "../src/enrollment.js";
+import { main as enrollmentMain } from "../src/enrollment-cli.js";
 import { isRecord } from "../src/identity.js";
 import { createProductionFixture } from "./support/production-fixture.js";
 
@@ -76,6 +77,19 @@ test("session budget includes helpers and cannot reset through new recipient req
   f.restart();
   f.ledger.start("root", "last-helper", "2026-01-01T00:01:00.000Z");
   assert.equal((await f.call(undefined, "last-helper")).status, "budget_exhausted");
+});
+test("compaction redelivery is charged again without resetting usage or restart deduplication", async (t) => {
+  const f = await fixture(t);
+  const first = await f.call({ query: "note 0" });
+  assert.equal(first.status, "ok");
+  assert.equal((await f.call({ query: "note 0" })).status, "already_delivered");
+  f.ledger.invalidate("root");
+  const again = await f.call({ query: "note 0" });
+  assert.equal(again.status, "ok");
+  assert.equal(Number(again.sessionRemaining), Number(first.sessionRemaining) - Number(again.chargedTokens));
+  assert.equal(Number(again.requestRemaining), Number(first.requestRemaining) - Number(again.chargedTokens));
+  f.restart();
+  assert.equal((await f.call({ query: "note 0" })).status, "already_delivered");
 });
 test("signed context rejects model overrides, altered arguments and stale request tickets", async (t) => {
   const f = await fixture(t);
@@ -147,6 +161,20 @@ test("enrollment refuses implicit broad access and unapproved shared profiles", 
   const f = await fixture(t);
   await assert.rejects(enroll(f.ref), { code: "EXPLICIT_TOOL_LIST_REQUIRED" });
   await assert.rejects(enroll(await f.bind("beta")), { code: "EXPLICIT_SHARED_ENROLLMENT_REQUIRED" });
+});
+test("new-profile helper enrolls memory without overriding native defaults", async (t) => {
+  const f = await fixture(t);
+  const path = join(f.definitions.alpha.root, "created-agent.agent.md");
+  const result = await enrollmentMain(["create", "--config-root", f.config,
+    "--definition", path, "--origin-root", f.definitions.alpha.root, "--name", "created-agent",
+    "--repository", f.repository]);
+  assert.equal(result.status, "enrolled");
+  const content = await readFile(path, "utf8");
+  assert.match(content, /pinocchio-memory:v1/);
+  assert.match(content, /agent_memory_search/);
+  assert.doesNotMatch(content, /^model:|^reasoning-effort:/m);
+  await assert.rejects(enrollmentMain(["remove", "--config-root", f.config,
+    "--binding", f.ref.bindingId, "--fingerprint", f.ref.fingerprint, "--global"]), { code: "INVALID_ARGUMENTS" });
 });
 test("bounded worker queue, cancellation and deadlines fail explicitly", async () => {
   const worker = new MemoryWorker();
