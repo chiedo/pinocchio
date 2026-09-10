@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   approveAll,
   CopilotClient,
@@ -42,6 +43,9 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     configDirectory: workspace.config,
     enableConfigDiscovery: true,
     requestExtensions: true,
+    extensionSdkPath: fileURLToPath(
+      new URL(".", import.meta.resolve("@github/copilot-sdk")),
+    ),
     enableExperimentalMode: true,
     enableManagedSettings: false,
     model: "synthetic-model",
@@ -132,7 +136,9 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
   }
 
   async function load(session: CopilotSession) {
+    stage = "extensions-reload";
     await session.rpc.extensions.reload();
+    stage = "extensions-list";
     const { extensions } = await session.rpc.extensions.list();
     assert.ok(
       extensions.some(
@@ -140,14 +146,24 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
       ),
       "PUBLIC_EXTENSION_NOT_RUNNING",
     );
+    stage = "tools-initialize";
     await session.rpc.tools.initializeAndValidate();
   }
 
   try {
+    const sdkPackage: unknown = JSON.parse(
+      await readFile(
+        new URL("../package.json", import.meta.resolve("@github/copilot-sdk")),
+        "utf8",
+      ),
+    );
+    assert.ok(isRecord(sdkPackage));
+    assert.equal(sdkPackage.version, PUBLIC_SDK_VERSION);
+    assert.equal(sdkPackage.copilotCliVersion, PUBLIC_CLI_VERSION);
     await client.start();
     version = (await client.getStatus()).version;
     assert.equal(version, PUBLIC_CLI_VERSION, "Unexpected public runtime version");
-    stage = "extension-load";
+    stage = "session-create";
     let session = await client.createSession(config);
     await load(session);
 

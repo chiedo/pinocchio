@@ -14,9 +14,12 @@ of a green synthetic test run.
 | Public-host execution | Pending the first CI run; no measured result claimed yet |
 | Supported hosts | None; desktop and other operating systems are not certified |
 
-The compatibility probe requires the exact public runtime version. It uses the
-SDK's bundled public runtime, not an ambient `copilot` executable, custom SDK
-override, private distribution or live user session.
+The compatibility probe requires the exact public runtime and SDK versions. It
+uses the SDK's bundled public runtime, not an ambient `copilot` executable,
+private distribution or live user session. Standalone extension hosting requires
+`extensionSdkPath`; the probe supplies the unmodified, pinned public npm SDK's
+`dist/` directory. It checks both package versions rather than injecting an SDK
+from the local CLI installation.
 
 ## Blocker
 
