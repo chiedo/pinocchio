@@ -21,7 +21,9 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
   const workspace = await createWorkspace();
   const provider = await startSyntheticProvider();
   const client = new CopilotClient({
-    connection: RuntimeConnection.forStdio(),
+    connection: RuntimeConnection.forStdio({
+      path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
+    }),
     mode: "empty",
     workingDirectory: workspace.repository,
     baseDirectory: workspace.config,

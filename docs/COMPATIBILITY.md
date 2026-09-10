@@ -15,11 +15,12 @@ of a green synthetic test run.
 | Supported hosts | None; desktop and other operating systems are not certified |
 
 The compatibility probe requires the exact public runtime and SDK versions. It
-uses the SDK's bundled public runtime, not an ambient `copilot` executable,
-private distribution or live user session. Standalone extension hosting requires
-`extensionSdkPath`; the probe supplies the unmodified, pinned public npm SDK's
-`dist/` directory. It checks both package versions rather than injecting an SDK
-from the local CLI installation.
+launches the locked `@github/copilot` executable, not an ambient `copilot`,
+private distribution or live user session. The SDK-only standalone runtime does
+not provide the full CLI's extension launcher. The probe explicitly supplies
+the unmodified, pinned public npm SDK's `dist/` directory as `extensionSdkPath`.
+It checks both public versions rather than using the SDK from a local CLI
+installation.
 
 ## Blocker
 
