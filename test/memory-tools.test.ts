@@ -25,8 +25,9 @@ async function fixture(t: TestContext) {
   t.after(async () => { worker.close(); ledger.close(); store.close(); await f.close(); });
   const launch = memoryLaunch(ref);
   ledger.start("root", "foreground", "2026-01-01T00:00:00.000Z");
-  async function call(args: unknown = { query: "synthetic" }, recipient = "foreground", tool = SEARCH_TOOL) {
+  async function call(args: unknown = { query: "synthetic" }, recipient = "foreground", tool = SEARCH_TOOL, directory = f.repository) {
     const ticket = ledger.issue({ root: "root", recipient, server: launch.serverName, tool,
+      directory,
       call: "synthetic-call", arguments: args, deadline: Date.now() + 1_000 });
     const result = await worker.call({ action: "tool", reference: ref, server: launch.serverName, tool, arguments: args, ticket });
     assert.ok(isRecord(result));
@@ -80,6 +81,7 @@ test("signed context rejects model overrides, altered arguments and stale reques
   const f = await fixture(t);
   const args = { query: "synthetic" };
   const ticket = f.ledger.issue({ root: "root", recipient: "foreground", server: f.launch.serverName,
+    directory: f.repository,
     tool: SEARCH_TOOL, call: "call", arguments: args, deadline: Date.now() + 1_000 });
   assert.throws(() => f.ledger.verify({ ...ticket, recipient: "other" }, f.launch.serverName, SEARCH_TOOL, args),
     { code: "INVALID_REQUEST_CONTEXT" });
@@ -88,6 +90,7 @@ test("signed context rejects model overrides, altered arguments and stale reques
   f.ledger.start("root", "foreground", "2026-01-01T00:00:02.000Z");
   assert.throws(() => f.ledger.verify(ticket, f.launch.serverName, SEARCH_TOOL, args), { code: "STALE_REQUEST" });
   await assert.rejects(f.call({ query: "synthetic", namespace: "foreign" }), { code: "INVALID_INPUT" });
+  await assert.rejects(f.call(undefined, "foreground", SEARCH_TOOL, f.otherRepository), { code: "REQUEST_SCOPE_MISMATCH" });
 });
 test("worker save receipts survive restart; correction and disabled reads remain explicit", async (t) => {
   const f = await fixture(t);
@@ -116,6 +119,7 @@ test("MCP denies untrusted context and exposes both real tool schemas", async (t
   assert.equal(denied.isError, true);
   const args = { query: "synthetic" };
   const ticket = f.ledger.issue({ root: "root", recipient: "foreground", server: f.launch.serverName,
+    directory: f.repository,
     tool: SEARCH_TOOL, call: "mcp-call", arguments: args, deadline: Date.now() + 1_000 });
   const result = await client.callTool({ name: SEARCH_TOOL, arguments: args, _meta: { [CONTEXT_META]: ticket } });
   assert.equal(result.isError, false);

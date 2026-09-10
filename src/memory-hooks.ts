@@ -23,6 +23,7 @@ export function createMemoryHooks(configRoot: string) {
         const ticket = await worker.call({
           action: "ticket", configRoot, root: invocation.sessionId, recipient: input.sessionId,
           call: input.toolCallId ?? "", server: input.serverName, tool: input.toolName,
+          directory: input.workingDirectory,
           arguments: input.arguments, deadline,
         }, deadline);
         return { metaToUse: { [CONTEXT_META]: ticket } };

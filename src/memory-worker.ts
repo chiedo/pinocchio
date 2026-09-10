@@ -1,6 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import { z } from "zod";
-import { BindingError, loadBinding } from "./binding-registry.js";
+import { BindingError, canonicalRepository, loadBinding } from "./binding-registry.js";
 import { ContextLedger } from "./context-ledger.js";
 import { MemoryStore } from "./memory-store.js";
 import { MemoryError, validate } from "./memory-types.js";
@@ -14,7 +14,8 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("start"), configRoot: z.string(), root: z.string(), recipient: z.string(), stamp: z.string() }).strict(),
   z.object({ action: z.literal("invalidate"), configRoot: z.string(), root: z.string() }).strict(),
   z.object({ action: z.literal("ticket"), configRoot: z.string(), root: z.string(), recipient: z.string(),
-    call: z.string(), server: z.string(), tool: z.string(), arguments: z.unknown(), deadline: z.number() }).strict(),
+    call: z.string(), server: z.string(), tool: z.string(), directory: z.string(),
+    arguments: z.unknown(), deadline: z.number() }).strict(),
   z.object({ action: z.literal("tool"), reference: referenceSchema, server: z.string(),
     tool: z.enum([SEARCH_TOOL, SAVE_TOOL]), arguments: z.unknown(), ticket: z.unknown() }).strict(),
 ]);
@@ -30,6 +31,9 @@ async function execute(raw: unknown): Promise<unknown> {
     if (command.action === "ticket") return ledger.issue(command);
     const ticket = ledger.verify(command.ticket, command.server, command.tool, command.arguments);
     const binding = await loadBinding(command.reference);
+    if (binding.scope.kind === "repository" && await canonicalRepository(ticket.directory) !== binding.scope.root) {
+      throw new ToolError("REQUEST_SCOPE_MISMATCH");
+    }
     const store = await MemoryStore.open(command.reference, { namespace: binding.namespace, scope: binding.scope.kind });
     try {
       if (command.tool === SAVE_TOOL) {

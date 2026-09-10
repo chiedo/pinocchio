@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -163,6 +163,15 @@ test("enrolled native profiles recall independently through the production conte
     passed = true;
   } catch (error) {
     t.diagnostic(JSON.stringify({ gate: "memory-workflow", stage, cases, provider: provider.counts() }));
+    const files = (await readdir(f.config, { recursive: true })).filter((path) => path.endsWith(".log")).slice(0, 10);
+    const errors = new Set<string>();
+    for (const path of files) {
+      const log = await readFile(join(f.config, path), "utf8");
+      for (const match of log.matchAll(/(?:Error|error)(?:\[[A-Z_]+\])?: ([^\n]{1,160})/g)) {
+        errors.add((match[1] ?? "").replace(/\/[^\s"']+/g, "<path>"));
+      }
+    }
+    t.diagnostic(JSON.stringify({ extensionErrorSummaries: [...errors].slice(-10), logFilesChecked: files.length }));
     throw error;
   } finally {
     const stopped = await Promise.allSettled([client.stop(), provider.close()]);

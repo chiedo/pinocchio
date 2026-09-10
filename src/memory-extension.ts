@@ -30,4 +30,17 @@ session.on("session.compaction_complete", () => {
     process.stderr.write("Pinocchio: CONTEXT_ACCOUNTING_UNAVAILABLE\n");
   });
 });
-process.once("SIGTERM", () => { context.close(); process.exit(0); });
+process.once("SIGTERM", () => {
+  context.close();
+  const deadline = setTimeout(() => {
+    process.stderr.write("Pinocchio: CONTEXT_DETACH_DEADLINE\n");
+    process.exit(1);
+  }, 1_000);
+  void session.disconnect().then(() => {
+    clearTimeout(deadline); process.exit(0);
+  }, () => {
+    clearTimeout(deadline);
+    process.stderr.write("Pinocchio: CONTEXT_DETACH_FAILED\n");
+    process.exit(1);
+  });
+});

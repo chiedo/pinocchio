@@ -19,6 +19,10 @@ boundaries. The pre-MCP hook replaces request metadata with a short-lived,
 HMAC-authenticated ticket binding root, recipient, request, call, server, tool,
 arguments and deadline. Missing, altered or stale tickets fail closed. An MCP
 transport session or process ID is **not** treated as a conversation ID.
+Tickets also bind the host's working directory. A repository-scoped server checks
+its canonical Git root against that directory before opening memory, so using an
+enrolled user profile from another repository cannot expose the pinned repository's
+notes. Global bindings remain intentionally independent of the working directory.
 
 The context ledger and signing key live privately under
 `<config-root>/pinocchio/context/`. Only hashed execution IDs, request timestamps,

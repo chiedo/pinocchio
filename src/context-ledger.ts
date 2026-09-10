@@ -89,13 +89,14 @@ export class ContextLedger {
     this.db.prepare("UPDATE sessions SET generation=generation+1 WHERE root=?").run(fingerprint(rootId));
     return { status: "ready" };
   }
-  issue(input: { root: string; recipient: string; call: string; server: string; tool: string; arguments: unknown; deadline: number }) {
+  issue(input: { root: string; recipient: string; call: string; server: string; tool: string; directory: string; arguments: unknown; deadline: number }) {
     const root = fingerprint(input.root), recipient = fingerprint(input.recipient);
     const current = this.db.prepare("SELECT request FROM current_requests WHERE root=? AND recipient=?").get(root, recipient);
     if (typeof current?.request !== "string" || !input.call) throw new ToolError("MISSING_REQUEST_CONTEXT");
     const body = {
       version: 1 as const, root, recipient, request: current.request, call: input.call,
       server: input.server, tool: input.tool, argumentsHash: fingerprint(canonical(input.arguments)),
+      directory: input.directory,
       deadline: input.deadline,
     };
     return ticketSchema.parse({ ...body, signature: this.#sign(body) });

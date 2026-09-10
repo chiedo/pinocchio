@@ -142,6 +142,15 @@ async function writeExclusive(path: string, text: string) {
   try { await file.writeFile(text); await file.sync(); }
   finally { await file.close(); }
 }
+export async function canonicalRepository(root: string) {
+  try {
+    const result = await exec("git", ["-C", root, "rev-parse", "--show-toplevel"], {
+      timeout: 750, maxBuffer: 16_384,
+      env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+    });
+    return await realpath(result.stdout.trim());
+  } catch { throw new BindingError("INVALID_REPOSITORY"); }
+}
 export async function registerBinding(options: RegisterBindingOptions): Promise<BindingReference> {
   supportedPlatform();
   const chosenRoot = configRootPath(options.configRoot);
@@ -159,14 +168,7 @@ export async function registerBinding(options: RegisterBindingOptions): Promise<
   if (options.scope.kind === "global") {
     scope = { kind: "global", key: "global" };
   } else {
-    let gitRoot: string;
-    try {
-      const result = await exec("git", ["-C", options.scope.root, "rev-parse", "--show-toplevel"], {
-        timeout: 750, maxBuffer: 16_384,
-        env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
-      });
-      gitRoot = await realpath(result.stdout.trim());
-    } catch { throw new BindingError("INVALID_REPOSITORY"); }
+    const gitRoot = await canonicalRepository(options.scope.root);
     scope = {
       kind: "repository",
       root: gitRoot,

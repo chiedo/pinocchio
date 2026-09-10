@@ -15,6 +15,7 @@ export const saveSchema = z.discriminatedUnion("action", [
 export const ticketSchema = z.object({
   version: z.literal(1), root: z.string().min(1), recipient: z.string().min(1),
   request: z.string().min(1), call: z.string().min(1), server: z.string().min(1),
+  directory: z.string().min(1),
   tool: z.enum([SEARCH_TOOL, SAVE_TOOL]), argumentsHash: z.string().length(64),
   deadline: z.number().int(), signature: z.string().length(64),
 }).strict();
