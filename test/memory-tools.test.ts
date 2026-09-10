@@ -186,5 +186,9 @@ test("bounded worker queue, cancellation and deadlines fail explicitly", async (
     const results = await Promise.allSettled(pending);
     assert.ok(results.some((result) => result.status === "rejected" &&
       isRecord(result.reason) && result.reason.code === "QUEUE_FULL"));
+    const late = worker.call({}, Date.now() + 5);
+    const started = performance.now();
+    while (performance.now() - started < 15) { /* Exercise a delayed parent event loop, not slow database work. */ }
+    await assert.rejects(late, { code: "MEMORY_DEADLINE" });
   } finally { worker.close(); }
 });

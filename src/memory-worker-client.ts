@@ -4,6 +4,7 @@ import { isRecord } from "./identity.js";
 
 interface Pending {
   id: number; payload: unknown; resolve: (value: unknown) => void; reject: (error: Error) => void;
+  expiresAt: number;
   timer: ReturnType<typeof setTimeout>; stop?: () => void;
 }
 export class MemoryWorker {
@@ -28,6 +29,7 @@ export class MemoryWorker {
       };
       const entry: Pending = {
         id, payload, resolve, reject,
+        expiresAt: performance.now() + Math.max(0, deadline - Date.now()),
         timer: setTimeout(() => cancel("MEMORY_DEADLINE"), Math.max(1, deadline - Date.now())),
       };
       if (signal) {
@@ -53,6 +55,9 @@ export class MemoryWorker {
     if (this.#closed || this.#active) return;
     const next = this.#queue.shift();
     if (!next) return;
+    if (performance.now() >= next.expiresAt) {
+      this.#cleanup(next); next.reject(new ToolError("MEMORY_DEADLINE")); this.#next(); return;
+    }
     this.#active = next;
     if (!this.#worker) {
       this.#worker = new Worker(new URL("./memory-worker.js", import.meta.url));
@@ -61,7 +66,8 @@ export class MemoryWorker {
         if (!current || !isRecord(message) || message.id !== current.id) return;
         this.#active = undefined;
         this.#cleanup(current);
-        if (typeof message.code === "string") {
+        if (performance.now() >= current.expiresAt) current.reject(new ToolError("MEMORY_DEADLINE"));
+        else if (typeof message.code === "string") {
           const revision = isRecord(message.details) ? message.details.currentRevision : undefined;
           current.reject(new ToolError(message.code, typeof revision === "number" ? { currentRevision: revision } : {}));
         }
