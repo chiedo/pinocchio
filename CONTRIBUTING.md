@@ -1,7 +1,8 @@
 # Contributing
 
-Pinocchio has configuration-bound identity and local SQLite administration, not a working
-installer or model-facing memory service. The production identity gate is verified on the pinned
+Pinocchio has configuration-bound identity, local SQLite administration and
+worker-backed keyword-memory tools with development enrollment, not a production
+installer. The production identity gate is verified on the pinned
 public CLI/Linux baseline; shared caller-metadata inference remains unsupported.
 
 Read [the design](docs/DESIGN.md), [installation requirements](docs/INSTALL.md)

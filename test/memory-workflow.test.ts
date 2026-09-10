@@ -18,6 +18,7 @@ test("enrolled native profiles recall independently through the production conte
   const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
   const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown; sessionRemaining?: unknown }[] = [];
   const cases: string[] = [];
+  const lifecycle: string[] = [];
   const waiters = new Set<() => void>();
   const selectName = (messages: Record<string, unknown>[]) => {
     const prompt = String(messages.findLast((message) => message.role === "user")?.content ?? "");
@@ -109,6 +110,7 @@ test("enrolled native profiles recall independently through the production conte
       model: "synthetic-model", provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
       availableTools: new ToolSet().addMcp("*").addBuiltIn(["view", "task"]),
       agent: "memory-foreground", onPermissionRequest: approveAll, infiniteSessions: { enabled: false },
+      hooks: { onSessionStart(input) { lifecycle.push(input.source); } },
     };
     await client.start();
     assert.equal((await client.getStatus()).version, "1.0.83");
@@ -174,6 +176,7 @@ test("enrolled native profiles recall independently through the production conte
     const cold = await own(session, "FOREGROUND SEARCH after cold resume.", "ok");
     assert.ok(Number(cold.sessionRemaining) < Number(reloaded.sessionRemaining));
     cases.push("cold-resume");
+    assert.ok(lifecycle.includes("resume"));
     stop();
     session = await client.createSession(config);
     stop = observe(session);
@@ -202,7 +205,8 @@ test("enrolled native profiles recall independently through the production conte
     const cleaned = await Promise.allSettled([f.close()]);
     await mkdir("test-results", { recursive: true });
     await writeFile("test-results/memory-workflow.json", JSON.stringify({
-      gate: "production-keyword-memory", passed, stage, cases, baseline: "CLI 1.0.83 / Linux x64",
+      gate: "production-keyword-memory", passed, stage, cases, lifecycle,
+      baseline: "CLI 1.0.83 / Linux x64; SDK root hook capability enabled",
     }, null, 2) + "\n");
     if ([...stopped, ...cleaned].some((result) => result.status === "rejected")) {
       t.diagnostic("MEMORY_WORKFLOW_CLEANUP_FAILED");

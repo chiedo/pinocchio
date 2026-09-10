@@ -2,18 +2,20 @@
 
 Turn each copilot session into a real boy. Memory and all!
 
-Pinocchio is a planned local memory extension for named GitHub Copilot CLI
-agents. Each agent would keep its own knowledge across sessions, including when
+Pinocchio is a development-stage local memory integration for named GitHub Copilot CLI
+agents. Each agent keeps its own knowledge across sessions, including when
 another agent delegates work to it.
 
-**Identity and local SQLite storage implemented; model-facing memory tools are next.** The
+**Scoped keyword-memory tools, durable storage and reversible enrollment are implemented.** The
 [configuration-bound identity gate](docs/COMPATIBILITY.md) passes on public
 Copilot CLI 1.0.83 / Linux x64. Agent-specific MCP servers resolve stable
 definition namespaces and explicit repository/global scopes using a private
 binding registry. Invalid, revoked and stale bindings fail closed.
 The [local administrative CLI](docs/STORAGE.md) supports sourced notes, search,
-correction, deletion, disable controls and durable retry recovery. There is no
-model-facing memory tool, profile enrollment or production installer yet.
+correction, deletion, disable controls and durable retry recovery.
+[Agent memory tools](docs/MEMORY-TOOLS.md) add bounded worker execution and
+persistent per-request/session limits. Semantic retrieval, release evaluations
+and a production installer remain separate steps.
 
 ## The idea
 
@@ -47,6 +49,7 @@ capabilities, and use the intended local data store.
 - [Identity compatibility report and development commands](docs/COMPATIBILITY.md)
 - [Binding registration, revocation and MCP configuration](docs/BINDINGS.md)
 - [Local memory commands, recovery and migrations](docs/STORAGE.md)
+- [Agent memory tools, context limits and reversible enrollment](docs/MEMORY-TOOLS.md)
 - [Installation, upgrades, and uninstall](docs/INSTALL.md)
 - [Privacy and public-data policy](PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)
