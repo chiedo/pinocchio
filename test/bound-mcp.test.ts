@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { setTimeout } from "node:timers/promises";
 import {
   approveAll, CopilotClient, RuntimeConnection, ToolSet,
 } from "@github/copilot-sdk";
@@ -76,11 +77,11 @@ test("public host agent-bound MCP isolation experiment", { timeout: 180_000 }, a
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
   };
-  async function count(definition: Definition) {
+  async function count(definition: Definition, repository = "repository-one") {
     return (await readFile(journal, "utf8")).split("\n").filter(Boolean).map(
       (line): unknown => JSON.parse(line),
     ).filter((row) => isRecord(row) && row.definition === definition &&
-      row.repository === "repository-one").length;
+      row.repository === repository).length;
   }
   async function check(name: string, target: Definition, expected: number, run: () => Promise<unknown>) {
     stage = name;
@@ -88,6 +89,13 @@ test("public host agent-bound MCP isolation experiment", { timeout: 180_000 }, a
     await run();
     const observed = await count(target) - before;
     cases.push({ name, expected, observed, passed: observed === expected });
+  }
+  async function waitForInvocation(definition: Definition, previousCount: number) {
+    const deadline = performance.now() + 1_000;
+    while (await count(definition) === previousCount) {
+      if (performance.now() >= deadline) throw new Error("INVOCATION_START_DEADLINE");
+      await setTimeout(5);
+    }
   }
   async function select(session: CopilotSession, definition: Definition) {
     await session.rpc.agent.select({ name: definition });
@@ -136,6 +144,38 @@ test("public host agent-bound MCP isolation experiment", { timeout: 180_000 }, a
           },
         }));
     }
+    stage = "concurrent-delegation";
+    await Promise.all((["alpha", "beta"] as const).map((helper) =>
+      check(`concurrent-helper-${helper}`, helper, 1, () =>
+        session.rpc.tools.execute({
+          name: "task",
+          arguments: {
+            agent_type: helper, name: "shared-helper",
+            description: "Concurrent synthetic probe",
+            prompt: `Call TARGET_${helper} once.`, mode: "sync",
+          },
+        })),
+    ));
+    stage = "inflight-switch";
+    await select(session, "alpha");
+    const alphaBefore = await count("alpha");
+    const betaBefore = await count("beta");
+    const pending = call(session, "alpha");
+    await waitForInvocation("alpha", alphaBefore);
+    await select(session, "beta");
+    const pendingResult = await pending;
+    const responseText = typeof pendingResult === "string"
+      ? pendingResult : pendingResult.textResultForLlm;
+    const keptBinding = responseText.includes("alpha") && !responseText.includes("beta");
+    cases.push({
+      name: "inflight-switch-keeps-original-binding", expected: 1,
+      observed: keptBinding ? 1 : 0, passed: keptBinding,
+    });
+    const betaDelta = await count("beta") - betaBefore;
+    cases.push({
+      name: "inflight-switch-no-beta-dispatch", expected: 0,
+      observed: betaDelta, passed: betaDelta === 0,
+    });
     await session.rpc.agent.reload();
     await select(session, "alpha");
     await check("after-definition-reload", "alpha", 1, () => call(session, "alpha"));
@@ -154,6 +194,40 @@ test("public host agent-bound MCP isolation experiment", { timeout: 180_000 }, a
     await check("after-cold-resume", "alpha", 1, () => call(session, "alpha"));
     await check("after-cold-resume-cross", "beta", 0, () => call(session, "beta"));
     await session.disconnect();
+    stage = "other-repository";
+    const otherConfig: SessionConfig = {
+      ...config,
+      workingDirectory: workspace.otherRepository,
+      customAgents: config.customAgents?.map((agent) => ({
+        ...agent,
+        mcpServers: {
+          [`bound_${agent.name}`]: {
+            type: "local",
+            command: process.execPath,
+            args: [
+              fileURLToPath(new URL("./support/bound-mcp-server.js", import.meta.url)),
+              agent.name, "repository-two", journal,
+            ],
+            tools: ["*"],
+          },
+        },
+      })) ?? [],
+    };
+    session = await client.createSession(otherConfig);
+    await select(session, "alpha");
+    const oneBefore = await count("alpha");
+    const twoBefore = await count("alpha", "repository-two");
+    await call(session, "alpha");
+    const oneDelta = await count("alpha") - oneBefore;
+    const twoDelta = await count("alpha", "repository-two") - twoBefore;
+    cases.push({
+      name: "repository-binding-uses-second-launch", expected: 1,
+      observed: twoDelta, passed: twoDelta === 1,
+    }, {
+      name: "repository-binding-does-not-reuse-first-launch", expected: 0,
+      observed: oneDelta, passed: oneDelta === 0,
+    });
+    await session.disconnect();
     assert.equal(provider.counts().failures, 0, "PROVIDER_FAILED");
     completed = true;
   } catch (error) {
@@ -171,7 +245,10 @@ test("public host agent-bound MCP isolation experiment", { timeout: 180_000 }, a
       identityGate: "NO-GO",
       stage, failureCode, cases, provider: provider.counts(),
       cleanupErrors: cleanupErrors.length,
-      omissions: ["Enrollment registry, origin collisions, in-flight invalidation and repository rebinding are not yet proven."],
+      omissions: [
+        "Production enrollment registry, definition-origin resolution and stale-result invalidation are not implemented.",
+        "Tests verify explicitly configured tool-call isolation, not an OS sandbox.",
+      ],
     };
     await mkdir("test-results", { recursive: true });
     await writeFile("test-results/bound-mcp.json", `${JSON.stringify(report, null, 2)}\n`);

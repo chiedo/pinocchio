@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { setTimeout } from "node:timers/promises";
 import { isRecord } from "../../src/identity.js";
 
 // Synthetic stdio fixture only, not a production memory server or installer.
@@ -54,6 +55,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       continue;
     }
     appendFileSync(journal, `${JSON.stringify(binding)}\n`, { mode: 0o600 });
+    if (definition === "alpha") await setTimeout(150);
     respond(request.id, {
       content: [{ type: "text", text: JSON.stringify(binding) }],
     });
