@@ -59,14 +59,17 @@ export function createMemoryMcpServer(reference: BindingReference, serverName: s
           }, Math.min(Date.now() + MEMORY_DEADLINE_MS, ticket.data.deadline), extra.signal);
         } catch (error) {
           const code = error instanceof ToolError ? error.code : "MEMORY_UNAVAILABLE";
+          const uncertain = ["MEMORY_DEADLINE", "CALL_CANCELLED", "WORKER_CLOSED", "WORKER_EXITED",
+            "WORKER_FAILED", "WORKER_OPERATION_FAILED", "OUTCOME_UNKNOWN", "ROLLBACK_FAILED", "STALE_REQUEST"].includes(code);
           result = typeof operationId === "string"
-            ? { status: "outcome_unknown", code, operationId }
+            ? { status: uncertain ? "outcome_unknown" : "save_failed", code, operationId,
+              ...(error instanceof ToolError ? error.details : {}) }
             : { status: "unavailable", code };
         }
       }
     }
     return {
-      isError: isRecord(result) && ["unavailable", "outcome_unknown"].includes(String(result.status)),
+      isError: isRecord(result) && ["unavailable", "outcome_unknown", "save_failed"].includes(String(result.status)),
       content: [{ type: "text", text: JSON.stringify(result) }],
     };
   });

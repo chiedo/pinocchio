@@ -61,7 +61,10 @@ export class MemoryWorker {
         if (!current || !isRecord(message) || message.id !== current.id) return;
         this.#active = undefined;
         this.#cleanup(current);
-        if (typeof message.code === "string") current.reject(new ToolError(message.code));
+        if (typeof message.code === "string") {
+          const revision = isRecord(message.details) ? message.details.currentRevision : undefined;
+          current.reject(new ToolError(message.code, typeof revision === "number" ? { currentRevision: revision } : {}));
+        }
         else current.resolve(message.value);
         this.#next();
       });

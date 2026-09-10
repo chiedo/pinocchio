@@ -109,6 +109,6 @@ parentPort?.on("message", async (message: { id: number; payload: unknown }) => {
   catch (error) {
     const code = error instanceof ToolError || error instanceof MemoryError || error instanceof BindingError
       ? error.code : "WORKER_OPERATION_FAILED";
-    parentPort?.postMessage({ id: message.id, code });
+    parentPort?.postMessage({ id: message.id, code, details: error instanceof MemoryError ? error.details : {} });
   }
 });

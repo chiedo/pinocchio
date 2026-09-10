@@ -20,7 +20,9 @@ export const ticketSchema = z.object({
 }).strict();
 export type ContextTicket = z.infer<typeof ticketSchema>;
 export class ToolError extends Error {
-  constructor(readonly code: string) { super(code); this.name = "ToolError"; }
+  constructor(readonly code: string, readonly details: { currentRevision?: number } = {}) {
+    super(code); this.name = "ToolError";
+  }
 }
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;

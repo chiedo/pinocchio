@@ -13,7 +13,7 @@ import { isRecord } from "../src/identity.js";
 import { createProductionFixture } from "./support/production-fixture.js";
 import { startSyntheticProvider } from "./support/provider.js";
 
-test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async () => {
+test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async (t) => {
   const f = await createProductionFixture();
   const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
   const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown }[] = [];
@@ -47,6 +47,7 @@ test("enrolled native profiles recall independently through the production conte
   });
   let client = createClient();
   let passed = false;
+  let stage = "enrollment";
   function observe(session: CopilotSession) {
     return session.on("tool.execution_complete", (event) => {
       const text = event.data.result?.content;
@@ -59,6 +60,7 @@ test("enrolled native profiles recall independently through the production conte
     });
   }
   async function own(session: CopilotSession, prompt: string, expected: string) {
+    stage = prompt.includes("SAVE") ? "foreground-save" : "foreground-search";
     const before = observations.length;
     await session.sendAndWait({ prompt }, 20_000);
     const result = observations.slice(before).find((item) => item.status === expected);
@@ -89,6 +91,7 @@ test("enrolled native profiles recall independently through the production conte
     };
     await client.start();
     assert.equal((await client.getStatus()).version, "1.0.83");
+    stage = "create-session";
     let session = await client.createSession(config);
     let stop = observe(session);
     await session.rpc.tools.initializeAndValidate();
@@ -98,6 +101,7 @@ test("enrolled native profiles recall independently through the production conte
     assert.match(JSON.stringify(recalled.snippets), /memory-foreground/);
     assert.doesNotMatch(JSON.stringify(recalled.snippets), /memory-helper/);
     cases.push("foreground-recall");
+    stage = "helper-save";
     await session.rpc.tools.execute({ name: "task", arguments: {
       agent_type: "memory-helper", name: "synthetic-helper", description: "Save helper memory",
       prompt: "HELPER SAVE synthetic work.", mode: "sync",
@@ -105,6 +109,7 @@ test("enrolled native profiles recall independently through the production conte
     assert.ok(observations.some((item) => item.operationId === "save-memory-helper" && item.status === "committed"),
       JSON.stringify(observations.map((item) => ({ status: item.status, code: item.code }))));
     cases.push("helper-save");
+    stage = "helper-recall";
     const before = observations.length;
     await session.rpc.tools.execute({ name: "task", arguments: {
       agent_type: "memory-helper", name: "synthetic-helper-new-instance", description: "Recall helper memory",
@@ -115,6 +120,7 @@ test("enrolled native profiles recall independently through the production conte
     assert.match(JSON.stringify(helper.snippets), /memory-helper/);
     assert.doesNotMatch(JSON.stringify(helper.snippets), /memory-foreground/);
     cases.push("new-helper-instance-recall");
+    stage = "extension-reload";
     await session.rpc.extensions.reload();
     await session.rpc.tools.initializeAndValidate();
     await own(session, "FOREGROUND SEARCH after extension reload.", "ok");
@@ -124,6 +130,7 @@ test("enrolled native profiles recall independently through the production conte
     await client.stop();
     client = createClient();
     await client.start();
+    stage = "cold-resume";
     session = await client.resumeSession(sessionId, config);
     stop = observe(session);
     await session.rpc.tools.initializeAndValidate();
@@ -132,13 +139,19 @@ test("enrolled native profiles recall independently through the production conte
     stop();
     assert.equal(provider.counts().failures, 0);
     passed = true;
+  } catch (error) {
+    t.diagnostic(JSON.stringify({ gate: "memory-workflow", stage, cases, provider: provider.counts() }));
+    throw error;
   } finally {
-    await client.stop();
-    await provider.close();
-    await f.close();
+    const stopped = await Promise.allSettled([client.stop(), provider.close()]);
+    const cleaned = await Promise.allSettled([f.close()]);
     await mkdir("test-results", { recursive: true });
     await writeFile("test-results/memory-workflow.json", JSON.stringify({
-      gate: "production-keyword-memory", passed, cases, baseline: "CLI 1.0.83 / Linux x64",
+      gate: "production-keyword-memory", passed, stage, cases, baseline: "CLI 1.0.83 / Linux x64",
     }, null, 2) + "\n");
+    if ([...stopped, ...cleaned].some((result) => result.status === "rejected")) {
+      t.diagnostic("MEMORY_WORKFLOW_CLEANUP_FAILED");
+      if (passed) throw new Error("MEMORY_WORKFLOW_CLEANUP_FAILED");
+    }
   }
 });
