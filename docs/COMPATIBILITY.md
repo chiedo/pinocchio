@@ -11,7 +11,7 @@ of a green synthetic test run.
 | Public CLI | [1.0.83](https://github.com/github/copilot-cli/releases/tag/v1.0.83), released September 4, 2026 |
 | Public SDK | [1.0.13](https://www.npmjs.com/package/@github/copilot-sdk/v/1.0.13); its package manifest pins CLI 1.0.83 |
 | Runtime | Node.js 22.18.0, TypeScript, compiled ESM |
-| Public-host execution | Pending the first CI run; no measured result claimed yet |
+| Public-host execution | Synthetic harness PASS on `linux-x64`; identity gate NO-GO |
 | Supported hosts | None; desktop and other operating systems are not certified |
 
 The compatibility probe requires the exact public runtime and SDK versions. It
@@ -69,12 +69,32 @@ not mean the identity gate passed.** The generated report separates
 `syntheticHarness` from `identityGate`; neither missing tools nor an incomplete
 probe is silently classified as successful coverage.
 
+## Measured public-host result
+
+On September 10, 2026, the complete suite passed in a clean GitHub Codespace:
+
+| Result | Measurement |
+|---|---:|
+| Tests | 10 passed, 0 failed |
+| Direct native dispatch scenarios | 13 |
+| Model-generated extension calls | 3: foreground, helper alpha, helper beta |
+| Named helpers observed | 2 |
+| Published dispatch latency | 5-12 ms |
+| Provider requests / failures | 6 / 0 |
+| Namespace selections | 0 |
+| Identity decision | **NO-GO** |
+
+The result proves the pinned public CLI can load and dispatch the scaffold and
+that all covered calls fail closed within the deadline. It does not establish a
+trusted definition/origin binding. The JSON artifact remains the machine-readable
+source for each CI run.
+
 ## Coverage and limits
 
 | Layer | Evidence |
 |---|---|
 | Adapter tests | Missing/malformed/cancelled/stale inputs; delayed metadata; duplicate names and origins; concurrent calls; reload/resume; no model-supplied owners |
-| Public host | Extension loading; native dispatch; selected-agent changes; concurrent calls; real foreground/delegated model-tool dispatch with scripted responses; reload/resume; repository changes |
+| Public host | Extension loading; native dispatch; selected-agent changes; concurrent calls; real foreground/delegated model-tool dispatch with scripted responses; reload/cold resume; repository changes |
 | Deadline | Synchronous adapter rejection; individual observed host dispatches must finish in less than 1,000 ms |
 | Not proven | Any successful namespace binding, persistent identity, memory isolation, storage or real-model behavior |
 

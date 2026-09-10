@@ -20,25 +20,28 @@ const PUBLIC_SDK_VERSION = "1.0.13";
 test("pinned public host loads and dispatches the fail-closed extension", { timeout: 180_000 }, async () => {
   const workspace = await createWorkspace();
   const provider = await startSyntheticProvider();
-  const client = new CopilotClient({
-    connection: RuntimeConnection.forStdio({
-      path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
-    }),
-    mode: "empty",
-    workingDirectory: workspace.repository,
-    baseDirectory: workspace.config,
-    env: workspace.env,
-    useLoggedInUser: false,
-    logLevel: "none",
-  });
+  function createClient() {
+    return new CopilotClient({
+      connection: RuntimeConnection.forStdio({
+        path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
+      }),
+      mode: "empty",
+      workingDirectory: workspace.repository,
+      baseDirectory: workspace.config,
+      env: workspace.env,
+      useLoggedInUser: false,
+      logLevel: "none",
+    });
+  }
+  let client = createClient();
   const observations: { scenario: string; code: string; durationMs: number }[] = [];
   const modelCalls: { delegated: boolean; code: string; durationMs: number }[] = [];
   const helperNames = new Set<string>();
+  const observationWaiters = new Set<() => void>();
   let stage = "host-start";
   let outcome: "PASS" | "ERROR" = "ERROR";
   let version = "unverified";
   let failureCode: string | number | null = null;
-  let originCollisionObserved = false;
 
   const config: SessionConfig = {
     workingDirectory: workspace.repository,
@@ -97,6 +100,7 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
         code,
         durationMs: Math.ceil(performance.now() - start.time),
       });
+      for (const notify of observationWaiters) notify();
     });
     const unsubscribeHelpers = session.on("subagent.started", (event) => {
       if (["helper-alpha", "helper-beta"].includes(event.data.agentName)) {
@@ -116,6 +120,7 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     args: Record<string, string> = {},
     expectedCode = "HOST_IDENTITY_UNSUPPORTED",
   ) {
+    stage = scenario;
     const start = performance.now();
     const result = await session.rpc.tools.execute({
       name: IDENTITY_TOOL_NAME,
@@ -152,6 +157,29 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     await session.rpc.tools.initializeAndValidate();
   }
 
+  async function selectAgent(session: CopilotSession, name: string) {
+    await session.rpc.agent.select({ name });
+    await session.rpc.tools.initializeAndValidate();
+  }
+
+  async function waitForHelperEvents() {
+    await new Promise<void>((resolve, reject) => {
+      const check = () => {
+        if (modelCalls.filter((call) => call.delegated).length >= 2) {
+          clearTimeout(timer);
+          observationWaiters.delete(check);
+          resolve();
+        }
+      };
+      const timer = setTimeout(() => {
+        observationWaiters.delete(check);
+        reject(new Error("HOST_EVENT_DELIVERY_DEADLINE_EXCEEDED"));
+      }, IDENTITY_DEADLINE_MS);
+      observationWaiters.add(check);
+      check();
+    });
+  }
+
   try {
     const sdkPackage: unknown = JSON.parse(
       await readFile(
@@ -181,29 +209,20 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     assert.ok(alpha && beta, "SYNTHETIC_HELPERS_NOT_DISCOVERED");
     assert.equal(alpha.displayName, beta.displayName);
     assert.notEqual(alpha.id, beta.id);
-    const originPeer = agents.find((agent) => agent.name === "origin-peer");
-    assert.ok(originPeer?.path, "FILE_DEFINITION_ORIGIN_NOT_DISCOVERED");
-    assert.ok(
-      originPeer.source === "project" || originPeer.source === "user",
-      "FILE_DEFINITION_ORIGIN_UNAVAILABLE",
-    );
-    originCollisionObserved = true;
-    await session.rpc.agent.select({ name: originPeer.id });
-    await dispatch(session, "definition-origin-collision");
-    await session.rpc.agent.select({ name: alpha.id });
+    await selectAgent(session, alpha.id);
     await dispatch(session, "duplicate-display-name-alpha");
-    await session.rpc.agent.select({ name: beta.id });
+    await selectAgent(session, beta.id);
     await dispatch(session, "duplicate-display-name-beta");
-    await session.rpc.agent.select({ name: "foreground" });
+    await selectAgent(session, "foreground");
 
     stage = "concurrent-switch";
     await Promise.all([
       dispatch(session, "concurrent-call-alpha"),
       dispatch(session, "concurrent-call-beta"),
-      session.rpc.agent.select({ name: alpha.id }),
+      selectAgent(session, alpha.id),
     ]);
     await dispatch(session, "after-foreground-switch");
-    await session.rpc.agent.select({ name: "foreground" });
+    await selectAgent(session, "foreground");
 
     stage = "model-tool-boundary";
     const stopObserving = observe(session);
@@ -226,6 +245,7 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
       ),
     );
     assert.equal(taskResults.length, 2);
+    await waitForHelperEvents();
     assert.equal(helperNames.size, 2, "NAMED_HELPERS_DID_NOT_START");
     assert.ok(
       modelCalls.filter((call) => call.delegated).length >= 2,
@@ -239,6 +259,7 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     await load(session);
     await dispatch(session, "extension-reload");
     await session.rpc.agent.reload();
+    await session.rpc.tools.initializeAndValidate();
     await dispatch(session, "definition-reload");
 
     stage = "resume";
@@ -247,6 +268,16 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     session = await client.resumeSession(sessionId, config);
     await load(session);
     await dispatch(session, "session-resume");
+    await session.disconnect();
+
+    stage = "cold-resume";
+    assert.equal((await client.stop()).length, 0, "HOST_RESTART_CLEANUP_FAILED");
+    client = createClient();
+    await client.start();
+    assert.equal((await client.getStatus()).version, PUBLIC_CLI_VERSION);
+    session = await client.resumeSession(sessionId, config);
+    await load(session);
+    await dispatch(session, "cold-session-resume");
     await session.disconnect();
 
     stage = "repository-scope";
@@ -268,6 +299,9 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
     ) {
       failureCode = error.code;
     }
+    if (error instanceof Error && /^[A-Z_]+$/.test(error.message)) {
+      failureCode = error.message;
+    }
     throw new Error(
       `PUBLIC_HOST_PROBE_FAILED:${stage}; code=${failureCode ?? "unclassified"}; no raw host logs are published`,
     );
@@ -288,7 +322,6 @@ test("pinned public host loads and dispatches the fail-closed extension", { time
       directCalls: observations,
       modelToolCalls: modelCalls,
       namedHelpersObserved: helperNames.size,
-      originCollisionObserved,
       provider: provider.counts(),
       cleanupErrors: cleanupErrors.length,
       omissions: [

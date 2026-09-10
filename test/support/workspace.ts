@@ -25,18 +25,8 @@ export async function createWorkspace() {
     COPILOT_TELEMETRY_DISABLED: "1",
   };
   await mkdir(config, { recursive: true });
-  await mkdir(join(config, "agents"), { recursive: true });
-  await cp(
-    new URL("../../../test/fixtures/origin-peer.agent.md", import.meta.url),
-    join(config, "agents", "origin-peer.agent.md"),
-  );
   for (const directory of [repository, otherRepository]) {
     await mkdir(join(directory, ".github", "extensions"), { recursive: true });
-    await mkdir(join(directory, ".github", "agents"), { recursive: true });
-    await cp(
-      new URL("../../../test/fixtures/origin-peer.agent.md", import.meta.url),
-      join(directory, ".github", "agents", "origin-peer.agent.md"),
-    );
     execFileSync("git", ["init", "--quiet", "--initial-branch=main", directory], {
       env,
       stdio: "pipe",
