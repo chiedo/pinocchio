@@ -1,7 +1,7 @@
 # Contributing
 
-Pinocchio has a configuration-bound identity implementation, not a working
-installer or memory service. The production gate is verified on the pinned
+Pinocchio has configuration-bound identity and local SQLite administration, not a working
+installer or model-facing memory service. The production identity gate is verified on the pinned
 public CLI/Linux baseline; shared caller-metadata inference remains unsupported.
 
 Read [the design](docs/DESIGN.md), [installation requirements](docs/INSTALL.md)
@@ -45,6 +45,10 @@ reproduction details and the difference between passing fail-closed tests and
 passing the production identity gate. See [BINDINGS.md](docs/BINDINGS.md) for local
 registration, revocation and the adapter contract. CI uploads only synthetic summaries, never raw
 host logs or session state.
+
+See [STORAGE.md](docs/STORAGE.md) for the administrative CLI, schema, retry
+protocol and migration boundaries. Storage tests use invented records and
+independent processes; never substitute a real memory store in these fixtures.
 
 ## License
 

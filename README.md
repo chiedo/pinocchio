@@ -6,12 +6,14 @@ Pinocchio is a planned local memory extension for named GitHub Copilot CLI
 agents. Each agent would keep its own knowledge across sessions, including when
 another agent delegates work to it.
 
-**Identity layer implemented; memory tools are next.** The
+**Identity and local SQLite storage implemented; model-facing memory tools are next.** The
 [configuration-bound identity gate](docs/COMPATIBILITY.md) passes on public
 Copilot CLI 1.0.83 / Linux x64. Agent-specific MCP servers resolve stable
 definition namespaces and explicit repository/global scopes using a private
 binding registry. Invalid, revoked and stale bindings fail closed.
-There is no memory storage, profile enrollment or production installer yet.
+The [local administrative CLI](docs/STORAGE.md) supports sourced notes, search,
+correction, deletion, disable controls and durable retry recovery. There is no
+model-facing memory tool, profile enrollment or production installer yet.
 
 ## The idea
 
@@ -44,6 +46,7 @@ capabilities, and use the intended local data store.
 - [Complete design, acceptance criteria, and confidence assessment](docs/DESIGN.md)
 - [Identity compatibility report and development commands](docs/COMPATIBILITY.md)
 - [Binding registration, revocation and MCP configuration](docs/BINDINGS.md)
+- [Local memory commands, recovery and migrations](docs/STORAGE.md)
 - [Installation, upgrades, and uninstall](docs/INSTALL.md)
 - [Privacy and public-data policy](PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)
