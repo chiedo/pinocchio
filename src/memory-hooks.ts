@@ -33,6 +33,7 @@ export function createMemoryHooks(configRoot: string) {
   };
   return {
     hooks,
+    health: () => worker.call({ action: "health", configRoot }),
     invalidate: (root: string) => worker.call({ action: "invalidate", configRoot, root }),
     close: () => worker.close(),
   };

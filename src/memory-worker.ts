@@ -10,6 +10,7 @@ const referenceSchema = z.object({
   configRoot: z.string(), bindingId: z.string(), fingerprint: z.string(),
 }).strict();
 const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("health"), configRoot: z.string() }).strict(),
   z.object({ action: z.literal("start"), configRoot: z.string(), root: z.string(), recipient: z.string(), stamp: z.string() }).strict(),
   z.object({ action: z.literal("invalidate"), configRoot: z.string(), root: z.string() }).strict(),
   z.object({ action: z.literal("ticket"), configRoot: z.string(), root: z.string(), recipient: z.string(),
@@ -23,6 +24,7 @@ async function execute(raw: unknown): Promise<unknown> {
   if (command.action === "tool") await loadBinding(command.reference);
   const ledger = await ContextLedger.open(command.action === "tool" ? command.reference.configRoot : command.configRoot);
   try {
+    if (command.action === "health") return { status: "ready", protocol: 1 };
     if (command.action === "start") return ledger.start(command.root, command.recipient, command.stamp);
     if (command.action === "invalidate") return ledger.invalidate(command.root);
     if (command.action === "ticket") return ledger.issue(command);

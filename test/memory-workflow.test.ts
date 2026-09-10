@@ -141,7 +141,8 @@ test("enrolled native profiles recall independently through the production conte
     stage = "extension-reload";
     await session.rpc.extensions.reload();
     const { extensions } = await session.rpc.extensions.list();
-    assert.ok(extensions.some((extension) => extension.name === "pinocchio-memory" && extension.status === "running"));
+    assert.ok(extensions.some((extension) => extension.name === "pinocchio-memory" && extension.status === "running"),
+      JSON.stringify(extensions.map((extension) => ({ name: extension.name, status: extension.status }))));
     await session.rpc.agent.select({ name: "memory-foreground" });
     await session.rpc.tools.initializeAndValidate();
     await own(session, "FOREGROUND SEARCH after extension reload.", "ok");

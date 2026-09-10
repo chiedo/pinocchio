@@ -14,6 +14,16 @@ export async function main(args: string[]) {
     repository: { type: "string" }, global: { type: "boolean" }, name: { type: "string" },
   } });
   if (positionals.length !== 1) throw new ToolError("INVALID_ARGUMENTS");
+  const allowed: Record<string, string[]> = {
+    "prepare-context": ["config-root"],
+    enroll: ["config-root", "binding", "fingerprint", "allow-shared"],
+    remove: ["config-root", "binding", "fingerprint"],
+    create: ["config-root", "definition", "origin-root", "repository", "global", "name"],
+  };
+  const commandOptions = allowed[positionals[0] ?? ""];
+  if (!commandOptions || Object.keys(values).some((key) => !commandOptions.includes(key))) {
+    throw new ToolError("INVALID_ARGUMENTS");
+  }
   const configRoot = configRootPath(values["config-root"]);
   if (positionals[0] === "prepare-context") return prepareContextExtension(configRoot);
   if (positionals[0] === "create") {
