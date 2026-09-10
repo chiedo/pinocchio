@@ -2,12 +2,13 @@
 
 ## Current status
 
-**There is no production installer or working memory tool.** The source now
-includes a minimal development extension exposing `pinocchio_identity_status`.
-It returns an explicit unsupported/unavailable result, selects no namespace
-and stores nothing. The [identity gate](COMPATIBILITY.md) remains **NO-GO**.
+**There is no production installer or working memory tool.** The source provides
+a [configuration-bound identity layer](BINDINGS.md), verified on public
+CLI 1.0.83 / Linux x64. `npm run bindings -- bind ...` registers a canonical
+definition and explicit scope, returning an agent-specific MCP launch
+configuration. It does not edit profiles or create memory records.
 
-`npm ci` and `npm run build` build the source-checkout diagnostic; they do not
+`npm ci` and `npm run build` build the source-checkout diagnostics; they do not
 enable memory or install a user-level extension. The entry is
 `.github/extensions/pinocchio/extension.mjs`, loaded by an extension-capable host
 after building. The automated public-host reproduction is documented in the
@@ -29,11 +30,11 @@ be added to the checkout.
 
 | Host | Status | Requirement before claiming support |
 |---|---|---|
-| GitHub Copilot CLI | Identity-gate prototype; NO-GO | Prove trusted identity before adding memory, enrollment or a production installer. |
+| GitHub Copilot CLI | Identity gate PASS on 1.0.83 / Linux x64 | Storage, memory tools, enrollment and release packaging remain separate steps. |
 | GitHub Copilot desktop app | Planned, separately gated | Verify the app loads the integration, exposes the required tool/caller metadata, and uses the intended local runtime and data directories. |
 | GitHub web, GitHub Mobile, hosted GitHub Apps | Out of scope | Local CLI installation does not establish access from these hosts. |
 
-No minimum CLI/app version or operating-system support matrix has been established.
+The identity-only baseline is not a memory release or a desktop support claim.
 macOS, Linux and Windows must each be listed as supported only after validation.
 Compatibility with one host or machine must not be generalized to everyone.
 

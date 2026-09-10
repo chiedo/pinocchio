@@ -99,6 +99,8 @@ Revocation, changes to the pinned record, repository replacement, cancellation
 or disposal prevents a successful result. The whole operation has a 900 ms
 budget, reserving headroom under the proposed one-second backend deadline.
 Late completions are discarded, not delivered or rerouted.
+Operations must remain asynchronous/nonblocking; the adapter is not a worker
+thread and cannot preempt synchronous code that blocks the event loop.
 
 The final validation is the read-result linearization point; revocation cannot
 recall a response already delivered. The adapter does **not** undo operation side

@@ -61,6 +61,24 @@ test("repository and global scopes are explicit and cannot be interchanged", asy
   } finally { await f.close(); }
 });
 
+test("a live adapter cannot be retargeted by mutating its launch reference", async () => {
+  const f = await createProductionFixture();
+  try {
+    const alpha = await f.bind("alpha");
+    const beta = await f.bind("beta");
+    const adapter = new BoundIdentityAdapter(alpha);
+    const original = await adapter.resolve();
+    assert.equal(original.status, "bound");
+    Object.assign(alpha, beta);
+    const after = await adapter.resolve();
+    assert.deepEqual(after, original);
+    if (after.status === "bound") {
+      assert.ok(Object.isFrozen(after.identity));
+      assert.ok(Object.isFrozen(after.identity.scope));
+    }
+  } finally { await f.close(); }
+});
+
 test("custom roots, registry permissions and durable concurrent registration", async () => {
   const f = await createProductionFixture();
   try {
@@ -178,6 +196,20 @@ test("in-flight revocation discards a completed operation's result", async () =>
     await revokeBinding(ref);
     release();
     assert.deepEqual(await pending, { status: "unavailable", code: "REVOKED_BINDING" });
+  } finally { await f.close(); }
+});
+
+test("a removed definition can be revoked before its path is reused", async () => {
+  const f = await createProductionFixture();
+  try {
+    const ref = await f.bind("alpha");
+    const path = join(f.definitions.alpha.root, "shared.agent.md");
+    await rm(path);
+    await revokeBinding(ref);
+    await writeFile(path, "Recreated synthetic definition.");
+    assert.deepEqual(await new BoundIdentityAdapter(ref).resolve(), {
+      status: "unavailable", code: "REVOKED_BINDING",
+    });
   } finally { await f.close(); }
 });
 

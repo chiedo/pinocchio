@@ -1,7 +1,8 @@
 # Contributing
 
-Pinocchio has an identity-gate diagnostic scaffold, not a working installer or
-memory implementation. A green test suite does not unblock the identity gate.
+Pinocchio has a configuration-bound identity implementation, not a working
+installer or memory service. The production gate is verified on the pinned
+public CLI/Linux baseline; shared caller-metadata inference remains unsupported.
 
 Read [the design](docs/DESIGN.md), [installation requirements](docs/INSTALL.md)
 and [privacy policy](PRIVACY.md) before proposing changes.
@@ -41,7 +42,8 @@ loopback provider; no authentication or real model is required.
 
 See [the compatibility report](docs/COMPATIBILITY.md) for module boundaries,
 reproduction details and the difference between passing fail-closed tests and
-passing the identity gate. CI uploads only the synthetic summary, never raw
+passing the production identity gate. See [BINDINGS.md](docs/BINDINGS.md) for local
+registration, revocation and the adapter contract. CI uploads only synthetic summaries, never raw
 host logs or session state.
 
 ## License

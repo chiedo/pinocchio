@@ -194,11 +194,10 @@ async function assertNotRevoked(reference: BindingReference) {
   }
   throw new BindingError("REVOKED_BINDING");
 }
-export async function loadBinding(reference: BindingReference, signal?: AbortSignal): Promise<BindingRecord> {
+async function readRecord(reference: BindingReference, signal?: AbortSignal): Promise<BindingRecord> {
   validateReference(reference);
   signal?.throwIfAborted();
   await checkRegistry(reference.configRoot);
-  await assertNotRevoked(reference);
   const path = join(registryPath(reference.configRoot), `${reference.bindingId}.json`);
   let text: string;
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -221,7 +220,15 @@ export async function loadBinding(reference: BindingReference, signal?: AbortSig
     record.id !== reference.bindingId ||
     definition.id !== definitionId(definition.origin, definition.root, definition.path) ||
     record.namespace !== namespace(definition.path, definition.id) ||
-    !within(definition.root, definition.path) ||
+    !within(definition.root, definition.path)
+  ) throw new BindingError("INVALID_BINDING");
+  return record;
+}
+export async function loadBinding(reference: BindingReference, signal?: AbortSignal): Promise<BindingRecord> {
+  const record = await readRecord(reference, signal);
+  await assertNotRevoked(reference);
+  const definition = record.definition;
+  if (
     await realpath(definition.root) !== definition.root ||
     await realpath(definition.path) !== definition.path ||
     !(await stat(definition.path)).isFile()
@@ -240,13 +247,8 @@ export async function loadBinding(reference: BindingReference, signal?: AbortSig
   return record;
 }
 export async function revokeBinding(reference: BindingReference): Promise<void> {
-  validateReference(reference);
-  await checkRegistry(reference.configRoot);
-  try { await loadBinding(reference); }
-  catch (error) {
-    if (error instanceof BindingError && error.code === "REVOKED_BINDING") return;
-    throw error;
-  }
+  // Revocation must remain possible after the definition or repository is gone.
+  await readRecord(reference);
   try {
     await writeExclusive(join(registryPath(reference.configRoot), `${reference.bindingId}.revoked`), "");
   } catch (error) { if (!hasCode(error, "EEXIST")) throw error; }

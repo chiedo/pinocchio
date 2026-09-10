@@ -1,11 +1,11 @@
 # Identity compatibility gate
 
-**Production identity gate: NO-GO. Agent-bound MCP experiment: PASS.**
-The shared extension still cannot infer a trusted caller definition.
-Configuration-bound MCP servers passed the isolation experiment below, providing
-an alternative that does not require a new caller-metadata API. Production
-definition enrollment and lifecycle validation remain required before closing
-issue #2 or starting transactional memory.
+**Production identity gate: PASS for explicit configuration-bound MCP servers.**
+The pinned public CLI/Linux baseline resolves canonical definition identities and
+repository/global scopes through the production binding registry, including
+revocation and lifecycle checks. The original shared extension still cannot infer
+a trusted caller definition and remains fail-closed. Its historical NO-GO is not
+the decision for the new architecture.
 
 ## Public baseline
 
@@ -14,8 +14,41 @@ issue #2 or starting transactional memory.
 | Public CLI | [1.0.83](https://github.com/github/copilot-cli/releases/tag/v1.0.83), released September 4, 2026 |
 | Public SDK | [1.0.13](https://www.npmjs.com/package/@github/copilot-sdk/v/1.0.13); its package manifest pins CLI 1.0.83 |
 | Runtime | Node.js 22.18.0, TypeScript, compiled ESM |
-| Public-host execution | Synthetic harness PASS on `linux-x64`; identity gate NO-GO |
-| Supported hosts | None; desktop and other operating systems are not certified |
+| Public-host execution | Configuration-bound production identity gate PASS on `linux-x64` |
+| Supported surface | Identity diagnostics only on CLI 1.0.83 / Linux x64; no memory release, desktop or other-platform certification |
+
+## Production identity gate
+
+On September 10, 2026, the full synthetic suite passed, including **29/29
+production public-host checks**, using the real `BoundIdentityAdapter`, private
+registry and MCP SDK server, not the prototype protocol fixture.
+[Measured CI run](https://github.com/chiedo/pinocchio/actions/runs/34533525350).
+That run passed 24 tests; a subsequent removed-definition revocation regression
+adds one test. The current complete suite is the reproducible source of truth.
+
+| Requirement | Production evidence |
+|---|---|
+| Stable owner and origin | Three real synthetic definition files with the same basename, distinct project/user/plugin origins and distinct namespaces |
+| Foreground and helpers | Matching registered identities in direct, model-generated and concurrent delegated calls |
+| Repository/global boundaries | Separate bound tools return only their configured scope; the same definition retains its namespace |
+| Unauthorized target | Direct and model-emitted cross-agent requests cannot return another registered identity |
+| Edits and lifecycle | Prompt/display edits preserve identity; reload, warm resume and cold process restart preserve valid bindings |
+| Stale binding | Live revocation, revoked scope after restart and altered launch fingerprints return unavailable, without identity data |
+| Bounded failures | Adapter operations have a 900 ms budget; unit cases cover cancelled, missing, invalid, delayed and in-flight revoked work |
+| Registry reliability | Private modes, symlink rejection, canonical aliases, concurrent registration, independent CLI processes and definition/repository replacement |
+| No automatic orchestration | Normal MCP tools only; no profile mutations, model changes, hidden prompts or extra agents |
+
+Observed timed production host calls in the linked run were **10-204 ms**,
+including host dispatch. This is a small synthetic sample, not a p95 performance
+guarantee. Only aggregate case results and timings are published in
+`test-results/production-bindings.json`. The other reports preserve the original
+shared-extension NO-GO and earlier fixture experiment; they are labeled separately.
+
+See [BINDINGS.md](BINDINGS.md) for runnable registration/status/revocation commands,
+custom roots, lifetime semantics and explicit host tool-allowlist requirements.
+Automatic profile enrollment is deliberately deferred to issue #4. The
+production binding metadata and reusable adapter are available to issue #3 after
+this change merges; this does not claim memory persistence already exists.
 
 The compatibility probe requires the exact public runtime and SDK versions. It
 launches the locked `@github/copilot` executable, not an ambient `copilot`,
@@ -25,7 +58,7 @@ the unmodified, pinned public npm SDK's `dist/` directory as `extensionSdkPath`.
 It checks both public versions rather than using the SDK from a local CLI
 installation.
 
-## Blocker
+## Historical blocker: shared caller-metadata inference
 
 The public SDK's `ToolInvocation` supplies `sessionId`, `toolCallId`, `toolName`,
 arguments, optional cancellation and tracing metadata. It does **not** provide
@@ -67,12 +100,11 @@ times are published in `test-results/public-host.json`. Raw prompts, events,
 session identifiers and host logs are not uploaded. Temporary host state is
 removed after the probe.
 
-**A passing test suite means the diagnostic fails closed as expected. It does
-not mean the identity gate passed.** The generated report separates
+**The original shared-extension test only proves safe rejection.** Its report separates
 `syntheticHarness` from `identityGate`; neither missing tools nor an incomplete
 probe is silently classified as successful coverage.
 
-## Measured public-host result
+## Historical shared-extension result
 
 On September 10, 2026, the complete suite passed in a clean GitHub Codespace:
 
@@ -124,10 +156,15 @@ session ID, display name or parent selection can grant access.
 | `src/tool.ts` | No-argument schema; reject owner/scope injection; render visible failure status |
 | `src/identity.ts` | Host-independent failure contract and proposed deadline |
 | `src/copilot-identity.ts` | Host-specific, fail-closed adapter; no guessed namespace or I/O |
+| `src/binding-registry.ts` | Canonical identities/scopes, immutable private records and durable revocation |
+| `src/bound-identity.ts` | Bounded pre/post-work validation and stale-result rejection |
+| `src/bound-mcp.ts` | Production no-owner identity diagnostic over the public MCP SDK |
+| `src/bindings-cli.ts` | Local bind/status/revoke commands and trusted MCP launch configuration |
 | `test/support/` | Isolated public runtime and invented provider fixtures, never runtime dependencies |
 
-The host supplies the SDK when loading the extension. The pinned npm SDK is a
-development dependency for typechecking and reproducible public-host probes.
+The host supplies the Copilot SDK when loading the shared extension. The pinned
+npm Copilot SDK is a development dependency for reproducible public-host probes.
+The separate production server uses the pinned MCP SDK and Zod runtime dependencies.
 There is no bundler, database, embedding engine, installer or profile mutation.
 Future persistence belongs behind a separately proven identity boundary, outside
 the dispatch path and the source checkout; it is not implemented here.
@@ -174,24 +211,23 @@ launch constants, not an implementation of canonical definition discovery.
 Tool isolation remains distinct from OS isolation: agents with shell/file access
 could access same-user files, as already described in the privacy policy.
 
-### What remains before closing #2
+### Production follow-through
 
-Implement a trusted local binding registry keyed by canonical definition origin
-and stable ID, not display name. Validate configuration roots, duplicate origins,
-repository/global scope, invalid and missing bindings, and stale-result
-invalidation. Wire it to the tested MCP configuration without accepting owner
-arguments from the model. Prove those production bindings across the same host
-cases before allowing memory I/O.
+The production registry and adapter described above now implement this
+configuration-bound approach. The prototype's synthetic constant IDs are not used
+by the production server. Registry metadata contains canonical local origins and
+scope references; model tools accept no owner arguments.
 
 This path requires explicit configuration/enrollment and may use one process
 per agent binding rather than one shared extension process. It does not require
 changing models, adding a hidden agent, or waiting for a new public SDK API.
 
-## Reopening the gate
+## Gate boundary
 
-Either a host caller-metadata contract or trusted configuration-bound tools must
-bind each call to its definition ID and origin, repository/global scope and a
-verifiable live generation. Re-run
-foreground plus two helpers, duplicate names/origins, concurrent switching,
-reload/resume and the one-second failure cases on a pinned public release before
-adding a success path or unblocking step 2.
+This PASS applies to explicit per-definition MCP configuration with tool
+allowlists on the tested host. It does not certify unrestricted tool inheritance,
+shared session-level installation of every agent's servers, remote definitions,
+desktop compatibility or OS isolation. Re-run the full gate when changing the
+public host, launch configuration or binding format. Future memory writes must
+still implement their own transactional scope checks and outcome-unknown
+semantics; the identity adapter does not roll back side effects.
