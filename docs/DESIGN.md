@@ -2,6 +2,9 @@
 
 **Status:** Proposed, not implemented.
 
+The [step-1 diagnostic and compatibility report](COMPATIBILITY.md) are available.
+The identity gate is **NO-GO**; the memory design below is not implemented.
+
 Pinocchio gives each enrolled named custom agent its own persistent memory,
 whether that agent is used directly or as a delegated helper. It is a local
 extension and tool layer, not an agent orchestrator.

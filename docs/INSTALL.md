@@ -2,12 +2,16 @@
 
 ## Current status
 
-**Pinocchio is not installable yet.** This repository contains documentation,
-not a released extension, package, installer, or working memory tools.
+**There is no production installer or working memory tool.** The source now
+includes a minimal development extension exposing `pinocchio_identity_status`.
+It returns an explicit unsupported/unavailable result, selects no namespace
+and stores nothing. The [identity gate](COMPATIBILITY.md) remains **NO-GO**.
 
-There is currently no `npm install`, `pip install`, or extension-copy command
-that enables Pinocchio. Do not paste the proposed agent instructions into active
-profiles and expect persistence before the tools are implemented.
+`npm ci` and `npm run build` build the source-checkout diagnostic; they do not
+enable memory or install a user-level extension. The entry is
+`.github/extensions/pinocchio/extension.mjs`, loaded by an extension-capable host
+after building. The automated public-host reproduction is documented in the
+compatibility report. Do not enroll active agent profiles or expect persistence.
 
 ## Get the source and plan
 
@@ -25,7 +29,7 @@ be added to the checkout.
 
 | Host | Status | Requirement before claiming support |
 |---|---|---|
-| GitHub Copilot CLI | Planned | Verify extension loading, memory-tool availability, trusted agent identity, delegation, restart, and enrollment on named public releases. |
+| GitHub Copilot CLI | Identity-gate prototype; NO-GO | Prove trusted identity before adding memory, enrollment or a production installer. |
 | GitHub Copilot desktop app | Planned, separately gated | Verify the app loads the integration, exposes the required tool/caller metadata, and uses the intended local runtime and data directories. |
 | GitHub web, GitHub Mobile, hosted GitHub Apps | Out of scope | Local CLI installation does not establish access from these hosts. |
 

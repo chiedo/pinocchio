@@ -6,8 +6,11 @@ Pinocchio is a planned local memory extension for named GitHub Copilot CLI
 agents. Each agent would keep its own knowledge across sessions, including when
 another agent delegates work to it.
 
-**Design stage: there is no installable extension or working memory tool yet.**
-This repository currently contains the implementation plan and project guidance.
+**Identity-gate prototype: no working memory tools or supported host yet.**
+The source contains a minimal diagnostic extension and a fail-closed identity
+adapter. It selects no namespace and stores nothing. The
+[public-host compatibility gate](docs/COMPATIBILITY.md) remains **NO-GO**;
+downstream memory work is blocked.
 
 ## The idea
 
@@ -27,7 +30,7 @@ checkout instructions, planned setup flow, and release requirements.
 
 | Host | Current Pinocchio support |
 |---|---|
-| GitHub Copilot CLI | Planned; no supported release or minimum version established yet. |
+| GitHub Copilot CLI | Diagnostic scaffold only; identity gate is NO-GO. |
 | GitHub Copilot desktop app | Targeted; requires separate compatibility validation. |
 | GitHub web, GitHub Mobile, or a hosted GitHub App | Not targeted by this local extension design. |
 
@@ -38,6 +41,7 @@ capabilities, and use the intended local data store.
 ## Documentation
 
 - [Complete design, acceptance criteria, and confidence assessment](docs/DESIGN.md)
+- [Identity compatibility report and development commands](docs/COMPATIBILITY.md)
 - [Installation, upgrades, and uninstall](docs/INSTALL.md)
 - [Privacy and public-data policy](PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)
