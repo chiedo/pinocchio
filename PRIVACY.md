@@ -1,9 +1,10 @@
 # Privacy and public-data policy
 
 Pinocchio is a public repository. It contains an identity binding layer and a
-memory design, not an implemented memory service. Binding metadata includes
+local SQLite memory storage, but no model-facing memory service. Binding metadata includes
 local definition/repository paths and belongs outside the checkout; never upload
-the private registry. The requirements below govern contributions and future work.
+the private registry. Memory content, evidence paths, databases and journals also
+belong outside the checkout. The requirements below govern contributions and future work.
 
 ## What may be published
 
@@ -30,7 +31,7 @@ The project's own public repository address and public dependency references are
 not examples of private-project disclosure. Git attribution should use a public
 alias and a GitHub-provided noreply address, not a private email or legal name.
 
-## Planned runtime boundaries
+## Runtime boundaries and future model integration
 
 | Boundary | Requirement |
 |---|---|

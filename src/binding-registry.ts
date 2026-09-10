@@ -95,7 +95,7 @@ function validateReference(reference: BindingReference) {
     !digestSchema.safeParse(reference.fingerprint).success
   ) throw new BindingError("INVALID_BINDING");
 }
-async function privateDirectory(path: string, create: boolean) {
+export async function privateDirectory(path: string, create: boolean) {
   if (create) {
     try { await mkdir(path, { mode: 0o700 }); }
     catch (error) { if (!hasCode(error, "EEXIST")) throw error; }

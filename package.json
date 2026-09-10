@@ -12,6 +12,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "bindings": "node dist/src/bindings-cli.js",
+    "memory": "node dist/src/memory-cli.js",
     "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js"
   },
   "dependencies": {

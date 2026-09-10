@@ -15,7 +15,7 @@ the decision for the new architecture.
 | Public SDK | [1.0.13](https://www.npmjs.com/package/@github/copilot-sdk/v/1.0.13); its package manifest pins CLI 1.0.83 |
 | Runtime | Node.js 22.18.0, TypeScript, compiled ESM |
 | Public-host execution | Configuration-bound production identity gate PASS on `linux-x64` |
-| Supported surface | Identity diagnostics only on CLI 1.0.83 / Linux x64; no memory release, desktop or other-platform certification |
+| Supported surface | Identity MCP diagnostics on CLI 1.0.83 / Linux x64; separate local SQLite administration; no model-facing memory release, desktop or other-platform certification |
 
 ## Production identity gate
 
@@ -47,8 +47,27 @@ shared-extension NO-GO and earlier fixture experiment; they are labeled separate
 See [BINDINGS.md](BINDINGS.md) for runnable registration/status/revocation commands,
 custom roots, lifetime semantics and explicit host tool-allowlist requirements.
 Automatic profile enrollment is deliberately deferred to issue #4. The
-production binding metadata and reusable adapter are available to issue #3 after
-this change merges; this does not claim memory persistence already exists.
+production binding metadata also scopes the separate local SQLite store. This
+does not expose memory through the identity-only MCP diagnostic.
+
+## Local storage verification
+
+The [full synthetic CI run](https://github.com/chiedo/pinocchio/actions/runs/34537285277)
+passed **38/38 tests**, including 12 storage tests and the existing identity
+gates. A subsequent test executes the documented Bash example; the current
+complete suite remains the source of truth.
+
+| Storage boundary | Evidence |
+|---|---|
+| Durable transactions | Atomic note/evidence/revision/keyword/job/operation writes; restart and hot-journal recovery |
+| Retry and concurrency | Independent-process competing writers, expected revisions, busy errors, idempotent replay and lost acknowledgement recovery |
+| Correction/deletion | Old keywords disappear; every content revision is deleted; pending jobs cancel; retired operation IDs cannot resurrect content |
+| Scope and controls | Same-named definitions, separate repositories/global scope, custom config root and persistent scoped disable/enable |
+| Invalid state | Source failure and late index-job failure roll back; unsafe/replaced paths, revoked bindings, foreign owners and incompatible schemas fail closed |
+
+See [STORAGE.md](STORAGE.md) for commands and migration/recovery boundaries.
+No semantic retrieval, model-facing memory tools or worker latency certification
+is implied. Storage fixtures and raw databases are never published as artifacts.
 
 The compatibility probe requires the exact public runtime and SDK versions. It
 launches the locked `@github/copilot` executable, not an ambient `copilot`,
