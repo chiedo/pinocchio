@@ -1,8 +1,9 @@
 # Privacy and public-data policy
 
-Pinocchio is a public repository. It contains a design and an identity diagnostic,
-not an implemented memory service. The requirements below govern contributions
-and the future implementation.
+Pinocchio is a public repository. It contains an identity binding layer and a
+memory design, not an implemented memory service. Binding metadata includes
+local definition/repository paths and belongs outside the checkout; never upload
+the private registry. The requirements below govern contributions and future work.
 
 ## What may be published
 

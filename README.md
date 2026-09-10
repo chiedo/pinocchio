@@ -6,14 +6,12 @@ Pinocchio is a planned local memory extension for named GitHub Copilot CLI
 agents. Each agent would keep its own knowledge across sessions, including when
 another agent delegates work to it.
 
-**Identity-gate prototype: no working memory tools or supported host yet.**
-The source contains a minimal diagnostic extension and a fail-closed identity
-adapter. It selects no namespace and stores nothing. The
-[public-host compatibility gate](docs/COMPATIBILITY.md) remains **NO-GO**;
-downstream memory work is blocked.
-An [agent-bound MCP experiment](docs/COMPATIBILITY.md#configuration-bound-mcp-workaround)
-has passed public-host isolation checks; production binding/enrollment is not
-implemented yet.
+**Identity layer implemented; memory tools are next.** The
+[configuration-bound identity gate](docs/COMPATIBILITY.md) passes on public
+Copilot CLI 1.0.83 / Linux x64. Agent-specific MCP servers resolve stable
+definition namespaces and explicit repository/global scopes using a private
+binding registry. Invalid, revoked and stale bindings fail closed.
+There is no memory storage, profile enrollment or production installer yet.
 
 ## The idea
 
@@ -33,7 +31,7 @@ checkout instructions, planned setup flow, and release requirements.
 
 | Host | Current Pinocchio support |
 |---|---|
-| GitHub Copilot CLI | Diagnostic scaffold only; identity gate is NO-GO. |
+| GitHub Copilot CLI | Configuration-bound identity verified on 1.0.83 / Linux x64; no released memory product. |
 | GitHub Copilot desktop app | Targeted; requires separate compatibility validation. |
 | GitHub web, GitHub Mobile, or a hosted GitHub App | Not targeted by this local extension design. |
 
@@ -45,6 +43,7 @@ capabilities, and use the intended local data store.
 
 - [Complete design, acceptance criteria, and confidence assessment](docs/DESIGN.md)
 - [Identity compatibility report and development commands](docs/COMPATIBILITY.md)
+- [Binding registration, revocation and MCP configuration](docs/BINDINGS.md)
 - [Installation, upgrades, and uninstall](docs/INSTALL.md)
 - [Privacy and public-data policy](PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)

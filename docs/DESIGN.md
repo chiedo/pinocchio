@@ -1,10 +1,11 @@
 # Pinocchio design
 
-**Status:** Proposed, not implemented.
+**Status:** Identity layer implemented; memory behavior below remains proposed.
 
 The [step-1 diagnostic and compatibility report](COMPATIBILITY.md) are available.
-The production identity gate is **NO-GO**; an agent-bound MCP isolation experiment
-has passed, but the memory design below is not implemented.
+The configuration-bound identity gate is **PASS** on the pinned public CLI/Linux
+baseline. See [binding registration and lifecycle](BINDINGS.md); memory storage,
+profile enrollment and installation remain unimplemented.
 
 Pinocchio gives each enrolled named custom agent its own persistent memory,
 whether that agent is used directly or as a delegated helper. It is a local
@@ -94,9 +95,11 @@ trusted local setup binds an agent-specific MCP server to a stable definition
 and repository scope, and the host restricts that agent to its own memory tools.
 The model never supplies the owner. This replaces runtime caller discovery with
 explicit enrollment; it does not remove origin, scope or stale-binding checks.
-The [public-host experiment](COMPATIBILITY.md#configuration-bound-mcp-workaround)
-proves routing isolation for explicitly configured synthetic bindings. Production
-registry/enrollment and full identity-gate acceptance are still pending.
+The [public-host evidence](COMPATIBILITY.md#production-identity-gate) covers the
+production registry, stable origin-aware identities, explicit scopes, revocation
+and restart. Trusted setup uses `bindingLaunch` to supply agent-specific MCP
+configuration and explicit tool allowlists. Automatic profile enrollment remains
+step 3, not part of the identity layer.
 
 The implementation must map execution identity to a stable definition ID and
 origin, including canonical definition location where available. Distinct

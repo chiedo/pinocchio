@@ -35,5 +35,6 @@ jobs:
           path: |
             test-results/public-host.json
             test-results/bound-mcp.json
+            test-results/production-bindings.json
           if-no-files-found: error
           retention-days: 7
