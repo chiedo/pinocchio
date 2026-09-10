@@ -1,8 +1,8 @@
 # Privacy and public-data policy
 
-Pinocchio is a public repository. It currently contains a design, not an
-implemented memory service. The requirements below govern contributions and the
-future implementation.
+Pinocchio is a public repository. It contains a design and an identity diagnostic,
+not an implemented memory service. The requirements below govern contributions
+and the future implementation.
 
 ## What may be published
 

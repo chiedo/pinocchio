@@ -1,0 +1,22 @@
+{
+  "name": "pinocchio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fail-closed agent identity compatibility gate for a local Copilot extension.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0 <23"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js"
+  },
+  "devDependencies": {
+    "@github/copilot": "1.0.83",
+    "@github/copilot-sdk": "1.0.13",
+    "@types/node": "22.18.0",
+    "typescript": "5.9.3"
+  }
+}

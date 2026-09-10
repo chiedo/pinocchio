@@ -1,7 +1,7 @@
 # Contributing
 
-Pinocchio is currently in the design stage. There is no working installer or
-memory implementation to run yet.
+Pinocchio has an identity-gate diagnostic scaffold, not a working installer or
+memory implementation. A green test suite does not unblock the identity gate.
 
 Read [the design](docs/DESIGN.md), [installation requirements](docs/INSTALL.md)
 and [privacy policy](PRIVACY.md) before proposing changes.
@@ -32,6 +32,17 @@ Supported platforms and host versions will be established by clean installation
 and lifecycle checks. A CLI result does not establish desktop-app support.
 Do not add install commands to the release instructions until they exist and
 work on the advertised platform.
+
+## Development
+
+Use Node.js 22.18.0 (`.node-version`), then `npm ci`, `npm run typecheck` and
+`npm test`. The full suite includes a pinned public runtime and a scripted
+loopback provider; no authentication or real model is required.
+
+See [the compatibility report](docs/COMPATIBILITY.md) for module boundaries,
+reproduction details and the difference between passing fail-closed tests and
+passing the identity gate. CI uploads only the synthetic summary, never raw
+host logs or session state.
 
 ## License
 
