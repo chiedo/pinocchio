@@ -8,7 +8,9 @@ root precedence and immutable binding registration are described in [BINDINGS.md
 
 This is a local administrative API/CLI, **not model-facing tools or automatic
 collection**. Nothing edits agent profiles, changes model settings or installs an
-extension. It uses Node 22.18.0's built-in SQLite (which may print an experimental
+extension through this administrative interface. The separate
+[agent integration](MEMORY-TOOLS.md) uses this store from bounded workers.
+It uses Node 22.18.0's built-in SQLite (which may print an experimental
 warning). Linux CI is the validated baseline; desktop/other-platform support
 remains separately gated.
 

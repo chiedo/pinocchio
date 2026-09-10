@@ -1,10 +1,13 @@
 # Privacy and public-data policy
 
 Pinocchio is a public repository. It contains an identity binding layer and a
-local SQLite memory storage, but no model-facing memory service. Binding metadata includes
+local SQLite store and scoped keyword-memory tools. Binding metadata includes
 local definition/repository paths and belongs outside the checkout; never upload
 the private registry. Memory content, evidence paths, databases and journals also
 belong outside the checkout. The requirements below govern contributions and future work.
+The context ledger contains hashed execution IDs, request timestamps, usage and
+delivery metadata; its signing key is private. Neither belongs in public
+artifacts. Recalled snippets enter the configured model's context.
 
 ## What may be published
 

@@ -1,11 +1,14 @@
 # Pinocchio design
 
-**Status:** Identity layer implemented; memory behavior below remains proposed.
+**Status:** Identity, SQLite storage, keyword-memory tools and development
+enrollment are implemented. Semantic retrieval, release evaluations and
+installation remain gated future work.
 
 The [step-1 diagnostic and compatibility report](COMPATIBILITY.md) are available.
 The configuration-bound identity gate is **PASS** on the pinned public CLI/Linux
-baseline. See [binding registration and lifecycle](BINDINGS.md); memory storage,
-profile enrollment and installation remain unimplemented.
+baseline. See [binding registration and lifecycle](BINDINGS.md),
+[local storage](STORAGE.md) and [memory tools/enrollment](MEMORY-TOOLS.md).
+The remaining retrieval and release behavior below is a design target.
 
 Pinocchio gives each enrolled named custom agent its own persistent memory,
 whether that agent is used directly or as a delegated helper. It is a local
@@ -52,10 +55,11 @@ toward latency and cost. There is no claim that recall already works reliably.
 
 ## Agent profiles and tools
 
-Proposed tools, not available commands today:
+Implemented model-facing tools (prefixed by the profile's bound MCP server):
 
 - `agent_memory_search(query)`: returns bounded, sourced matches for the caller.
-- `agent_memory_save(...)`: saves a sourced note or an expected-revision correction.
+- `agent_memory_save(...)`: saves a sourced note or an expected-revision correction,
+  or resolves a durable operation ID.
 
 The installer must preserve existing profile content, tool access and model
 defaults. Verify tool availability before enrolling an agent. Apply a small,

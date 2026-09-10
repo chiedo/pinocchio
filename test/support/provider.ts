@@ -5,6 +5,7 @@ import { IDENTITY_TOOL_NAME } from "../../src/tool.js";
 export interface SyntheticProviderOptions {
   selectTool?: (messages: Record<string, unknown>[]) => string;
   allowUnofferedTool?: boolean;
+  toolArguments?: (messages: Record<string, unknown>[]) => Record<string, unknown>;
 }
 
 export async function startSyntheticProvider(options: SyntheticProviderOptions = {}) {
@@ -58,7 +59,7 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
         {
           id: `synthetic-tool-${requests}`,
           type: "function",
-          function: { name: toolName, arguments: "{}" },
+          function: { name: toolName, arguments: JSON.stringify(options.toolArguments?.(messages) ?? {}) },
         },
       ];
       const message = replied

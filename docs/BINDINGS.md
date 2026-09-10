@@ -123,5 +123,5 @@ gate reports. See [COMPATIBILITY.md](COMPATIBILITY.md) for measured results.
 Registry schema version 1 is strict; unknown versions are rejected. There is no
 automatic migration or downgrade. Revoked handles stay revoked after restart.
 Keep existing immutable metadata and explicitly register replacement bindings
-when configuration changes. Profile installation/removal is deferred to issue #4;
+when configuration changes. Profile enrollment/removal is documented in [MEMORY-TOOLS.md](MEMORY-TOOLS.md);
 memory records have a separate [schema and migration/rollback policy](STORAGE.md#migrations-and-rollback).

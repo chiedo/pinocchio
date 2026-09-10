@@ -19,6 +19,8 @@ __pycache__/
 
 # Private runtime state; synthetic fixtures should use reviewed text formats
 agent-memories/
+/pinocchio/bindings/
+/pinocchio/context/
 session-state/
 state/
 private/

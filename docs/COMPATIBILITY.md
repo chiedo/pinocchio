@@ -1,4 +1,28 @@
-# Identity compatibility gate
+# Identity and keyword-memory compatibility gates
+
+**Keyword-memory development gate: PASS on the pinned public host with root
+hook capability enabled.** The [passing integration run](https://github.com/chiedo/pinocchio/actions/runs/34540221637)
+uses actual enrolled native profiles, the production context extension and
+bound MCP memory servers. It verifies foreground save/recall, independent helper
+recall, rejected cross-agent calls, extension reload, cold resume with persistent
+accounting, and a new root session recalling prior notes.
+
+The public SDK harness must enable root hooks on create **and resume**, request
+extensions, and initialize the extension/tool catalog. Without that capability,
+the pinned host can reject cold-resume extension registration with `Hook processor
+is not configured`. Shutdown explicitly detaches the extension connection.
+This is a documented prerequisite, not an inferred identity fallback.
+
+Worker-level synthetic cases additionally cover three-snippet/800-unit responses,
+800-unit recipient requests, the shared 6,000-unit session cap, persisted dedup,
+simulated compaction/redelivery accounting, signed argument/repository context,
+queue/deadline failures, save recovery and reversible enrollment. Token charging
+uses conservative serialized UTF-8 bytes, not claimed model-specific precision.
+See [MEMORY-TOOLS.md](MEMORY-TOOLS.md) for exact limits and setup.
+
+Only the aggregate `test-results/memory-workflow.json` is published. Real-model
+compliance/quality, semantic retrieval, production installation and desktop
+support remain unvalidated separate gates.
 
 **Production identity gate: PASS for explicit configuration-bound MCP servers.**
 The pinned public CLI/Linux baseline resolves canonical definition identities and
@@ -15,7 +39,7 @@ the decision for the new architecture.
 | Public SDK | [1.0.13](https://www.npmjs.com/package/@github/copilot-sdk/v/1.0.13); its package manifest pins CLI 1.0.83 |
 | Runtime | Node.js 22.18.0, TypeScript, compiled ESM |
 | Public-host execution | Configuration-bound production identity gate PASS on `linux-x64` |
-| Supported surface | Identity MCP diagnostics on CLI 1.0.83 / Linux x64; separate local SQLite administration; no model-facing memory release, desktop or other-platform certification |
+| Supported surface | Identity diagnostics, SQLite administration and keyword-memory development integration on CLI 1.0.83 / Linux x64 with root hooks; no release, desktop or other-platform certification |
 
 ## Production identity gate
 

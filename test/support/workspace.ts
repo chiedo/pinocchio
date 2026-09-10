@@ -47,7 +47,7 @@ export async function createWorkspace() {
     env,
     async close() {
       // Only the exact temporary directory created by this fixture is removed.
-      await rm(root, { recursive: true });
+      await rm(root, { recursive: true, maxRetries: 5, retryDelay: 100 });
     },
   };
 }

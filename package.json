@@ -13,10 +13,12 @@
     "typecheck": "tsc --noEmit",
     "bindings": "node dist/src/bindings-cli.js",
     "memory": "node dist/src/memory-cli.js",
+    "enroll": "node dist/src/enrollment-cli.js",
     "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "yaml": "2.9.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

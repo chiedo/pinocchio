@@ -2,20 +2,22 @@
 
 ## Current status
 
-**There is no production installer or model-facing memory tool.** The source provides
+**There is no production installer.** The source provides
 a [configuration-bound identity layer](BINDINGS.md), verified on public
 CLI 1.0.83 / Linux x64. `npm run bindings -- bind ...` registers a canonical
 definition and explicit scope, returning an agent-specific MCP launch
 configuration. It does not edit profiles or create memory records.
 The separate [local storage CLI](STORAGE.md) can create and manage durable records
 after an explicit binding and namespace/scope selection.
+The [development enrollment helper](MEMORY-TOOLS.md) wires named profiles to
+scoped keyword-memory tools and a shared trusted-context extension.
 
 `npm ci` and `npm run build` build the source-checkout diagnostics; they do not
 enable memory or install a user-level extension. The entry is
 `.github/extensions/pinocchio/extension.mjs`, loaded by an extension-capable host
 after building. The automated public-host reproduction is documented in the
-compatibility report. Do not enroll active agent profiles expecting automatic
-memory; persistence is currently available only through the local storage API/CLI.
+compatibility report. Building alone does not enroll profiles. Development
+enrollment is explicit and recall remains best-effort, not automatic or guaranteed.
 
 ## Get the source and plan
 
@@ -33,7 +35,7 @@ be added to the checkout.
 
 | Host | Status | Requirement before claiming support |
 |---|---|---|
-| GitHub Copilot CLI | Identity gate PASS on 1.0.83 / Linux x64; separate local SQLite administration | Model-facing memory tools, enrollment and release packaging remain separate steps. |
+| GitHub Copilot CLI | Pinned 1.0.83 / Linux x64 development baseline; identity, SQLite and keyword-memory integration | Semantic retrieval, release evaluations and packaging remain separate gates. |
 | GitHub Copilot desktop app | Planned, separately gated | Verify the app loads the integration, exposes the required tool/caller metadata, and uses the intended local runtime and data directories. |
 | GitHub web, GitHub Mobile, hosted GitHub Apps | Out of scope | Local CLI installation does not establish access from these hosts. |
 

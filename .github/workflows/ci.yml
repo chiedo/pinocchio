@@ -36,5 +36,6 @@ jobs:
             test-results/public-host.json
             test-results/bound-mcp.json
             test-results/production-bindings.json
+            test-results/memory-workflow.json
           if-no-files-found: error
           retention-days: 7
