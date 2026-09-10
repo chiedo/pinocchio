@@ -1,6 +1,6 @@
 # Pinocchio
 
-Turn each copilot session into a real boy.
+Turn each copilot session into a real boy. Memory and all!
 
 Pinocchio is a planned local memory extension for named GitHub Copilot CLI
 agents. Each agent would keep its own knowledge across sessions, including when
