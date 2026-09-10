@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { chmod, lstat, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { chmod, lstat, mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { loadBinding, revokeBinding } from "../src/binding-registry.js";
@@ -316,4 +317,21 @@ test("local CLI requires scope, reads JSON from stdin, and supports the complete
   assert.equal((await run("enable", ["--operation", "cli-on"])).code, 0);
   assert.equal((await run("status", ["--query", "not-allowed"])).code, 1);
   assert.equal((await child(cli, ["status"])).code, 1);
+});
+
+test("documented Bash example completes using only synthetic local data", async (t) => {
+  const f = await fixture(t);
+  const doc = await readFile(new URL("../../docs/STORAGE.md", import.meta.url), "utf8");
+  const example = /```bash\n([\s\S]*?)\n```/.exec(doc)?.[1];
+  assert.ok(example);
+  const root = join(f.config, "documented-example");
+  await mkdir(root, { mode: 0o700 });
+  const script = example.replace('DEMO="$(mktemp -d)"', 'DEMO="$PINOCCHIO_EXAMPLE_ROOT"');
+  assert.notEqual(script, example);
+  const result = await promisify(execFile)("bash", ["-e", "-o", "pipefail", "-c", script], {
+    env: { ...process.env, PINOCCHIO_EXAMPLE_ROOT: root }, timeout: 30_000,
+  });
+  assert.match(result.stdout, /"action":"forget"/);
+  assert.match(result.stdout, /"disabled":true/);
+  assert.match(result.stdout, /"action":"enable"/);
 });

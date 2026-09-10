@@ -104,9 +104,10 @@ thread and cannot preempt synchronous code that blocks the event loop.
 
 The final validation is the read-result linearization point; revocation cannot
 recall a response already delivered. The adapter does **not** undo operation side
-effects. Future storage must validate before committing and preserve explicit
+effects. The separate [local storage API](STORAGE.md) validates before committing and preserves explicit
 outcome-unknown handling when a commit succeeds but its acknowledgement is
-cancelled or times out. That transactional contract belongs to issue #3.
+cancelled or times out. Its synchronous SQLite work is for administrative
+processes, not the model dispatch thread.
 
 `identity_status` returns opaque identity and scope keys, not local paths.
 Failures expose fixed codes rather than exception text or host traces.
@@ -123,4 +124,4 @@ Registry schema version 1 is strict; unknown versions are rejected. There is no
 automatic migration or downgrade. Revoked handles stay revoked after restart.
 Keep existing immutable metadata and explicitly register replacement bindings
 when configuration changes. Profile installation/removal is deferred to issue #4;
-memory records and their migration/rollback policy are deferred to issue #3.
+memory records have a separate [schema and migration/rollback policy](STORAGE.md#migrations-and-rollback).
