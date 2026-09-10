@@ -70,8 +70,9 @@ export async function main(args: string[]) {
     configRoot: configRootPath(values["config-root"]), bindingId: values.binding,
     fingerprint: values.fingerprint,
   }, { namespace: values.namespace, scope: values.scope });
+  let committedOperation: string | undefined;
   try {
-    switch (command) {
+    const result = await (async () => { switch (command) {
       case "remember":
         if (!note) throw new MemoryError("INVALID_INPUT");
         return await store.remember(note, values.operation ?? "");
@@ -87,8 +88,16 @@ export async function main(args: string[]) {
       case "disable": return await store.setDisabled(true, values.operation ?? "");
       case "enable": return await store.setDisabled(false, values.operation ?? "");
       default: throw new MemoryError("INVALID_INPUT");
+    } })();
+    if (result.status === "committed") committedOperation = result.operationId;
+    return result;
+  } finally {
+    try { store.close(); }
+    catch (error) {
+      if (committedOperation) throw new MemoryError("OUTCOME_UNKNOWN", { operationId: committedOperation });
+      throw error;
     }
-  } finally { store.close(); }
+  }
 }
 
 function writeResult(result: unknown) {

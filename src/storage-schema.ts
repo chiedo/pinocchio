@@ -59,16 +59,22 @@ CREATE TABLE operations (
 `;
 
 export function initializeStorage(db: DatabaseSync, binding: BindingRecord, scope: string) {
-  const version = db.prepare("PRAGMA user_version").get()?.user_version;
-  const application = db.prepare("PRAGMA application_id").get()?.application_id;
+  const header = db.prepare(`SELECT
+    (SELECT user_version FROM pragma_user_version) AS version,
+    (SELECT application_id FROM pragma_application_id) AS application,
+    (SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%') AS tables`).get();
+  const version = header?.version;
+  const application = header?.application;
   if (typeof version !== "number" || version > STORAGE_SCHEMA_VERSION ||
+      (version !== 0 && application !== APPLICATION_ID) ||
       (application !== 0 && application !== APPLICATION_ID)) {
     throw new MemoryError("SCHEMA_UNSUPPORTED");
   }
+  if (version === 0 && header?.tables !== 0) throw new MemoryError("SCHEMA_UNSUPPORTED");
   db.exec("PRAGMA busy_timeout=250; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;");
   const journal = db.prepare("PRAGMA journal_mode=DELETE").get()?.journal_mode;
   if (journal !== "delete") throw new MemoryError("SCHEMA_UNSUPPORTED");
-  db.exec("PRAGMA synchronous=FULL; BEGIN IMMEDIATE");
+  db.exec("PRAGMA synchronous=EXTRA; BEGIN IMMEDIATE");
   try {
     const current = db.prepare("PRAGMA user_version").get()?.user_version;
     if (current === 0) {

@@ -76,6 +76,7 @@ export class MemoryStore {
     reference: BindingReference,
     selection: { namespace: string; scope: "repository" | "global" },
   ) {
+    reference = Object.freeze({ ...reference });
     let db: DatabaseSync | undefined;
     try {
       const binding = await loadBinding(reference);
@@ -85,6 +86,10 @@ export class MemoryStore {
       const path = await storePath(reference.configRoot, binding.namespace, true);
       const file = await privateStoreFile(path);
       db = new DatabaseSync(path, { enableForeignKeyConstraints: true, allowExtension: false });
+      const opened = await privateStoreFile(path);
+      if (opened.device !== file.device || opened.inode !== file.inode) {
+        throw new MemoryError("STORE_REPLACED");
+      }
       initializeStorage(db, binding, `${binding.scope.kind}:${binding.scope.key}`);
       await loadBinding(reference);
       return new MemoryStore(reference, binding, db, path, file);

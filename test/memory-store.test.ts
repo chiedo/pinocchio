@@ -165,11 +165,9 @@ test("source checks roll back every table; URLs are syntax-only and file sources
   await store.remember(sourced, "file-source");
   await rename(file, `${file}.moved`);
   assert.equal((await store.remember(sourced, "file-source")).replayed, true);
-  await symlink(`${file}.moved`, join(f.otherRepository, "outside-link"));
-  sourced.evidence[0]!.reference.value = join(f.otherRepository, "outside-link");
-  // A symlink resolving inside the bound repository is permitted; outside targets are not.
   await writeFile(join(f.otherRepository, "outside.txt"), "synthetic");
-  sourced.evidence[0]!.reference.value = join(f.otherRepository, "outside.txt");
+  await symlink(join(f.otherRepository, "outside.txt"), join(f.repository, "outside-link"));
+  sourced.evidence[0]!.reference.value = "outside-link";
   await assert.rejects(store.remember(sourced, "outside"), { code: "INVALID_SOURCE" });
   sourced.evidence = [{ kind: "user_statement", reference: { type: "url", value: "https://example.invalid/source" } }];
   const url = await store.remember(sourced, "url");
@@ -251,7 +249,47 @@ test("revoked bindings and cancelled mutations cannot commit", async (t) => {
   await assert.rejects(store.remember(note(), "cancelled", controller.signal), { code: "CALL_CANCELLED" });
   assert.equal((await store.operationStatus("cancelled")).status, "not_found");
   await revokeBinding(f.ref);
-  await assert.rejects(store.remember(note(), "revoked"), { code: "BINDING_REVOKED" });
+  await assert.rejects(store.remember(note(), "revoked"), { code: "REVOKED_BINDING" });
+});
+
+test("late index-job failure rolls back correction content, keywords, revisions and receipt", async (t) => {
+  const f = await fixture(t);
+  const store = await f.open();
+  const saved = await store.remember(note(), "save");
+  assert.ok(saved.recordId);
+  const db = new DatabaseSync(store.path);
+  try {
+    db.exec(`CREATE TRIGGER synthetic_job_failure BEFORE INSERT ON index_jobs
+      BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`);
+    await assert.rejects(store.correct(saved.recordId, 1, note("synthetic rejected replacement"), "failed"),
+      { code: "STORE_IO_ERROR" });
+    assert.equal((await store.inspect(saved.recordId)).record.revision, 1);
+    assert.equal((await store.inspect(saved.recordId)).revisions.length, 1);
+    assert.equal((await store.search("cobalt")).items.length, 1);
+    assert.equal((await store.search("rejected")).status, "no_match");
+    assert.equal((await store.operationStatus("failed")).status, "not_found");
+    assert.equal(db.prepare("SELECT count(*) AS count FROM index_jobs WHERE status='pending'").get()?.count, 1);
+    db.exec("DROP TRIGGER synthetic_job_failure");
+    assert.equal((await store.correct(saved.recordId, 1, note("synthetic accepted replacement"), "failed")).revision, 2);
+  } finally { db.close(); }
+});
+
+test("schema ownership, migration checksums and unrelated databases cannot be silently adopted", async (t) => {
+  const f = await fixture(t);
+  const store = await f.open();
+  store.close();
+  const db = new DatabaseSync(store.path);
+  try {
+    const original = db.prepare("SELECT checksum FROM schema_migrations WHERE version=1").get()?.checksum;
+    assert.equal(typeof original, "string");
+    db.prepare("UPDATE schema_migrations SET checksum=?").run("incorrect");
+    await assert.rejects(f.open(), { code: "SCHEMA_MISMATCH" });
+    db.prepare("UPDATE schema_migrations SET checksum=?").run(original!);
+    db.prepare("UPDATE store_metadata SET namespace=?").run("foreign-owner");
+    await assert.rejects(f.open(), { code: "SCOPE_MISMATCH" });
+    db.exec("PRAGMA user_version=0; PRAGMA application_id=0");
+    await assert.rejects(f.open(), { code: "SCHEMA_UNSUPPORTED" });
+  } finally { db.close(); }
 });
 
 test("local CLI requires scope, reads JSON from stdin, and supports the complete lifecycle", async (t) => {

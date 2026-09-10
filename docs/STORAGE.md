@@ -123,7 +123,7 @@ repository cannot probe these IDs. Corrections/deletions compare
 `--expected-revision` inside the writer transaction; stale writes return
 `REVISION_CONFLICT` with the current revision.
 
-SQLite `BEGIN IMMEDIATE`, foreign keys, DELETE journals and `synchronous=FULL`
+SQLite `BEGIN IMMEDIATE`, foreign keys, DELETE journals and `synchronous=EXTRA`
 cover record, revision, keyword, index-job and receipt writes together.
 Writer contention returns `STORE_BUSY` after a 250 ms SQLite busy timeout;
 retry the same operation ID. The API also rejects concurrent calls on one
