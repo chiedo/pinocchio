@@ -16,7 +16,7 @@ import { startSyntheticProvider } from "./support/provider.js";
 test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async (t) => {
   const f = await createProductionFixture();
   const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
-  const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown }[] = [];
+  const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown; sessionRemaining?: unknown }[] = [];
   const cases: string[] = [];
   const waiters = new Set<() => void>();
   const selectName = (messages: Record<string, unknown>[]) => {
@@ -60,19 +60,22 @@ test("enrolled native profiles recall independently through the production conte
       try {
         const value: unknown = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
         if (isRecord(value)) observations.push({ status: value.status, snippets: value.snippets,
-          operationId: value.operationId, code: value.code });
+          operationId: value.operationId, code: value.code, sessionRemaining: value.sessionRemaining });
         for (const notify of waiters) notify();
       } catch { /* Non-memory built-in results are not part of this gate. */ }
     });
   }
-  async function waitForResult(before: number) {
+  async function waitForResult(before: number, expected: string) {
     await new Promise<void>((resolve, reject) => {
       const check = () => {
-        if (observations.length > before) {
+        if (observations.slice(before).some((item) => item.status === expected)) {
           clearTimeout(timer); waiters.delete(check); resolve();
         }
       };
-      const timer = setTimeout(() => { waiters.delete(check); reject(new Error("MEMORY_EVENT_DEADLINE")); }, 1_000);
+      const timer = setTimeout(() => {
+        waiters.delete(check);
+        reject(new Error(JSON.stringify({ expected, observed: observations.slice(before).map((item) => ({ status: item.status, code: item.code })) })));
+      }, 1_000);
       waiters.add(check); check();
     });
   }
@@ -80,7 +83,7 @@ test("enrolled native profiles recall independently through the production conte
     stage = prompt.includes("SAVE") ? "foreground-save" : "foreground-search";
     const before = observations.length;
     await session.sendAndWait({ prompt }, 20_000);
-    await waitForResult(before);
+    await waitForResult(before, expected);
     const result = observations.slice(before).find((item) => item.status === expected);
     assert.ok(result, JSON.stringify({ expected, observed: observations.slice(before) }));
     return result;
@@ -138,6 +141,13 @@ test("enrolled native profiles recall independently through the production conte
     assert.match(JSON.stringify(helper.snippets), /memory-helper/);
     assert.doesNotMatch(JSON.stringify(helper.snippets), /memory-foreground/);
     cases.push("new-helper-instance-recall");
+    const foreign = launches.get("memory-helper");
+    assert.ok(foreign);
+    const denied = await session.rpc.tools.execute({
+      name: `${foreign.serverName}-${SEARCH_TOOL}`, arguments: { query: "synthetic" },
+    });
+    assert.ok(typeof denied !== "string" && denied.resultType !== "success");
+    cases.push("cross-agent-denied");
     stage = "extension-reload";
     await session.rpc.extensions.reload();
     const { extensions } = await session.rpc.extensions.list();
@@ -145,7 +155,8 @@ test("enrolled native profiles recall independently through the production conte
       JSON.stringify(extensions.map((extension) => ({ name: extension.name, status: extension.status }))));
     await session.rpc.agent.select({ name: "memory-foreground" });
     await session.rpc.tools.initializeAndValidate();
-    await own(session, "FOREGROUND SEARCH after extension reload.", "ok");
+    const reloaded = await own(session, "FOREGROUND SEARCH after extension reload.", "ok");
+    assert.ok(Number(reloaded.sessionRemaining) < Number(recalled.sessionRemaining));
     cases.push("extension-reload");
     const sessionId = session.sessionId;
     stop();
@@ -155,9 +166,22 @@ test("enrolled native profiles recall independently through the production conte
     stage = "cold-resume";
     session = await client.resumeSession(sessionId, config);
     stop = observe(session);
+    await session.rpc.extensions.reload();
+    const resumed = await session.rpc.extensions.list();
+    assert.ok(resumed.extensions.some((extension) => extension.name === "pinocchio-memory" && extension.status === "running"));
+    await session.rpc.agent.select({ name: "memory-foreground" });
     await session.rpc.tools.initializeAndValidate();
-    await own(session, "FOREGROUND SEARCH after cold resume.", "ok");
+    const cold = await own(session, "FOREGROUND SEARCH after cold resume.", "ok");
+    assert.ok(Number(cold.sessionRemaining) < Number(reloaded.sessionRemaining));
     cases.push("cold-resume");
+    stop();
+    session = await client.createSession(config);
+    stop = observe(session);
+    await session.rpc.tools.initializeAndValidate();
+    const fresh = await own(session, "FOREGROUND SEARCH in a new root session.", "ok");
+    assert.match(JSON.stringify(fresh.snippets), /memory-foreground/);
+    assert.ok(Number(fresh.sessionRemaining) > Number(cold.sessionRemaining));
+    cases.push("new-session-recall");
     stop();
     assert.equal(provider.counts().failures, 0);
     passed = true;
