@@ -12,7 +12,7 @@ import { registerBinding, loadBinding } from "../../src/binding-registry.js";
 import type { BindingReference } from "../../src/binding-registry.js";
 import { MemoryStore } from "../../src/memory-store.js";
 import { enroll } from "../../src/enrollment.js";
-import { SEARCH_TOOL, SAVE_TOOL } from "../../src/memory-protocol.js";
+import { SEARCH_TOOL, SAVE_TOOL, saveSchema } from "../../src/memory-protocol.js";
 import { isRecord } from "../../src/identity.js";
 import { main as prepareSemantic } from "../../src/semantic-cli.js";
 import { rebuildIndex } from "../../src/semantic-index.js";
@@ -65,7 +65,8 @@ export async function liveMain(args: string[]) {
     helper: { trial: [] as number[], model: [] as number[], tool: [] as number[] } };
   const retrievalModes: Record<string, number> = {};
   const saveDiagnostics: { role: Role; index: number; added: number; matching: number;
-    userEvidence: number; unchanged: boolean; attempts: number; outcomes: Record<string, number> }[] = [];
+    userEvidence: number; unchanged: boolean; attempts: number; outcomes: Record<string, number>;
+    inputValidation: Record<string, number>; errorFlags: Record<string, number> }[] = [];
   const references = new Map<Role, BindingReference>();
   const sourceIds = new Map<string, string>();
   const stores = new Map<Role, MemoryStore>();
@@ -107,6 +108,7 @@ export async function liveMain(args: string[]) {
     current = session;
     let turns = 0, searchCalls = 0, saveCalls = 0, hit = false, leaked = false, answeredBeforeSearch = false;
     const saveOutcomes: Record<string, number> = {};
+    const inputValidation: Record<string, number> = {}, errorFlags: Record<string, number> = {};
     let answer = "";
     const observed = new Set<string>();
     const usage = new Set<string>();
@@ -137,7 +139,15 @@ export async function liveMain(args: string[]) {
         starts.set(event.data.toolCallId, { time: performance.now(), name: event.data.toolName });
         pending.add(event.data.toolCallId);
         if (event.data.toolName.endsWith(SEARCH_TOOL)) searchCalls++;
-        if (event.data.toolName.endsWith(SAVE_TOOL)) saveCalls++;
+        if (event.data.toolName.endsWith(SAVE_TOOL)) {
+          saveCalls++;
+          const parsed = saveSchema.safeParse(event.data.arguments);
+          const allowed = new Set(["action", "operationId", "note", "content", "kind", "status", "evidence",
+            "reference", "type", "value", "sourceAt", "confirmedAt", "recordId", "expectedRevision"]);
+          const flags = parsed.success ? ["valid"] : parsed.error.issues.map((issue) =>
+            `${issue.code}:${issue.path.map((part) => typeof part === "number" ? "item" : allowed.has(String(part)) ? String(part) : "field").join(".")}`);
+          for (const flag of flags) inputValidation[flag] = (inputValidation[flag] ?? 0) + 1;
+        }
       }
       if (event.type === "tool.execution_complete") {
         const start = starts.get(event.data.toolCallId);
@@ -148,6 +158,10 @@ export async function liveMain(args: string[]) {
         }
         const text = event.data.result?.content ?? "";
         if (start?.name.endsWith(SAVE_TOOL)) {
+          const failure = event.data.error?.message ?? text;
+          for (const word of ["schema", "required", "additional", "invalid", "validation", "evidence", "note", "operationId", "permission", "unknown"]) {
+            if (failure.toLowerCase().includes(word.toLowerCase())) errorFlags[word] = (errorFlags[word] ?? 0) + 1;
+          }
           let outcome = "unstructured";
           try {
             const parsed: unknown = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
@@ -201,7 +215,7 @@ export async function liveMain(args: string[]) {
       if (foreign.some((value) => answer.includes(value))) leaked = true;
       measures[role].completed++;
       return { correct: expected ? answer.includes(expected) : answer.trim().toUpperCase().includes("UNKNOWN"),
-        searched: searchCalls > 0 && !answeredBeforeSearch, retrieved: hit, leaked, saveCalls, saveOutcomes };
+        searched: searchCalls > 0 && !answeredBeforeSearch, retrieved: hit, leaked, saveCalls, saveOutcomes, inputValidation, errorFlags };
     } catch (error) {
       measures[role].failures++; throw error;
     } finally {
@@ -285,7 +299,7 @@ export async function liveMain(args: string[]) {
         saveDiagnostics.push({ role, index: i, added: added.length, unchanged,
           matching: added.filter((item) => item.content.includes(saveMarker(role, i))).length,
           userEvidence: added.filter((item) => JSON.stringify(item.evidence).includes("user_statement")).length,
-          attempts: result.saveCalls, outcomes: result.saveOutcomes });
+          attempts: result.saveCalls, outcomes: result.saveOutcomes, inputValidation: result.inputValidation, errorFlags: result.errorFlags });
         totals.saveSamples++;
         if (unchanged && added.length === 1 && added[0]!.content.includes(saveMarker(role, i)) &&
             JSON.stringify(added[0]!.evidence).includes("user_statement")) totals.saved++;
