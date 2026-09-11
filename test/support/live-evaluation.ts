@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -200,15 +200,17 @@ export async function liveMain(args: string[]) {
     const auth = await client.getAuthStatus();
     const status = await client.getStatus();
     const models = await client.listModels();
+    const sdk: unknown = JSON.parse(await readFile(new URL("../package.json", import.meta.resolve("@github/copilot-sdk")), "utf8"));
+    const sdkMatches = isRecord(sdk) && sdk.version === config.host.sdk;
     const selected = models.find((model) => model.id === config.model);
-    if (status.version !== config.host.cli || !auth.isAuthenticated || !selected ||
+    if (status.version !== config.host.cli || !sdkMatches || !auth.isAuthenticated || !selected ||
         !selected.supportedReasoningEfforts?.includes(config.effort)) {
       report.reason = "LIVE_BASELINE_UNAVAILABLE";
-      report.baseline = { cliMatches: status.version === config.host.cli, authenticated: auth.isAuthenticated,
+      report.baseline = { cliMatches: status.version === config.host.cli, sdkMatches, authenticated: auth.isAuthenticated,
         modelAvailable: Boolean(selected), effortAvailable: selected?.supportedReasoningEfforts?.includes(config.effort) ?? false };
       return report;
     }
-    report.baseline = { cli: status.version, model: selected.id, effort: config.effort, billing: selected.billing };
+    report.baseline = { cli: status.version, sdk: config.host.sdk, model: selected.id, effort: config.effort, billing: selected.billing };
     if (values.probe) { report.status = "probe_ready"; return report; }
     if (process.platform !== config.host.platform || process.arch !== config.host.arch ||
         process.version !== `v${config.host.node}` || !process.env.PINOCCHIO_TEST_PYTHON) {

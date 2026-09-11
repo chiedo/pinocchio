@@ -153,7 +153,10 @@ test("enrolled native profiles recall independently through the production conte
     cases.push("cross-agent-denied");
     const beforeCompaction = await own(session, "FOREGROUND SEARCH before compaction.", "ok");
     stage = "native-compaction";
-    await session.rpc.history.compact({ trigger: "manual" });
+    const compaction = await session.rpc.history.compact({ trigger: "manual" });
+    assert.equal(compaction.success, true);
+    assert.ok(compaction.messagesRemoved > 0);
+    assert.ok(compaction.summaryContent);
     const compacted = await own(session, "FOREGROUND SEARCH after compaction.", "ok");
     assert.ok(Number(compacted.sessionRemaining) < Number(beforeCompaction.sessionRemaining));
     cases.push("native-compaction-preserves-accounting");
