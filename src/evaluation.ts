@@ -121,7 +121,8 @@ export function releaseVerdict(contract: { config: Acceptance; hash: string }, c
     roleLatency: z.array(z.object({ role: z.enum(roles), trialMs: latency, modelMs: latency, toolMs: latency })).length(2),
     omissions: z.array(z.object({ role: z.enum(roles), trials: z.literal(0) })).length(2),
   }).safeParse(live);
-  const host = z.object({ passed: z.literal(true), cases: z.array(z.string()) }).safeParse(workflow);
+  const host = z.object({ passed: z.literal(true), contractHash: z.literal(contract.hash),
+    commit: z.literal(commit), cases: z.array(z.string()) }).safeParse(workflow);
   result.status = "fail";
   if (!synthetic.success) result.failures.push("INVALID_SYNTHETIC_EVIDENCE");
   if (!measured.success) result.failures.push("INVALID_LIVE_EVIDENCE");

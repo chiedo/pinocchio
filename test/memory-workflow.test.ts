@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +13,11 @@ import { SEARCH_TOOL, SAVE_TOOL } from "../src/memory-protocol.js";
 import { isRecord } from "../src/identity.js";
 import { createProductionFixture } from "./support/production-fixture.js";
 import { startSyntheticProvider } from "./support/provider.js";
+import { acceptance } from "../src/evaluation.js";
 
 test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async (t) => {
+  const contract = await acceptance();
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const f = await createProductionFixture();
   const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
   const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown; sessionRemaining?: unknown }[] = [];
@@ -207,6 +211,7 @@ test("enrolled native profiles recall independently through the production conte
     await mkdir("test-results", { recursive: true });
     await writeFile("test-results/memory-workflow.json", JSON.stringify({
       gate: "production-keyword-memory", passed, stage, cases, lifecycle,
+      contractHash: contract.hash, commit,
       baseline: "CLI 1.0.83 / Linux x64; SDK root hook capability enabled",
     }, null, 2) + "\n");
     if ([...stopped, ...cleaned].some((result) => result.status === "rejected")) {
