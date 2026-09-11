@@ -123,7 +123,7 @@ test("worker save receipts survive restart; correction and disabled reads remain
 });
 test("MCP uses bound process context when host hooks are unavailable and rejects malformed context", async (t) => {
   const f = await fixture(t);
-  const server = createMemoryMcpServer(f.ref, f.launch.serverName);
+  const server = createMemoryMcpServer(f.ref, f.launch.serverName, f.repository);
   const client = new Client({ name: "synthetic", version: "1" });
   const [left, right] = InMemoryTransport.createLinkedPair();
   await server.connect(left); await client.connect(right);

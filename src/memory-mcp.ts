@@ -33,7 +33,7 @@ export function memoryLaunch(reference: BindingReference) {
     },
   };
 }
-export function createMemoryMcpServer(reference: BindingReference, serverName: string) {
+export function createMemoryMcpServer(reference: BindingReference, serverName: string, directDirectory = process.cwd()) {
   reference = Object.freeze({ ...reference });
   const worker = new MemoryWorker();
   const identity = new BoundIdentityAdapter(reference);
@@ -49,7 +49,7 @@ export function createMemoryMcpServer(reference: BindingReference, serverName: s
         ledger.start(directRoot, recipient, new Date(Date.now() + directSequence++).toISOString());
         const ticket = ledger.issue({
           root: directRoot, recipient, call: String(requestId), server: serverName, tool,
-          directory: process.cwd(), arguments: args, deadline,
+          directory: directDirectory, arguments: args, deadline,
         });
         return await worker.call({ action: "tool", reference, server: serverName, tool, arguments: args, ticket },
           deadline, signal);

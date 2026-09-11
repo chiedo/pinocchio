@@ -52,7 +52,11 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     const binding = await loadBinding(reference);
     const profile = join(config, "agents/synthetic-agent.agent.md");
     let text = await readFile(profile, "utf8");
-    assert.ok(text.includes(join(app, "dist/src/memory-mcp.js")));
+    const installedProfile = parse(text.split("---")[1] ?? "") as {
+      "mcp-servers"?: Record<string, { args?: string[] }>;
+    };
+    assert.ok(Object.values(installedProfile["mcp-servers"] ?? {})
+      .some((server) => server.args?.includes(join(app, "dist/src/memory-mcp.js"))));
     assert.ok(!text.includes(releaseRoot));
     text = text.replace("description: Named agent with scoped memory",
       "description: A later user edit\nmodel: synthetic-personal-model") + "\nPreserve these later instructions.\n";
