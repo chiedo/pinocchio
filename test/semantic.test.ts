@@ -15,6 +15,12 @@ import { fuseRanks } from "../src/hybrid-ranking.js";
 import { MODEL_ID } from "../src/semantic-types.js";
 import type { SemanticConfig } from "../src/semantic-types.js";
 import { createProductionFixture } from "./support/production-fixture.js";
+import { ContextLedger } from "../src/context-ledger.js";
+import { MemoryWorker } from "../src/memory-worker-client.js";
+import { memoryLaunch } from "../src/memory-mcp.js";
+import { SEARCH_TOOL } from "../src/memory-protocol.js";
+import { isRecord } from "../src/identity.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 let root: string;
 let configuration: SemanticConfig;
@@ -186,4 +192,44 @@ test("published model metadata corruption is rejected before deserializing FAISS
   assert.equal((await f.search("synthetic")).retrieval.mode, "keyword");
   await rebuildIndex(f.reference);
   assert.equal((await f.search("synthetic")).retrieval.mode, "hybrid");
+});
+
+test("real hybrid retrieval through the model worker preserves recipient budgets and visible warmup fallback", { timeout: 120_000 }, async (t) => {
+  const f = await fixture(t);
+  await f.save("Restore accidentally deleted Git commits using git reflog.", "save");
+  await rebuildIndex(f.reference);
+  const ledger = await ContextLedger.open(f.config);
+  const worker = new MemoryWorker();
+  const server = memoryLaunch(f.reference).serverName;
+  ledger.start("semantic-root", "semantic-recipient", "2026-01-01T00:00:00.000Z");
+  const args = { query: "How can I recover lost commits?" };
+  async function call() {
+    const deadline = Date.now() + 1_000;
+    const ticket = ledger.issue({ root: "semantic-root", recipient: "semantic-recipient", call: "semantic-call",
+      server, tool: SEARCH_TOOL, directory: f.repository, arguments: args, deadline });
+    const start = performance.now();
+    const result = await worker.call({ action: "tool", reference: f.reference, server, tool: SEARCH_TOOL, arguments: args, ticket }, deadline);
+    assert.ok(performance.now() - start < 1_000);
+    assert.ok(isRecord(result));
+    return result;
+  }
+  try {
+    let result = await call();
+    assert.ok(isRecord(result.retrieval));
+    assert.equal(result.retrieval.mode, "keyword");
+    assert.ok(result.retrieval.reason);
+    for (let attempt = 0; attempt < 40 && result.status !== "ok"; attempt++) {
+      await delay(250); result = await call();
+    }
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    assert.ok(isRecord(result.retrieval));
+    assert.equal(result.retrieval.mode, "hybrid");
+    assert.ok(Array.isArray(result.snippets) && result.snippets.length <= 3);
+    assert.ok(Buffer.byteLength(JSON.stringify(result.snippets)) <= 800);
+    assert.equal(result.chargedTokens, Buffer.byteLength(JSON.stringify(result.snippets)));
+    const repeat = await call();
+    assert.equal(repeat.status, "already_delivered");
+    assert.equal(repeat.sessionRemaining, result.sessionRemaining);
+    report.workerBudgetsAndWarmup = true;
+  } finally { worker.close(); ledger.close(); }
 });

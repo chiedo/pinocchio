@@ -21,6 +21,9 @@ __pycache__/
 agent-memories/
 /pinocchio/bindings/
 /pinocchio/context/
+/pinocchio/semantic.json
+/pinocchio/embeddings/
+/pinocchio/semantic-runtime/
 session-state/
 state/
 private/

@@ -37,7 +37,7 @@ type Action = MemoryReceipt["action"];
 type OperationRow = z.infer<typeof operationSchema>;
 
 function databaseError(error: unknown): Error {
-  if (error instanceof MemoryError || error instanceof BindingError) return error;
+  if (error instanceof MemoryError || error instanceof BindingError || error instanceof SemanticError) return error;
   if (typeof error === "object" && error !== null && "errcode" in error &&
       typeof error.errcode === "number") {
     const primary = error.errcode & 0xff;
