@@ -84,13 +84,16 @@ export async function verifyMemoryTools(reference: BindingReference) {
   } finally { await client.close(); await transport.close(); }
   return launch;
 }
+export function contextExtensionContent() {
+  return `// Pinocchio memory context v1\nimport ${JSON.stringify(new URL("./memory-extension.js", import.meta.url).href)};\n`;
+}
 export async function prepareContextExtension(configRoot: string) {
   const root = join(configRoot, "extensions");
   await mkdir(root, { recursive: true, mode: 0o700 });
   const directory = join(root, "pinocchio-memory");
   await privateDirectory(directory, true);
   const path = join(directory, "extension.mjs");
-  const content = `// Pinocchio development memory context v1\nimport ${JSON.stringify(new URL("./memory-extension.js", import.meta.url).href)};\n`;
+  const content = contextExtensionContent();
   try {
     const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
@@ -124,7 +127,7 @@ export async function enroll(reference: BindingReference, explicitShared = false
   await replace(path, original, next);
   return { ...extension, status: "enrolled", version: 1, serverName: launch.serverName, profile: path };
 }
-export async function removeEnrollment(reference: BindingReference) {
+export async function removeEnrollment(reference: BindingReference, dryRun = false) {
   const binding = await loadBinding(reference);
   const path = binding.definition.path;
   const original = await readFile(path, "utf8");
@@ -145,7 +148,7 @@ export async function removeEnrollment(reference: BindingReference) {
     if ([SEARCH_TOOL, SAVE_TOOL].some((tool) => String(tools.items[index]) === `${launch.serverName}-${tool}`)) tools.delete(index);
   }
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(`${newline}${block}${newline}`, "")}`;
-  await replace(path, original, next);
+  if (!dryRun) await replace(path, original, next);
   return { status: "removed", recordsPreserved: true, contextExtensionPreserved: true };
 }
 export const enrollmentCliPath = fileURLToPath(new URL("./enrollment-cli.js", import.meta.url));

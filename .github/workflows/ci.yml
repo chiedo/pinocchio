@@ -15,7 +15,7 @@ concurrency:
 jobs:
   synthetic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -44,5 +44,6 @@ jobs:
             test-results/memory-workflow.json
             test-results/semantic.json
             test-results/reliability.json
+            test-results/installation.json
           if-no-files-found: error
           retention-days: 7
