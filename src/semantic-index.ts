@@ -25,7 +25,8 @@ export async function cleanupIndex(reference: BindingReference, process: Semanti
   await syncDirectory(location.directory);
   return { removed, pendingPhysicalCleanup: false };
 }
-export async function rebuildIndex(reference: BindingReference) {
+export async function rebuildIndex(reference: BindingReference,
+  observe?: (phase: "generation-durable" | "pointer-published") => Promise<void>) {
   const config = await semanticConfig(reference.configRoot);
   const binding = await loadBinding(reference);
   const store = await MemoryStore.open(reference, { namespace: binding.namespace, scope: binding.scope.kind });
@@ -67,8 +68,12 @@ export async function rebuildIndex(reference: BindingReference) {
     const published = join(location.directory, generation);
     await rename(staging, published);
     await syncDirectory(location.directory);
+    await observe?.("generation-durable");
     const manifestHash = sha(await readFile(join(published, "manifest.json")));
-    await store.publishIndex(snapshot, () => writeAtomic(join(location.directory, "active.json"), { generation, manifestHash }));
+    await store.publishIndex(snapshot, async () => {
+      await writeAtomic(join(location.directory, "active.json"), { generation, manifestHash });
+      await observe?.("pointer-published");
+    });
     try {
       return { status: "indexed", generation, records: records.length,
         ...(recoveredFrom ? { recoveredFrom } : {}), ...(await cleanupIndex(reference, engine, true)) };

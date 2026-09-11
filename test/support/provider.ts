@@ -3,6 +3,7 @@ import { isRecord } from "../../src/identity.js";
 import { IDENTITY_TOOL_NAME } from "../../src/tool.js";
 
 export interface SyntheticProviderOptions {
+  replyWithoutTools?: boolean;
   selectTool?: (messages: Record<string, unknown>[]) => string;
   allowUnofferedTool?: boolean;
   toolArguments?: (messages: Record<string, unknown>[]) => Record<string, unknown>;
@@ -39,7 +40,7 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
       const messages = input.messages.filter(isRecord);
       const toolName = options.selectTool?.(messages) ?? IDENTITY_TOOL_NAME;
       const lastUser = messages.findLastIndex((item) => item.role === "user");
-      const replied = messages
+      const replied = (options.replyWithoutTools && (!Array.isArray(input.tools) || input.tools.length === 0)) || messages
         .slice(lastUser + 1)
         .some((item) => item.role === "tool");
       if (!replied) {

@@ -25,6 +25,7 @@ test("enrolled native profiles recall independently through the production conte
     return { name: prompt.includes("HELPER") ? "memory-helper" : "memory-foreground", save: prompt.includes("SAVE") };
   };
   const provider = await startSyntheticProvider({
+    replyWithoutTools: true,
     selectTool(messages) {
       const { name, save } = selectName(messages);
       const launch = launches.get(name);
@@ -109,7 +110,7 @@ test("enrolled native profiles recall independently through the production conte
       extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
       model: "synthetic-model", provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
       availableTools: new ToolSet().addMcp("*").addBuiltIn(["view", "task"]),
-      agent: "memory-foreground", onPermissionRequest: approveAll, infiniteSessions: { enabled: false },
+      agent: "memory-foreground", onPermissionRequest: approveAll, infiniteSessions: { enabled: true },
       hooks: { onSessionStart(input) { lifecycle.push(input.source); } },
     };
     await client.start();
@@ -150,6 +151,12 @@ test("enrolled native profiles recall independently through the production conte
     });
     assert.ok(typeof denied !== "string" && denied.resultType !== "success");
     cases.push("cross-agent-denied");
+    const beforeCompaction = await own(session, "FOREGROUND SEARCH before compaction.", "ok");
+    stage = "native-compaction";
+    await session.rpc.history.compact({ trigger: "manual" });
+    const compacted = await own(session, "FOREGROUND SEARCH after compaction.", "ok");
+    assert.ok(Number(compacted.sessionRemaining) < Number(beforeCompaction.sessionRemaining));
+    cases.push("native-compaction-preserves-accounting");
     stage = "extension-reload";
     await session.rpc.extensions.reload();
     const { extensions } = await session.rpc.extensions.list();
