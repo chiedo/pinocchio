@@ -26,6 +26,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Prepare pinned offline semantic test runtime
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --disable-pip-version-check -r semantic/requirements.txt
+          echo "PINOCCHIO_TEST_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
       - run: npm test
       - name: Publish only the synthetic compatibility summary
         if: always()
@@ -37,5 +42,6 @@ jobs:
             test-results/bound-mcp.json
             test-results/production-bindings.json
             test-results/memory-workflow.json
+            test-results/semantic.json
           if-no-files-found: error
           retention-days: 7

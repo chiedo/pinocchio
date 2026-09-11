@@ -11,6 +11,9 @@ import type { MemoryReceipt, Note, NoteInput } from "./memory-types.js";
 import { initializeStorage, STORAGE_SCHEMA_VERSION } from "./storage-schema.js";
 import { privateStoreFile, storePath } from "./storage-files.js";
 import type { StoreFileIdentity } from "./storage-files.js";
+import { fuseRanks } from "./hybrid-ranking.js";
+import { MAX_INDEX_RECORDS, MODEL_ID, SemanticError } from "./semantic-types.js";
+import type { IndexSnapshot, IndexRecord, SemanticCandidate } from "./semantic-types.js";
 
 const stateSchema = z.object({
   id: z.string(), scope: z.string(), revision: z.number().int(),
@@ -273,7 +276,7 @@ export class MemoryStore {
     return this.searchSnapshot(query, pagination, (result) => result);
   }
   searchSnapshot<T>(query: string, pagination: { limit?: number; offset?: number },
-    consume: (result: MemorySearchResult) => T | Promise<T>) {
+    consume: (result: MemorySearchResult) => T | Promise<T>, candidates?: SemanticCandidate[]) {
     validate(z.string().min(1).max(500).refine((value) => Boolean(value.trim())), query);
     const terms = keywords(query);
     if (terms.length > 64) throw new MemoryError("INVALID_INPUT");
@@ -288,8 +291,54 @@ export class MemoryStore {
         WHERE r.scope=? AND r.status IN ('active','tentative')
         AND (instr(k.literal_text,?)>0 ${keywordMatch})
         ORDER BY (instr(k.literal_text,?)>0) DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)
-        .all(this.#scope, literal, ...(terms.length ? [...terms, terms.length] : []), literal, limit, offset);
-      return consume({ status: rows.length ? "ok" : "no_match", items: rows.map(view) });
+        .all(this.#scope, literal, ...(terms.length ? [...terms, terms.length] : []), literal,
+          candidates ? 100 : limit, candidates ? 0 : offset).map(view);
+      let items = rows;
+      if (candidates) {
+        if (candidates.length > 50) throw new SemanticError("INVALID_SEMANTIC_CANDIDATES");
+        const semanticRows = candidates.flatMap((candidate) => {
+          const row = this.#db.prepare(`${SELECT_CURRENT} WHERE r.scope=? AND r.id=? AND r.revision=?
+            AND r.status IN ('active','tentative')`).get(this.#scope, candidate.id, candidate.revision);
+          return row ? [view(row)] : [];
+        });
+        items = fuseRanks(query, rows, semanticRows, candidates).slice(offset, offset + limit);
+      }
+      return consume({ status: items.length ? "ok" : "no_match", items });
+    });
+  }
+  #indexMetadata(): IndexRecord[] {
+    const rows = this.#db.prepare(`SELECT id,revision FROM records WHERE scope=?
+      AND status IN ('active','tentative') ORDER BY id LIMIT ?`).all(this.#scope, MAX_INDEX_RECORDS + 1);
+    if (rows.length > MAX_INDEX_RECORDS) throw new SemanticError("INDEX_CAPACITY_EXCEEDED");
+    return rows.map((row) => validate(z.object({ id: z.string(), revision: z.number() }), row));
+  }
+  indexMetadata() {
+    return this.#transaction(() => this.#indexMetadata(), { allowDisabled: true });
+  }
+  indexSnapshot(): Promise<IndexSnapshot> {
+    return this.#transaction(() => {
+      const metadata = this.#indexMetadata();
+      const rows = this.#db.prepare(`${SELECT_CURRENT} WHERE r.scope=? AND r.status IN ('active','tentative')
+        ORDER BY r.id`).all(this.#scope).map(view);
+      if (rows.length !== metadata.length ||
+          rows.reduce((size, row) => size + Buffer.byteLength(row.content), 0) > 4 * 1024 * 1024) {
+        throw new SemanticError("INDEX_CAPACITY_EXCEEDED");
+      }
+      return rows.map(({ id, revision, content }) => ({ id, revision, content }));
+    });
+  }
+  publishIndex(snapshot: IndexSnapshot, publish: () => Promise<void>) {
+    return this.#transaction(async () => {
+      const expected = snapshot.map(({ id, revision }) => ({ id, revision }));
+      if (JSON.stringify(this.#indexMetadata()) !== JSON.stringify(expected)) throw new SemanticError("STALE_INDEX_BUILD");
+      await publish();
+      for (const record of expected) {
+        this.#db.prepare(`UPDATE index_jobs SET status='done',embedding_model=?,indexed_revision=?
+          WHERE record_id=? AND revision=? AND status='pending'`).run(MODEL_ID, record.revision, record.id, record.revision);
+      }
+      this.#db.prepare(`UPDATE index_jobs SET status='done' WHERE action='delete' AND status='pending'
+        AND record_id IN (SELECT id FROM records WHERE scope=? AND status='superseded')`).run(this.#scope);
+      return { status: "indexed", records: expected.length };
     });
   }
   inspect(recordId: string, pagination: { limit?: number; offset?: number } = {}) {
