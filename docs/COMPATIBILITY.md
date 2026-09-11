@@ -1,5 +1,9 @@
 # Memory compatibility gates
 
+**Release certification:** use the separate [release evaluations](EVALUATIONS.md)
+and versioned contract. Earlier component passes below are not a live-model
+release verdict; missing authorized evidence remains explicitly unvalidated.
+
 **Local semantic gate: PASS.** The [passing full-suite run](https://github.com/chiedo/pinocchio/actions/runs/34558833513)
 passed 59 tests, including real CPU inference with the pinned quantized MiniLM
 model and FAISS. On the fixed four-query paraphrase corpus, hybrid top-three

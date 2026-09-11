@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { Worker } from "node:worker_threads";
 import { setTimeout as delay } from "node:timers/promises";
 import test, { before, after } from "node:test";
 import type { TestContext } from "node:test";
-import { acceptance, corpus, distribution } from "../src/evaluation.js";
+import { acceptance, corpus, distribution, releaseFaults } from "../src/evaluation.js";
 import { loadBinding } from "../src/binding-registry.js";
 import { MemoryStore } from "../src/memory-store.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
@@ -24,10 +24,10 @@ import type { SemanticConfig } from "../src/semantic-types.js";
 import { createProductionFixture } from "./support/production-fixture.js";
 
 const contract = await acceptance();
-const required = ["worker-failures", "missing-identity", "duplicate-save", "lost-save-ack",
-  "concurrent-correction-deletion", "interrupted-index-publication", "lock-failure", "long-session-compaction", "backend-latency"];
+const required = releaseFaults;
 const cases: string[] = [];
 const report: Record<string, unknown> = { version: 1, contractHash: contract.hash, status: "unvalidated",
+  commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   host: contract.config.host, corpusPerNamespace: contract.config.corpusPerNamespace, cases };
 let root: string;
 let config: SemanticConfig;

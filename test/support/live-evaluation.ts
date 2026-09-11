@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { approveAll, CopilotClient, RuntimeConnection, ToolSet } from "@github/copilot-sdk";
 import type { CopilotSession, SessionConfig } from "@github/copilot-sdk";
-import { acceptance, corpus, distribution, LiveBudget, marker, projects, recallPrompt, roles, saveMarker, savePrompt } from "../../src/evaluation.js";
+import { acceptance, corpus, distribution, followupPrompts, LiveBudget, marker, projects, recallPrompt, roles, saveMarker, savePrompt } from "../../src/evaluation.js";
 import type { Role } from "../../src/evaluation.js";
 import { registerBinding, loadBinding } from "../../src/binding-registry.js";
 import type { BindingReference } from "../../src/binding-registry.js";
@@ -60,15 +60,19 @@ export async function liveMain(args: string[]) {
   let stopReason: string | undefined;
   let usageMissingModel = false;
   const timings: number[] = [], modelTimings: number[] = [], toolTimings: number[] = [];
+  const roleTimings = { foreground: { trial: [] as number[], model: [] as number[], tool: [] as number[] },
+    helper: { trial: [] as number[], model: [] as number[], tool: [] as number[] } };
+  const retrievalModes: Record<string, number> = {};
   const references = new Map<Role, BindingReference>();
   const sourceIds = new Map<string, string>();
   const stores = new Map<Role, MemoryStore>();
   const measures = Object.fromEntries(roles.map((role) => [role, {
     recall: 0, baseline: 0, searched: 0, retrieved: 0, saved: 0, unknown: 0, leaks: 0,
-    recallSamples: 0, baselineSamples: 0, saveSamples: 0, failures: 0,
+    recallSamples: 0, baselineSamples: 0, saveSamples: 0, failures: 0, followup: 0, attempted: 0, completed: 0,
   }])) as Record<Role, {
     recall: number; baseline: number; searched: number; retrieved: number; saved: number; unknown: number;
     leaks: number; recallSamples: number; baselineSamples: number; saveSamples: number; failures: number;
+    followup: number; attempted: number; completed: number;
   }>;
   async function abort(reason: string) {
     stopReason ??= reason;
@@ -89,16 +93,19 @@ export async function liveMain(args: string[]) {
     infiniteSessions: { enabled: false },
     hooks: { onSessionStart() { /* Explicit public root-hook capability on create/resume. */ } },
   });
-  async function trial(role: Role, enabled: boolean, prompt: string, expected?: string) {
+  async function trial(role: Role, enabled: boolean, prompt: string | string[], expected?: string) {
     if (stopReason || performance.now() - started >= config.limits.runMs) throw new Error("LIVE_RUN_STOPPED");
     budget.admit();
+    measures[role].attempted++;
     const session = await client.createSession(sessionConfig(enabled, role));
     current = session;
     let turns = 0, searchCalls = 0, hit = false, leaked = false, answeredBeforeSearch = false;
     let answer = "";
     const observed = new Set<string>();
+    const usage = new Set<string>();
+    const pending = new Set<string>();
     const starts = new Map<string, { time: number; name: string }>();
-    const foreign = roles.filter((item) => item !== role).flatMap((item) => projects.map((_, i) => marker(item, i)));
+    const foreign = roles.filter((item) => item !== role).flatMap((item) => projects.flatMap((_, i) => [marker(item, i), saveMarker(item, i)]));
     const unsubscribe = session.on((event) => {
       if (observed.has(event.id)) return;
       observed.add(event.id);
@@ -107,27 +114,39 @@ export async function liveMain(args: string[]) {
         if (turns > config.limits.callsPerTrial || budget.exhausted()) void abort("LIVE_CALL_CAP");
       }
       if (event.type === "assistant.usage") {
+        usage.add(event.data.apiCallId ?? event.id);
         budget.record(event.data.apiCallId ?? event.id, {
           ...(event.data.inputTokens === undefined ? {} : { inputTokens: event.data.inputTokens }),
           ...(event.data.outputTokens === undefined ? {} : { outputTokens: event.data.outputTokens }),
           ...(event.data.copilotUsage?.totalNanoAiu === undefined ? {} : { nanoAiu: event.data.copilotUsage.totalNanoAiu }),
         });
         if (event.data.model !== config.model) usageMissingModel = true;
-        if (event.data.duration !== undefined) modelTimings.push(event.data.duration);
+        if (event.data.duration !== undefined) {
+          modelTimings.push(event.data.duration); roleTimings[role].model.push(event.data.duration);
+        }
         if (budget.exhausted() || budget.missingUsage) void abort("LIVE_COST_OR_USAGE_CAP");
       }
       if (event.type === "tool.execution_start") {
         starts.set(event.data.toolCallId, { time: performance.now(), name: event.data.toolName });
+        pending.add(event.data.toolCallId);
         if (event.data.toolName.endsWith(SEARCH_TOOL)) searchCalls++;
       }
       if (event.type === "tool.execution_complete") {
         const start = starts.get(event.data.toolCallId);
-        if (start !== undefined) toolTimings.push(performance.now() - start.time);
+        pending.delete(event.data.toolCallId);
+        if (start !== undefined) {
+          const elapsed = performance.now() - start.time;
+          toolTimings.push(elapsed); roleTimings[role].tool.push(elapsed);
+        }
         const text = event.data.result?.content ?? "";
         if (start?.name.endsWith(SEARCH_TOOL)) {
           if (foreign.some((value) => text.includes(value))) leaked = true;
           try {
             const parsed: unknown = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+            if (isRecord(parsed) && isRecord(parsed.retrieval) && typeof parsed.retrieval.mode === "string") {
+              const mode = parsed.retrieval.mode === "hybrid" ? "hybrid" : "keyword";
+              retrievalModes[mode] = (retrievalModes[mode] ?? 0) + 1;
+            }
             if (expected && isRecord(parsed) && Array.isArray(parsed.snippets) &&
                 parsed.snippets.some((item: unknown) => isRecord(item) && item.recordId === sourceIds.get(expected) &&
                   typeof item.content === "string" && item.content.includes(expected))) hit = true;
@@ -144,21 +163,31 @@ export async function liveMain(args: string[]) {
     const start = performance.now();
     try {
       await session.rpc.tools.initializeAndValidate();
-      if (role === "foreground") await session.sendAndWait({ prompt }, config.limits.trialMs);
+      if (role === "foreground") {
+        for (const message of typeof prompt === "string" ? [prompt] : prompt) {
+          await session.sendAndWait({ prompt: message }, config.limits.trialMs);
+        }
+      }
       else {
         const result = await session.rpc.tools.execute({ name: "task", arguments: {
           agent_type: enabled ? "eval-helper" : "baseline-helper", name: "evaluation-helper",
-          description: "Synthetic memory evaluation", prompt, mode: "sync",
+          description: "Synthetic memory evaluation", prompt: typeof prompt === "string" ? prompt : prompt.join("\nFollow-up: "), mode: "sync",
         } });
         if (typeof result !== "string" && result.resultType !== "success") throw new Error("LIVE_HELPER_FAILED");
       }
-      await delay(100);
+      const drainDeadline = performance.now() + 5_000;
+      while ((usage.size < turns || pending.size || !answer) && performance.now() < drainDeadline && !stopReason) await delay(25);
       if (stopReason || !answer || !turns) throw new Error(stopReason ?? "LIVE_RESPONSE_MISSING");
+      if (usage.size < turns || pending.size) throw new Error("LIVE_TELEMETRY_INCOMPLETE");
       if (foreign.some((value) => answer.includes(value))) leaked = true;
+      measures[role].completed++;
       return { correct: expected ? answer.includes(expected) : answer.trim().toUpperCase().includes("UNKNOWN"),
         searched: searchCalls > 0 && !answeredBeforeSearch, retrieved: hit, leaked };
+    } catch (error) {
+      measures[role].failures++; throw error;
     } finally {
-      timings.push(performance.now() - start);
+      const elapsed = performance.now() - start;
+      timings.push(elapsed); roleTimings[role].trial.push(elapsed);
       clearTimeout(timer); unsubscribe();
       await session.disconnect(); current = undefined;
     }
@@ -222,15 +251,21 @@ export async function liveMain(args: string[]) {
       }
       const store = stores.get(role)!;
       for (let i = 0; i < config.saveSamplesPerRole; i++) {
-        const before = new Set((await store.indexMetadata()).map((item) => item.id));
-        await trial(role, true, savePrompt(role, i));
+        const original = await store.indexMetadata();
+        const before = new Set(original.map((item) => item.id));
+        const result = await trial(role, true, savePrompt(role, i));
+        totals.leaks += Number(result.leaked);
+        const after = await store.indexMetadata();
+        const unchanged = original.every((item) => after.some((other) => item.id === other.id && item.revision === other.revision));
         const added = (await store.list({ limit: 100, offset: 0 })).items.filter((item) => !before.has(item.id));
         totals.saveSamples++;
-        if (added.length === 1 && added[0]!.content.includes(saveMarker(role, i)) &&
+        if (unchanged && added.length === 1 && added[0]!.content.includes(saveMarker(role, i)) &&
             JSON.stringify(added[0]!.evidence).includes("user_statement")) totals.saved++;
       }
       const unknown = await trial(role, true, "What is the approved release marker for Project Unrecorded? Answer with its marker if supported, otherwise UNKNOWN.");
       totals.unknown = Number(unknown.correct); totals.leaks += Number(unknown.leaked);
+      const followup = await trial(role, true, followupPrompts, marker(role, 0));
+      totals.followup = Number(followup.correct); totals.leaks += Number(followup.leaked);
     }
     const verdicts = roles.map((role) => {
       const m = measures[role], n = config.recallSamplesPerRole;
@@ -238,7 +273,7 @@ export async function liveMain(args: string[]) {
         m.searched / n >= config.thresholds.searchCompliance && m.retrieved / n >= config.thresholds.scopedRetrieval &&
         m.saved / config.saveSamplesPerRole >= config.thresholds.saveQuality &&
         (m.recall - m.baseline) / n >= config.thresholds.answerBenefit &&
-        m.leaks === 0 && m.unknown === config.thresholds.unknownAnswers;
+        m.leaks === 0 && m.unknown === config.thresholds.unknownAnswers && m.followup === config.followupSamplesPerRole;
       return { role, pass, ...m };
     });
     report.roles = verdicts;
@@ -252,6 +287,11 @@ export async function liveMain(args: string[]) {
     report.roles ??= roles.map((role) => ({ role, pass: false, ...measures[role] }));
     report.usage = budget.summary(); report.failures = failures;
     report.latency = { trialMs: distribution(timings), modelMs: distribution(modelTimings), toolMs: distribution(toolTimings) };
+    report.roleLatency = roles.map((role) => ({ role, trialMs: distribution(roleTimings[role].trial),
+      modelMs: distribution(roleTimings[role].model), toolMs: distribution(roleTimings[role].tool) }));
+    report.retrievalModes = retrievalModes;
+    report.omissions = roles.map((role) => ({ role, trials: config.recallSamplesPerRole * 2 +
+      config.saveSamplesPerRole + config.unknownSamplesPerRole + config.followupSamplesPerRole - measures[role].completed }));
     report.finishedAt = new Date().toISOString();
     await client.stop();
     for (const store of stores.values()) store.close();

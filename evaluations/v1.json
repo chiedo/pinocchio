@@ -10,6 +10,7 @@
   "recallSamplesPerRole": 4,
   "saveSamplesPerRole": 4,
   "unknownSamplesPerRole": 1,
+  "followupSamplesPerRole": 1,
   "thresholds": {
     "backendP95Ms": 250,
     "searchCompliance": 0.75,
