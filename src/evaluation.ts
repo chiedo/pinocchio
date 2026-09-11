@@ -75,7 +75,6 @@ export class LiveBudget {
       if (value === undefined || !Number.isFinite(value) || value < 0) this.missingUsage++;
       else this[key] += value;
     }
-
   }
   exhausted() {
     return this.calls >= this.limits.modelCalls || this.inputTokens >= this.limits.inputTokens ||

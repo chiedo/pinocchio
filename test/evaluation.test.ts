@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { acceptance, distribution, LiveBudget, releaseFaults, releaseVerdict, roles } from "../src/evaluation.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
@@ -61,6 +62,25 @@ test("worker launch, crash, clone and late replies cannot strand the queue or ac
         assert.equal(verdict(reliability, { ...live, omissions: [{ role: "foreground", trials: 1 }] }), "fail");
         assert.equal(verdict(reliability, { ...live, usage: { ...live.usage, missingUsage: 1 } }), "fail");
         assert.equal(verdict(reliability, live, { passed: true, cases: [] }), "fail");
+      });
+      test("semantic output creation is private independently of the process umask", () => {
+        assert.ok(process.env.PINOCCHIO_TEST_PYTHON);
+        execFileSync(process.env.PINOCCHIO_TEST_PYTHON, ["-c", `
+      import os, pathlib, runpy, tempfile
+      engine = runpy.run_path("semantic/engine.py")
+      os.umask(0)
+      with tempfile.TemporaryDirectory() as root:
+          path = pathlib.Path(root) / "private"
+          with engine["private_output"](path) as output:
+              output.write(b"synthetic")
+          assert path.stat().st_mode & 0o777 == 0o600
+          try:
+              engine["private_output"](path)
+          except FileExistsError:
+              pass
+          else:
+              raise AssertionError("existing output overwritten")
+      `], { stdio: "pipe" });
       });
     });
     try {

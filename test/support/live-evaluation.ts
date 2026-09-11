@@ -80,6 +80,7 @@ export async function liveMain(args: string[]) {
   }
   const watchdog = setTimeout(() => { void abort("LIVE_RUN_DEADLINE"); void client.stop(); }, config.limits.runMs);
   const failures: string[] = [];
+  let stage = "baseline";
   const sessionConfig = (enabled: boolean, role: Role): SessionConfig => ({
     workingDirectory: f.repository, configDirectory: f.config,
     enableConfigDiscovery: true, customAgentsLocalOnly: true, requestExtensions: enabled, enableExperimentalMode: true, enableManagedSettings: false,
@@ -97,7 +98,9 @@ export async function liveMain(args: string[]) {
     if (stopReason || performance.now() - started >= config.limits.runMs) throw new Error("LIVE_RUN_STOPPED");
     budget.admit();
     measures[role].attempted++;
-    const session = await client.createSession(sessionConfig(enabled, role));
+    const session = await client.createSession(sessionConfig(enabled, role)).catch((error: unknown) => {
+      measures[role].failures++; throw error;
+    });
     current = session;
     let turns = 0, searchCalls = 0, hit = false, leaked = false, answeredBeforeSearch = false;
     let answer = "";
@@ -211,8 +214,10 @@ export async function liveMain(args: string[]) {
         process.version !== `v${config.host.node}` || !process.env.PINOCCHIO_TEST_PYTHON) {
       report.reason = "LIVE_ENVIRONMENT_MISMATCH"; return report;
     }
+    stage = "semantic-prepare";
     await prepareSemantic(["prepare", "--config-root", f.config, "--python", process.env.PINOCCHIO_TEST_PYTHON]);
     for (const role of roles) {
+      stage = `seed-${role}`;
       const directory = role === "foreground" ? join(f.repository, ".github", "agents") : join(f.config, "agents");
       await mkdir(directory, { recursive: true });
       const path = join(directory, `eval-${role}.agent.md`);
@@ -238,6 +243,7 @@ export async function liveMain(args: string[]) {
         `---\nname: baseline-${role}\ndescription: Synthetic no-memory control\ntools: [${role === "foreground" ? "task" : ""}]\nmodel: ${config.model}\nreasoning-effort: ${config.effort}\n---\n${instruction}\n`);
     }
     for (const role of roles) {
+      stage = `evaluate-${role}`;
       const totals = measures[role];
       for (let i = 0; i < config.recallSamplesPerRole; i++) {
         for (const enabled of i % 2 ? [true, false] : [false, true]) {
@@ -281,6 +287,7 @@ export async function liveMain(args: string[]) {
     if (usageMissingModel) failures.push("LIVE_MODEL_ID_MISMATCH");
   } catch (error) {
     report.status = budget.calls ? "fail" : "unvalidated";
+    report.failedStage = stage;
     failures.push(error instanceof Error && /^[A-Z_]+$/.test(error.message) ? error.message : "LIVE_RUN_FAILED");
   } finally {
     clearTimeout(watchdog);

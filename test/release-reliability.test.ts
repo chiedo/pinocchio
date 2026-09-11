@@ -167,6 +167,16 @@ test("release gate: long sessions, failed searches, delayed request hooks and co
     await assert.rejects(f.call({ query: "Lumen" }, "lock-root"), { code: "STORE_BUSY" });
   } finally { db.exec("ROLLBACK"); db.close(); }
   cases.push("lock-failure");
+  const first = await f.call({ query: "Lumen" }, "tool-chain");
+  assert.equal(first.value.status, "ok");
+  for (let i = 0; i < contract.config.longSessionRequests; i++) {
+    const repeated = await f.call({ query: "Lumen" }, "tool-chain");
+    assert.equal(repeated.value.status, "already_delivered");
+    assert.equal(repeated.value.chargedTokens, 0);
+    assert.equal(repeated.value.requestRemaining, first.value.requestRemaining);
+    assert.equal(repeated.value.sessionRemaining, first.value.sessionRemaining);
+  }
+  report.toolChain = { callbacks: contract.config.longSessionRequests, additionalCharge: 0 };
 });
 test("release gate: warm hybrid backend p95 excludes model inference and includes worker/scope/accounting work", { timeout: 180_000 }, async (t) => {
   const f = await fixture(t, true);
