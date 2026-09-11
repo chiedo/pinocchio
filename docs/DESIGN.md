@@ -1,7 +1,7 @@
 # Pinocchio design
 
-**Status:** Identity, SQLite storage, keyword-memory tools and development
-enrollment are implemented. Semantic retrieval, release evaluations and
+**Status:** Identity, SQLite storage, hybrid memory retrieval and development
+enrollment are implemented. Release evaluations and
 installation remain gated future work.
 
 The [step-1 diagnostic and compatibility report](COMPATIBILITY.md) are available.

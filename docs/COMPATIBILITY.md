@@ -1,4 +1,24 @@
-# Identity and keyword-memory compatibility gates
+# Memory compatibility gates
+
+**Local semantic gate: PASS.** The [passing full-suite run](https://github.com/chiedo/pinocchio/actions/runs/34558833513)
+passed 59 tests, including real CPU inference with the pinned quantized MiniLM
+model and FAISS. On the fixed four-query paraphrase corpus, hybrid top-three
+retrieval found 4/4 expected notes versus 0/4 for the unchanged keyword-only
+baseline; the predeclared minimum was three hybrid hits and improvement over
+keyword search. Exact-identifier retention and irrelevant-query rejection also
+passed.
+
+Recovery coverage verifies process-level builder exclusion, stale-publication
+rejection, abandoned generations, corruption/model mismatch, source-revision and
+scope checks, deletion cleanup, and real hybrid retrieval through the existing
+budgeted model worker. The existing administrative search gains an explicit
+`--hybrid` option; its default keyword baseline is preserved.
+
+Only aggregate `test-results/semantic.json` is published. No paid inference,
+notes, vectors or model files are uploaded. This small synthetic corpus is not
+the live-model compliance, answer-benefit or p95 release certification required
+by #6. See [SEMANTIC.md](SEMANTIC.md) for the pinned assets, resource bounds,
+offline setup, degradation states and publication/cleanup protocol.
 
 **Keyword-memory development gate: PASS on the pinned public host with root
 hook capability enabled.** The [passing integration run](https://github.com/chiedo/pinocchio/actions/runs/34540221637)
@@ -21,7 +41,7 @@ uses conservative serialized UTF-8 bytes, not claimed model-specific precision.
 See [MEMORY-TOOLS.md](MEMORY-TOOLS.md) for exact limits and setup.
 
 Only the aggregate `test-results/memory-workflow.json` is published. Real-model
-compliance/quality, semantic retrieval, production installation and desktop
+compliance/quality, production installation and desktop
 support remain unvalidated separate gates.
 
 **Production identity gate: PASS for explicit configuration-bound MCP servers.**
@@ -39,7 +59,7 @@ the decision for the new architecture.
 | Public SDK | [1.0.13](https://www.npmjs.com/package/@github/copilot-sdk/v/1.0.13); its package manifest pins CLI 1.0.83 |
 | Runtime | Node.js 22.18.0, TypeScript, compiled ESM |
 | Public-host execution | Configuration-bound production identity gate PASS on `linux-x64` |
-| Supported surface | Identity diagnostics, SQLite administration and keyword-memory development integration on CLI 1.0.83 / Linux x64 with root hooks; no release, desktop or other-platform certification |
+| Supported surface | Identity diagnostics, SQLite administration and optional local hybrid memory on CLI 1.0.83 / Linux x64 with root hooks; no release, desktop or other-platform certification |
 
 ## Production identity gate
 

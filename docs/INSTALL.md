@@ -11,6 +11,8 @@ The separate [local storage CLI](STORAGE.md) can create and manage durable recor
 after an explicit binding and namespace/scope selection.
 The [development enrollment helper](MEMORY-TOOLS.md) wires named profiles to
 scoped keyword-memory tools and a shared trusted-context extension.
+Optional [local embeddings and FAISS setup](SEMANTIC.md) require an explicit
+model download and a separate pinned Python environment; building alone never downloads them.
 
 `npm ci` and `npm run build` build the source-checkout diagnostics; they do not
 enable memory or install a user-level extension. The entry is
@@ -35,7 +37,7 @@ be added to the checkout.
 
 | Host | Status | Requirement before claiming support |
 |---|---|---|
-| GitHub Copilot CLI | Pinned 1.0.83 / Linux x64 development baseline; identity, SQLite and keyword-memory integration | Semantic retrieval, release evaluations and packaging remain separate gates. |
+| GitHub Copilot CLI | Pinned 1.0.83 / Linux x64 development baseline; identity, SQLite and optional hybrid retrieval | Release evaluations and packaging remain separate gates. |
 | GitHub Copilot desktop app | Planned, separately gated | Verify the app loads the integration, exposes the required tool/caller metadata, and uses the intended local runtime and data directories. |
 | GitHub web, GitHub Mobile, hosted GitHub Apps | Out of scope | Local CLI installation does not establish access from these hosts. |
 

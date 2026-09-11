@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "model": "Xenova/all-MiniLM-L6-v2",
+  "revision": "751bff37182d3f1213fa05d7196b954e230abad9",
+  "license": "Apache-2.0",
+  "dimensions": 384,
+  "maxTokens": 256,
+  "pooling": "attention-mask-mean-l2",
+  "files": {
+    "tokenizer.json": {
+      "sha256": "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
+      "bytes": 711661
+    },
+    "onnx/model_quantized.onnx": {
+      "sha256": "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1",
+      "bytes": 22972370
+    }
+  }
+}

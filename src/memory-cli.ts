@@ -5,6 +5,8 @@ import { BindingError, configRootPath } from "./binding-registry.js";
 import { MemoryStore } from "./memory-store.js";
 import { acknowledge, MemoryError, noteSchema, validate } from "./memory-types.js";
 import type { MemoryReceipt } from "./memory-types.js";
+import { SemanticRuntime } from "./semantic-runtime.js";
+import { semanticFailure } from "./semantic-files.js";
 
 const INPUT_LIMIT = 128 * 1024;
 async function input(path: string | undefined) {
@@ -42,6 +44,7 @@ export async function main(args: string[]) {
       namespace: { type: "string" }, scope: { type: "string" }, operation: { type: "string" },
       input: { type: "string" }, record: { type: "string" }, "expected-revision": { type: "string" },
       query: { type: "string" }, limit: { type: "string" }, offset: { type: "string" },
+      hybrid: { type: "boolean" },
     },
   });
   const command = positionals[0] ?? "";
@@ -49,7 +52,7 @@ export async function main(args: string[]) {
     remember: ["input", "operation"],
     correct: ["input", "record", "expected-revision", "operation"],
     forget: ["record", "expected-revision", "operation"],
-    list: ["limit", "offset"], search: ["query", "limit", "offset"],
+    list: ["limit", "offset"], search: ["query", "limit", "offset", "hybrid"],
     inspect: ["record", "limit", "offset"], status: [], operation: ["operation"],
     disable: ["operation"], enable: ["operation"],
   };
@@ -66,10 +69,11 @@ export async function main(args: string[]) {
   const pagination = { ...(limit === undefined ? {} : { limit }), ...(offset === undefined ? {} : { offset }) };
   const expected = integer(values["expected-revision"]);
   const note = command === "remember" || command === "correct" ? await input(values.input) : undefined;
-  const store = await MemoryStore.open({
+  const reference = {
     configRoot: configRootPath(values["config-root"]), bindingId: values.binding,
     fingerprint: values.fingerprint,
-  }, { namespace: values.namespace, scope: values.scope });
+  };
+  const store = await MemoryStore.open(reference, { namespace: values.namespace, scope: values.scope });
   let committedOperation: string | undefined;
   try {
     const result = await (async () => { switch (command) {
@@ -81,7 +85,20 @@ export async function main(args: string[]) {
         return await store.correct(values.record ?? "", expected ?? 0, note, values.operation ?? "");
       case "forget": return await store.forget(values.record ?? "", expected ?? 0, values.operation ?? "");
       case "list": return await store.list(pagination);
-      case "search": return await store.search(values.query ?? "", pagination);
+      case "search": {
+        if (!values.hybrid) return await store.search(values.query ?? "", pagination);
+        if ((await store.status()).disabled) throw new MemoryError("STORE_DISABLED");
+        const runtime = new SemanticRuntime(false);
+        try {
+          let failure: string | undefined;
+          try { await runtime.warm(reference); } catch (error) { failure = semanticFailure(error); }
+          const result = failure ? { retrieval: { mode: "keyword" as const, reason: failure }, candidates: undefined }
+            : await runtime.candidates(reference, values.query ?? "");
+          return await store.searchSnapshot(values.query ?? "", pagination, (matches) => ({
+            ...matches, retrieval: result.retrieval,
+          }), result.candidates ?? []);
+        } finally { await runtime.close(); }
+      }
       case "inspect": return await store.inspect(values.record ?? "", pagination);
       case "status": return await store.status();
       case "operation": return await store.operationStatus(values.operation ?? "");

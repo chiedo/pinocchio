@@ -5,6 +5,10 @@ import { ContextLedger } from "./context-ledger.js";
 import { MemoryStore } from "./memory-store.js";
 import { MemoryError, validate } from "./memory-types.js";
 import { SAVE_TOOL, SEARCH_TOOL, saveSchema, searchSchema, ToolError } from "./memory-protocol.js";
+import { SemanticRuntime } from "./semantic-runtime.js";
+
+const semantic = new SemanticRuntime();
+parentPort?.once("close", () => { void semantic.close(); });
 
 const referenceSchema = z.object({
   configRoot: z.string(), bindingId: z.string(), fingerprint: z.string(),
@@ -45,6 +49,8 @@ async function execute(raw: unknown): Promise<unknown> {
         return result;
       }
       const args = validate(searchSchema, command.arguments);
+      if ((await store.status()).disabled) throw new MemoryError("STORE_DISABLED");
+      const retrieval = await semantic.candidates(command.reference, args.query, ticket.deadline);
       ledger.db.exec("BEGIN IMMEDIATE");
       try {
         ledger.current(ticket);
@@ -99,10 +105,11 @@ async function execute(raw: unknown): Promise<unknown> {
         ledger.db.exec("COMMIT");
         return {
           status: snippets.length ? "ok" : matches.items.length ? (duplicate ? "already_delivered" : "budget_exhausted") : "no_match",
+          retrieval: retrieval.retrieval,
           snippets, chargedTokens: cost, accounting: "conservative_utf8_bytes",
           requestRemaining: 800 - requestUsed - cost, sessionRemaining: 6_000 - sessionUsed - cost,
         };
-        });
+        }, retrieval.candidates ?? []);
       } catch (error) {
         if (ledger.db.isTransaction) ledger.db.exec("ROLLBACK");
         throw error;
