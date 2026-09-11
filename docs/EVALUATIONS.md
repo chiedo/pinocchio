@@ -54,6 +54,11 @@ repositories, actual enrolled MCP servers, and native foreground/helper turns.
 No-memory controls cannot access MCP memory tools. Retrieval credit requires the
 expected seeded record ID and marker, not an answer that happens to mention it.
 Save quality requires exactly one new supported note without changing prior notes.
+For diagnosis, add `--diagnose-save` to run one save prompt per role. Its aggregate
+validation codes and outcome counts contain no arguments or answers, and its
+`diagnostic` status can never qualify as release evidence. Invalid action values
+in the initial live run motivated explicit root-level save parameters and action
+instructions; strict per-action validation and acceptance thresholds remain unchanged.
 
 Caps: 192 model calls, eight calls per trial, 4,000,000 input tokens, 200,000
 output tokens, 4,000,000,000,000 nano-AI units, 90 seconds per trial and 20 minutes
