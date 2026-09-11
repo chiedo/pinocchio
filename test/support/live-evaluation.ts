@@ -12,7 +12,7 @@ import { registerBinding, loadBinding } from "../../src/binding-registry.js";
 import type { BindingReference } from "../../src/binding-registry.js";
 import { MemoryStore } from "../../src/memory-store.js";
 import { enroll } from "../../src/enrollment.js";
-import { SEARCH_TOOL } from "../../src/memory-protocol.js";
+import { SEARCH_TOOL, SAVE_TOOL } from "../../src/memory-protocol.js";
 import { isRecord } from "../../src/identity.js";
 import { main as prepareSemantic } from "../../src/semantic-cli.js";
 import { rebuildIndex } from "../../src/semantic-index.js";
@@ -21,6 +21,7 @@ import { createProductionFixture } from "./production-fixture.js";
 export async function liveMain(args: string[]) {
   const { values } = parseArgs({ args, strict: true, options: {
     authorize: { type: "boolean" }, "token-stdin": { type: "boolean" }, probe: { type: "boolean" },
+    "diagnose-save": { type: "boolean" },
     report: { type: "string", default: "test-results/live-evaluation.json" },
   } });
   const { config, hash } = await acceptance();
@@ -63,6 +64,8 @@ export async function liveMain(args: string[]) {
   const roleTimings = { foreground: { trial: [] as number[], model: [] as number[], tool: [] as number[] },
     helper: { trial: [] as number[], model: [] as number[], tool: [] as number[] } };
   const retrievalModes: Record<string, number> = {};
+  const saveDiagnostics: { role: Role; index: number; added: number; matching: number;
+    userEvidence: number; unchanged: boolean; attempts: number; outcomes: Record<string, number> }[] = [];
   const references = new Map<Role, BindingReference>();
   const sourceIds = new Map<string, string>();
   const stores = new Map<Role, MemoryStore>();
@@ -102,7 +105,8 @@ export async function liveMain(args: string[]) {
       measures[role].failures++; throw error;
     });
     current = session;
-    let turns = 0, searchCalls = 0, hit = false, leaked = false, answeredBeforeSearch = false;
+    let turns = 0, searchCalls = 0, saveCalls = 0, hit = false, leaked = false, answeredBeforeSearch = false;
+    const saveOutcomes: Record<string, number> = {};
     let answer = "";
     const observed = new Set<string>();
     const usage = new Set<string>();
@@ -133,6 +137,7 @@ export async function liveMain(args: string[]) {
         starts.set(event.data.toolCallId, { time: performance.now(), name: event.data.toolName });
         pending.add(event.data.toolCallId);
         if (event.data.toolName.endsWith(SEARCH_TOOL)) searchCalls++;
+        if (event.data.toolName.endsWith(SAVE_TOOL)) saveCalls++;
       }
       if (event.type === "tool.execution_complete") {
         const start = starts.get(event.data.toolCallId);
@@ -142,6 +147,17 @@ export async function liveMain(args: string[]) {
           toolTimings.push(elapsed); roleTimings[role].tool.push(elapsed);
         }
         const text = event.data.result?.content ?? "";
+        if (start?.name.endsWith(SAVE_TOOL)) {
+          let outcome = "unstructured";
+          try {
+            const parsed: unknown = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+            if (isRecord(parsed) && typeof parsed.status === "string") {
+              outcome = ["committed", "save_failed", "outcome_unknown", "unavailable"].includes(parsed.status) ? parsed.status : "other";
+              if (typeof parsed.code === "string" && /^[A-Z_]+$/.test(parsed.code)) outcome += `:${parsed.code}`;
+            }
+          } catch { /* Invalid tool output is not a save acknowledgement. */ }
+          saveOutcomes[outcome] = (saveOutcomes[outcome] ?? 0) + 1;
+        }
         if (start?.name.endsWith(SEARCH_TOOL)) {
           if (foreign.some((value) => text.includes(value))) leaked = true;
           try {
@@ -185,7 +201,7 @@ export async function liveMain(args: string[]) {
       if (foreign.some((value) => answer.includes(value))) leaked = true;
       measures[role].completed++;
       return { correct: expected ? answer.includes(expected) : answer.trim().toUpperCase().includes("UNKNOWN"),
-        searched: searchCalls > 0 && !answeredBeforeSearch, retrieved: hit, leaked };
+        searched: searchCalls > 0 && !answeredBeforeSearch, retrieved: hit, leaked, saveCalls, saveOutcomes };
     } catch (error) {
       measures[role].failures++; throw error;
     } finally {
@@ -247,7 +263,7 @@ export async function liveMain(args: string[]) {
     for (const role of roles) {
       stage = `evaluate-${role}`;
       const totals = measures[role];
-      for (let i = 0; i < config.recallSamplesPerRole; i++) {
+      for (let i = 0; i < (values["diagnose-save"] ? 0 : config.recallSamplesPerRole); i++) {
         for (const enabled of i % 2 ? [true, false] : [false, true]) {
           const result = await trial(role, enabled, recallPrompt(i), marker(role, i));
           if (enabled) {
@@ -258,7 +274,7 @@ export async function liveMain(args: string[]) {
         }
       }
       const store = stores.get(role)!;
-      for (let i = 0; i < config.saveSamplesPerRole; i++) {
+      for (let i = 0; i < (values["diagnose-save"] ? 1 : config.saveSamplesPerRole); i++) {
         const original = await store.indexMetadata();
         const before = new Set(original.map((item) => item.id));
         const result = await trial(role, true, savePrompt(role, i));
@@ -266,10 +282,15 @@ export async function liveMain(args: string[]) {
         const after = await store.indexMetadata();
         const unchanged = original.every((item) => after.some((other) => item.id === other.id && item.revision === other.revision));
         const added = (await store.list({ limit: 100, offset: 0 })).items.filter((item) => !before.has(item.id));
+        saveDiagnostics.push({ role, index: i, added: added.length, unchanged,
+          matching: added.filter((item) => item.content.includes(saveMarker(role, i))).length,
+          userEvidence: added.filter((item) => JSON.stringify(item.evidence).includes("user_statement")).length,
+          attempts: result.saveCalls, outcomes: result.saveOutcomes });
         totals.saveSamples++;
         if (unchanged && added.length === 1 && added[0]!.content.includes(saveMarker(role, i)) &&
             JSON.stringify(added[0]!.evidence).includes("user_statement")) totals.saved++;
       }
+      if (values["diagnose-save"]) continue;
       const unknown = await trial(role, true, "What is the approved release marker for Project Unrecorded? Answer with its marker if supported, otherwise UNKNOWN.");
       totals.unknown = Number(unknown.correct); totals.leaks += Number(unknown.leaked);
       const followup = await trial(role, true, followupPrompts, marker(role, 0));
@@ -285,7 +306,8 @@ export async function liveMain(args: string[]) {
       return { role, pass, ...m };
     });
     report.roles = verdicts;
-    report.status = verdicts.every((item) => item.pass) && !usageMissingModel && !budget.missingUsage && !budget.exhausted() ? "pass" : "fail";
+    report.status = values["diagnose-save"] ? "diagnostic" :
+      verdicts.every((item) => item.pass) && !usageMissingModel && !budget.missingUsage && !budget.exhausted() ? "pass" : "fail";
     if (usageMissingModel) failures.push("LIVE_MODEL_ID_MISMATCH");
   } catch (error) {
     report.status = budget.calls ? "fail" : "unvalidated";
@@ -299,6 +321,7 @@ export async function liveMain(args: string[]) {
     report.roleLatency = roles.map((role) => ({ role, trialMs: distribution(roleTimings[role].trial),
       modelMs: distribution(roleTimings[role].model), toolMs: distribution(roleTimings[role].tool) }));
     report.retrievalModes = retrievalModes;
+    report.saveDiagnostics = saveDiagnostics;
     report.omissions = roles.map((role) => ({ role, trials: config.recallSamplesPerRole * 2 +
       config.saveSamplesPerRole + config.unknownSamplesPerRole + config.followupSamplesPerRole - measures[role].completed }));
     report.finishedAt = new Date().toISOString();
