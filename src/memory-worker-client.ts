@@ -13,6 +13,7 @@ export class MemoryWorker {
   #active: Pending | undefined;
   #sequence = 0;
   #closed = false;
+  constructor(private readonly createWorker: () => Worker = () => new Worker(new URL("./memory-worker.js", import.meta.url))) {}
   call(payload: unknown, deadline = Date.now() + 1_000, signal?: AbortSignal): Promise<unknown> {
     if (this.#closed) return Promise.reject(new ToolError("WORKER_CLOSED"));
     if (signal?.aborted) return Promise.reject(new ToolError("CALL_CANCELLED"));
@@ -59,8 +60,9 @@ export class MemoryWorker {
       this.#cleanup(next); next.reject(new ToolError("MEMORY_DEADLINE")); this.#next(); return;
     }
     this.#active = next;
+    try {
     if (!this.#worker) {
-      this.#worker = new Worker(new URL("./memory-worker.js", import.meta.url));
+      this.#worker = this.createWorker();
       this.#worker.on("message", (message: unknown) => {
         const current = this.#active;
         if (!current || !isRecord(message) || message.id !== current.id) return;
@@ -78,6 +80,9 @@ export class MemoryWorker {
       this.#worker.on("exit", () => this.#reset("WORKER_EXITED"));
     }
     this.#worker.postMessage({ id: next.id, payload: next.payload });
+    } catch {
+      this.#reset("WORKER_FAILED");
+    }
   }
   close() {
     this.#closed = true;

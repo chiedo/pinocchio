@@ -15,6 +15,7 @@
     "memory": "node dist/src/memory-cli.js",
     "enroll": "node dist/src/enrollment-cli.js",
     "semantic": "node dist/src/semantic-cli.js",
+    "evaluate:live": "node dist/test/support/live-evaluation.js",
     "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js"
   },
   "dependencies": {
