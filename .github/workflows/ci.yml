@@ -43,5 +43,6 @@ jobs:
             test-results/production-bindings.json
             test-results/memory-workflow.json
             test-results/semantic.json
+            test-results/reliability.json
           if-no-files-found: error
           retention-days: 7

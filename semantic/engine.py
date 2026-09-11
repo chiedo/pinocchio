@@ -34,6 +34,10 @@ def private_directory(path):
             and info.st_mode & 0o077 == 0, "INSECURE_SEMANTIC_DIRECTORY")
 
 
+def private_output(path):
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb")
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -65,7 +69,7 @@ def prepare(root):
         temporary = path.with_name(path.name + "." + str(os.getpid()) + ".download")
         url = f'https://huggingface.co/{SPEC["model"]}/resolve/{SPEC["revision"]}/{name}'
         try:
-            with urllib.request.urlopen(url, timeout=60) as response, temporary.open("xb") as output:
+            with urllib.request.urlopen(url, timeout=60) as response, private_output(temporary) as output:
                 remaining = spec["bytes"]
                 while remaining:
                     chunk = response.read(min(65536, remaining))
@@ -160,7 +164,7 @@ class Engine:
             for offset in range(0, len(records), 16):
                 index.add(self.embed([item["content"] for item in records[offset:offset + 16]]))
             data = self.faiss.serialize_index(index).tobytes()
-            with target.open("xb") as output:
+            with private_output(target) as output:
                 output.write(data)
                 output.flush()
                 os.fsync(output.fileno())

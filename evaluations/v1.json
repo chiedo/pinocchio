@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "host": { "cli": "1.0.83", "sdk": "1.0.13", "node": "22.18.0", "platform": "linux", "arch": "x64" },
+  "model": "gpt-5.4",
+  "effort": "medium",
+  "retrieval": "hybrid",
+  "corpusPerNamespace": 128,
+  "backendSamples": 100,
+  "longSessionRequests": 128,
+  "recallSamplesPerRole": 4,
+  "saveSamplesPerRole": 4,
+  "unknownSamplesPerRole": 1,
+  "followupSamplesPerRole": 1,
+  "thresholds": {
+    "backendP95Ms": 250,
+    "searchCompliance": 0.75,
+    "scopedRetrieval": 0.75,
+    "saveQuality": 0.75,
+    "answerBenefit": 0.5,
+    "scopeLeaks": 0,
+    "unknownAnswers": 1
+  },
+  "limits": {
+    "modelCalls": 192,
+    "callsPerTrial": 8,
+    "inputTokens": 4000000,
+    "outputTokens": 200000,
+    "nanoAiu": 4000000000000,
+    "trialMs": 90000,
+    "runMs": 1200000
+  }
+}

@@ -25,6 +25,7 @@ try {
   };
   const receipt = action === "correct"
     ? await store.correct(process.argv[4] ?? "", 1, input, process.argv[5] ?? "")
+    : action === "forget" ? await store.forget(process.argv[4] ?? "", 1, process.argv[5] ?? "")
     : await store.remember(input, "child-save");
   store.close();
   if (action === "lost-ack") process.exit(0);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +13,11 @@ import { SEARCH_TOOL, SAVE_TOOL } from "../src/memory-protocol.js";
 import { isRecord } from "../src/identity.js";
 import { createProductionFixture } from "./support/production-fixture.js";
 import { startSyntheticProvider } from "./support/provider.js";
+import { acceptance } from "../src/evaluation.js";
 
 test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async (t) => {
+  const contract = await acceptance();
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const f = await createProductionFixture();
   const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
   const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown; sessionRemaining?: unknown }[] = [];
@@ -25,6 +29,7 @@ test("enrolled native profiles recall independently through the production conte
     return { name: prompt.includes("HELPER") ? "memory-helper" : "memory-foreground", save: prompt.includes("SAVE") };
   };
   const provider = await startSyntheticProvider({
+    replyWithoutTools: true,
     selectTool(messages) {
       const { name, save } = selectName(messages);
       const launch = launches.get(name);
@@ -109,7 +114,7 @@ test("enrolled native profiles recall independently through the production conte
       extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
       model: "synthetic-model", provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
       availableTools: new ToolSet().addMcp("*").addBuiltIn(["view", "task"]),
-      agent: "memory-foreground", onPermissionRequest: approveAll, infiniteSessions: { enabled: false },
+      agent: "memory-foreground", onPermissionRequest: approveAll, infiniteSessions: { enabled: true },
       hooks: { onSessionStart(input) { lifecycle.push(input.source); } },
     };
     await client.start();
@@ -150,6 +155,15 @@ test("enrolled native profiles recall independently through the production conte
     });
     assert.ok(typeof denied !== "string" && denied.resultType !== "success");
     cases.push("cross-agent-denied");
+    const beforeCompaction = await own(session, "FOREGROUND SEARCH before compaction.", "ok");
+    stage = "native-compaction";
+    const compaction = await session.rpc.history.compact({ trigger: "manual" });
+    assert.equal(compaction.success, true);
+    assert.ok(compaction.messagesRemoved > 0);
+    assert.ok(compaction.summaryContent);
+    const compacted = await own(session, "FOREGROUND SEARCH after compaction.", "ok");
+    assert.ok(Number(compacted.sessionRemaining) < Number(beforeCompaction.sessionRemaining));
+    cases.push("native-compaction-preserves-accounting");
     stage = "extension-reload";
     await session.rpc.extensions.reload();
     const { extensions } = await session.rpc.extensions.list();
@@ -197,6 +211,7 @@ test("enrolled native profiles recall independently through the production conte
     await mkdir("test-results", { recursive: true });
     await writeFile("test-results/memory-workflow.json", JSON.stringify({
       gate: "production-keyword-memory", passed, stage, cases, lifecycle,
+      contractHash: contract.hash, commit,
       baseline: "CLI 1.0.83 / Linux x64; SDK root hook capability enabled",
     }, null, 2) + "\n");
     if ([...stopped, ...cleaned].some((result) => result.status === "rejected")) {
