@@ -4,12 +4,12 @@
 live-model gate to make experimentation possible. That gate remains unvalidated.
 Desktop support is not advertised.
 
-**Known blocker at handoff:** the native CLI smoke check currently reports
-`INSTALL_DIAGNOSTIC_FAILED_FOREGROUND_SAVE_MISSING_REQUEST_CONTEXT`. Installation
-therefore still stops at its check. The existing SDK-driven memory workflow
-passes, but that does not prove native CLI startup. The commands below document
-the intended preview workflow; resolve this context-hook issue before expecting
-an end-to-end successful install. No check has been weakened to hide the failure.
+The normal CLI does not currently provide the extension pre-MCP metadata used by
+the stronger SDK-driven accounting path. The preview therefore derives fallback
+request context inside each immutable per-agent MCP process. Identity, scope,
+argument integrity, the 800-byte call limit and a 6,000-byte process limit remain
+enforced. The process limit is not shared across separate helper processes or
+CLI restarts; this narrower boundary is explicit preview behavior.
 
 ## 1. Install once
 

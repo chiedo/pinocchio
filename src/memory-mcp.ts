@@ -2,10 +2,12 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BindingReference } from "./binding-registry.js";
 import { BoundIdentityAdapter } from "./bound-identity.js";
+import { ContextLedger } from "./context-ledger.js";
 import { MemoryWorker } from "./memory-worker-client.js";
 import { CONTEXT_META, MEMORY_DEADLINE_MS, SAVE_TOOL, SEARCH_TOOL, saveSchema, searchSchema, ticketSchema, ToolError } from "./memory-protocol.js";
 import { isRecord } from "./identity.js";
@@ -35,6 +37,27 @@ export function createMemoryMcpServer(reference: BindingReference, serverName: s
   reference = Object.freeze({ ...reference });
   const worker = new MemoryWorker();
   const identity = new BoundIdentityAdapter(reference);
+  const directRoot = randomUUID();
+  let directSequence = 0;
+  let directTail = Promise.resolve();
+  function directCall(tool: typeof SEARCH_TOOL | typeof SAVE_TOOL, args: unknown, requestId: unknown, signal: AbortSignal) {
+    const run = directTail.then(async () => {
+      const ledger = await ContextLedger.open(reference.configRoot);
+      const deadline = Date.now() + MEMORY_DEADLINE_MS;
+      try {
+        const recipient = directRoot;
+        ledger.start(directRoot, recipient, new Date(Date.now() + directSequence++).toISOString());
+        const ticket = ledger.issue({
+          root: directRoot, recipient, call: String(requestId), server: serverName, tool,
+          directory: process.cwd(), arguments: args, deadline,
+        });
+        return await worker.call({ action: "tool", reference, server: serverName, tool, arguments: args, ticket },
+          deadline, signal);
+      } finally { ledger.close(); }
+    });
+    directTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
   const server = new Server({ name: "pinocchio-memory", version: "1" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -57,15 +80,20 @@ export function createMemoryMcpServer(reference: BindingReference, serverName: s
     } else {
       const schema = tool === SEARCH_TOOL ? searchSchema : tool === SAVE_TOOL ? saveSchema : undefined;
       const parsed = schema?.safeParse(args);
-      const ticket = ticketSchema.safeParse(extra._meta?.[CONTEXT_META]);
+      const rawTicket = extra._meta?.[CONTEXT_META];
+      const ticket = ticketSchema.safeParse(rawTicket);
       if (!parsed?.success) result = { status: "unavailable", code: "INVALID_TOOL_ARGUMENTS" };
-      else if (!ticket.success) result = { status: "unavailable", code: "MISSING_REQUEST_CONTEXT" };
+      else if (rawTicket !== undefined && !ticket.success) {
+        result = { status: "unavailable", code: "INVALID_REQUEST_CONTEXT" };
+      }
       else {
+        const memoryTool = tool === SEARCH_TOOL ? SEARCH_TOOL : SAVE_TOOL;
         const operationId = tool === SAVE_TOOL && isRecord(args) && args.action !== "status" ? args.operationId : undefined;
         try {
-          result = await worker.call({
+          result = ticket.success ? await worker.call({
             action: "tool", reference, server: serverName, tool, arguments: args, ticket: ticket.data,
-          }, Math.min(Date.now() + MEMORY_DEADLINE_MS, ticket.data.deadline), extra.signal);
+          }, Math.min(Date.now() + MEMORY_DEADLINE_MS, ticket.data.deadline), extra.signal)
+            : await directCall(memoryTool, args, extra.requestId, extra.signal);
         } catch (error) {
           const code = error instanceof ToolError ? error.code : "MEMORY_UNAVAILABLE";
           const uncertain = ["MEMORY_DEADLINE", "CALL_CANCELLED", "WORKER_CLOSED", "WORKER_EXITED",

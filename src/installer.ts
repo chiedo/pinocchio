@@ -12,7 +12,7 @@ import { contextExtensionContent, removeEnrollment } from "./enrollment.js";
 import { MemoryStore } from "./memory-store.js";
 import { ToolError } from "./memory-protocol.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
-import { PUBLIC_NODE, packageRelease, releaseRoot, releaseSchema, verifyRelease } from "./release.js";
+import { pinnedCliPath, PUBLIC_NODE, packageRelease, releaseRoot, releaseSchema, verifyRelease } from "./release.js";
 
 const execute = promisify(execFile);
 const stateSchema = z.object({
@@ -228,7 +228,7 @@ export async function discardPrevious(paths: Locations, stopped: boolean) {
 export async function start(paths: Locations, agent?: string) {
   const state = await stateAt(paths);
   if (!state.installed) throw new ToolError("NOT_INSTALLED");
-  const child = spawn(join(paths.app, "node_modules/.bin/copilot"),
+  const child = spawn(pinnedCliPath(paths.app),
     ["--experimental", "--no-auto-update", "--extension-sdk-path",
       join(paths.app, "node_modules/@github/copilot-sdk/dist"), ...(agent ? ["--agent", agent] : [])], {
       stdio: "inherit", env: { ...process.env, COPILOT_HOME: paths.root, COPILOT_CONFIG_DIR: paths.root },

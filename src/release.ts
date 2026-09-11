@@ -9,6 +9,9 @@ export const PUBLIC_HOST = "1.0.83";
 export const PUBLIC_NODE = "22.18.0";
 export const PUBLIC_SDK = "1.0.13";
 export const releaseRoot = fileURLToPath(new URL("../../", import.meta.url));
+export function pinnedCliPath(root = releaseRoot) {
+  return join(root, "node_modules", "@github", `copilot-${process.platform}-${process.arch}`, "copilot");
+}
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 export const releaseSchema = z.object({
   format: z.literal(1), version: z.string().regex(/^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$/),

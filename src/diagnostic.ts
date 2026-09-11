@@ -11,16 +11,25 @@ import { memoryLaunch } from "./memory-mcp.js";
 import { MemoryStore } from "./memory-store.js";
 import { SEARCH_TOOL, SAVE_TOOL, ToolError } from "./memory-protocol.js";
 import { startSyntheticProvider } from "../test/support/provider.js";
-import { PUBLIC_HOST, PUBLIC_NODE, releaseRoot } from "./release.js";
+import { pinnedCliPath, PUBLIC_HOST, PUBLIC_NODE } from "./release.js";
 
 const execute = promisify(execFile);
-export const installedHost = join(releaseRoot, "node_modules", ".bin", "copilot");
+export const installedHost = pinnedCliPath();
 
 export async function prerequisites(previewPlatform = false) {
   if (process.versions.node !== PUBLIC_NODE) throw new ToolError("NODE_22_18_0_REQUIRED");
   const supported = process.platform === "linux" && process.arch === "x64";
   if (!supported && !(previewPlatform && process.platform === "darwin")) throw new ToolError("PLATFORM_UNVALIDATED");
-  const version = await execute(installedHost, ["--version"], { timeout: 15_000, maxBuffer: 4096 });
+  const probe = await mkdtemp(join(tmpdir(), "pinocchio-version-check-"));
+  let version;
+  try {
+    const config = join(probe, ".copilot");
+    version = await execute(installedHost, ["--version"], {
+      timeout: 15_000, maxBuffer: 4096,
+      env: { PATH: process.env.PATH, HOME: probe, USERPROFILE: probe, COPILOT_HOME: config,
+        COPILOT_CONFIG_DIR: config, COPILOT_OFFLINE: "true", DO_NOT_TRACK: "1" },
+    });
+  } finally { await rm(probe, { recursive: true, force: true }); }
   if (!new RegExp(`CLI ${PUBLIC_HOST.replaceAll(".", "\\.")}(?:\\.|\\s|$)`).test(version.stdout)) {
     throw new ToolError("PINNED_CLI_REQUIRED");
   }
