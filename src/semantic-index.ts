@@ -91,10 +91,12 @@ export async function indexStatus(reference: BindingReference) {
         name !== active.manifest.generation && /^(?:\.staging-)?[a-f0-9-]{36}$/.test(name));
       return { status: "ready", generation: active.manifest.generation, vectors: active.manifest.records.length,
         staleVectors, obsoleteGenerations: leftovers.length, pendingPhysicalCleanup: staleVectors > 0 || leftovers.length > 0,
-        indexJobs: state.indexJobs, disabled: state.disabled };
+        indexJobs: state.indexJobs, disabled: state.disabled,
+        cleanupScope: "disk generations; process caches refresh on next query or exit and are not inspected" };
     } catch (error) {
       if (error instanceof SemanticError && error.code === "INDEX_CAPACITY_EXCEEDED") throw error;
-      return { status: "degraded", reason: semanticFailure(error), indexJobs: state.indexJobs, disabled: state.disabled };
+      return { status: "degraded", reason: semanticFailure(error), indexJobs: state.indexJobs, disabled: state.disabled,
+        cleanupState: "unknown until a valid generation is rebuilt" };
     }
   } finally { store.close(); }
 }

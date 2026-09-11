@@ -7,6 +7,7 @@ import type { TestContext } from "node:test";
 import { loadBinding } from "../src/binding-registry.js";
 import { MemoryStore } from "../src/memory-store.js";
 import { main as semanticMain } from "../src/semantic-cli.js";
+import { main as memoryMain } from "../src/memory-cli.js";
 import { activeIndex, indexDirectory, semanticConfig, sha, writeAtomic } from "../src/semantic-files.js";
 import { rebuildIndex, indexStatus } from "../src/semantic-index.js";
 import { SemanticRuntime } from "../src/semantic-runtime.js";
@@ -232,4 +233,21 @@ test("real hybrid retrieval through the model worker preserves recipient budgets
     assert.equal(repeat.sessionRemaining, result.sessionRemaining);
     report.workerBudgetsAndWarmup = true;
   } finally { worker.close(); ledger.close(); }
+});
+
+test("existing administrative search opts into hybrid retrieval without changing its keyword baseline", { timeout: 120_000 }, async (t) => {
+  const f = await fixture(t);
+  await f.save("Restore accidentally deleted Git commits using git reflog.", "save");
+  await rebuildIndex(f.reference);
+  const binding = await loadBinding(f.reference);
+  const args = ["search", "--config-root", f.config, "--binding", f.reference.bindingId,
+    "--fingerprint", f.reference.fingerprint, "--namespace", binding.namespace, "--scope", binding.scope.kind,
+    "--query", "How can I recover lost commits?"];
+  const keyword: unknown = await memoryMain(args);
+  assert.ok(isRecord(keyword) && Array.isArray(keyword.items));
+  assert.equal(keyword.items.length, 0);
+  const hybrid: unknown = await memoryMain([...args, "--hybrid"]);
+  assert.ok(isRecord(hybrid) && Array.isArray(hybrid.items) && isRecord(hybrid.retrieval));
+  assert.equal(hybrid.retrieval.mode, "hybrid");
+  assert.equal(hybrid.items.length, 1);
 });

@@ -1,7 +1,8 @@
 # Agent memory tools and enrollment
 
-This development integration adds keyword memory to the configuration-bound
-identity and SQLite store. It is not an installer, semantic search engine,
+This development integration adds memory tools to the configuration-bound
+identity and SQLite store. [Optional local semantic retrieval](SEMANTIC.md) is
+available behind the same search tool. This is not an installer
 or replacement for native host memory/model settings. Use the pinned public
 CLI 1.0.83 and Node 22.18.0 baseline; other hosts/platforms remain unadvertised.
 
@@ -179,6 +180,6 @@ worker restart, compaction accounting, queue/deadline failures, scoped saves,
 enrollment preservation and real public-host foreground/helper behavior.
 Normal CI uses no paid model calls. Only aggregate reports may be uploaded.
 
-Semantic ranking/indexes, live-model compliance/quality evaluation, release
+Live-model compliance/quality evaluation, release
 packaging and desktop validation remain separate gates. Synthetic tool execution
 does not prove a real model will always choose to recall or save.

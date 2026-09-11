@@ -3,13 +3,11 @@ import { promisify, parseArgs } from "node:util";
 import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { BindingError, configRootPath, loadBinding, privateDirectory } from "./binding-registry.js";
-import { MemoryStore } from "./memory-store.js";
+import { BindingError, configRootPath, privateDirectory } from "./binding-registry.js";
 import { MemoryError } from "./memory-types.js";
-import { SemanticRuntime } from "./semantic-runtime.js";
 import { rebuildIndex, cleanupIndex, indexStatus } from "./semantic-index.js";
 import { SemanticProcess, ENGINE_PATH } from "./semantic-process.js";
-import { semanticConfig, semanticFailure, writeAtomic } from "./semantic-files.js";
+import { semanticConfig, writeAtomic } from "./semantic-files.js";
 import { MODEL_ID, MODEL_REVISION, SemanticError } from "./semantic-types.js";
 import type { SemanticConfig } from "./semantic-types.js";
 
@@ -17,12 +15,11 @@ const execute = promisify(execFile);
 export async function main(args: string[]) {
   const { positionals, values } = parseArgs({ args, strict: true, allowPositionals: true, options: {
     "config-root": { type: "string" }, python: { type: "string" },
-    binding: { type: "string" }, fingerprint: { type: "string" }, query: { type: "string" },
+    binding: { type: "string" }, fingerprint: { type: "string" },
   } });
   if (positionals.length !== 1) throw new SemanticError("INVALID_ARGUMENTS");
   const command = positionals[0];
   const allowed = command === "prepare" ? ["config-root", "python"]
-    : command === "search" ? ["config-root", "binding", "fingerprint", "query"]
     : ["config-root", "binding", "fingerprint"];
   if (Object.keys(values).some((key) => !allowed.includes(key))) throw new SemanticError("INVALID_ARGUMENTS");
   const root = configRootPath(values["config-root"]);
@@ -49,21 +46,6 @@ export async function main(args: string[]) {
     const engine = new SemanticProcess(await semanticConfig(root));
     try { await engine.ready(); return await cleanupIndex(reference, engine); }
     finally { engine.close(); }
-  }
-  if (command === "search") {
-    if (!values.query) throw new SemanticError("QUERY_REQUIRED");
-    const binding = await loadBinding(reference);
-    const store = await MemoryStore.open(reference, { namespace: binding.namespace, scope: binding.scope.kind });
-    const runtime = new SemanticRuntime(false);
-    try {
-      let warmFailure: string | undefined;
-      try { await runtime.warm(reference); } catch (error) { warmFailure = semanticFailure(error); }
-      const result = warmFailure ? { retrieval: { mode: "keyword" as const, reason: warmFailure }, candidates: undefined }
-        : await runtime.candidates(reference, values.query);
-      return await store.searchSnapshot(values.query, { limit: 20 }, (matches) => ({
-        ...matches, retrieval: result.retrieval,
-      }), result.candidates ?? []);
-    } finally { await runtime.close(); store.close(); }
   }
   throw new SemanticError("INVALID_ARGUMENTS");
 }

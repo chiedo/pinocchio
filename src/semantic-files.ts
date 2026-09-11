@@ -6,7 +6,7 @@ import { z } from "zod";
 import { fingerprint, hasCode, loadBinding, privateDirectory } from "./binding-registry.js";
 import type { BindingReference } from "./binding-registry.js";
 import { privateStoreFile, storePath } from "./storage-files.js";
-import { configSchema, manifestSchema, SemanticError } from "./semantic-types.js";
+import { configSchema, DIMENSIONS, MAX_INDEX_RECORDS, manifestSchema, SemanticError } from "./semantic-types.js";
 
 export function sha(data: Buffer | string) { return createHash("sha256").update(data).digest("hex"); }
 export async function readPrivateJson(path: string, maxBytes = 1024 * 1024): Promise<unknown> {
@@ -75,6 +75,9 @@ export async function activeIndex(reference: BindingReference) {
     throw new SemanticError("INDEX_RECORDS_INVALID");
   }
   await privateStoreFile(join(directory, "index.faiss"));
+  if ((await lstat(join(directory, "index.faiss"))).size > MAX_INDEX_RECORDS * DIMENSIONS * 4 + 8192) {
+    throw new SemanticError("INDEX_CAPACITY_EXCEEDED");
+  }
   return { ...location, manifest: result.data, path: join(directory, "index.faiss") };
 }
 export function semanticFailure(error: unknown) {

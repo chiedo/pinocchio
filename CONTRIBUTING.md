@@ -37,9 +37,12 @@ work on the advertised platform.
 
 ## Development
 
-Use Node.js 22.18.0 (`.node-version`), then `npm ci`, `npm run typecheck` and
-`npm test`. The full suite includes a pinned public runtime and a scripted
-loopback provider; no authentication or real model is required.
+Use Node.js 22.18.0 (`.node-version`), run `npm ci` and `npm run typecheck`,
+prepare the Python environment from [SEMANTIC.md](docs/SEMANTIC.md), then run
+`PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
+The full suite includes a pinned public runtime, real local embeddings and a scripted
+loopback provider. No authentication or paid inference is required; the embedding
+gate explicitly downloads pinned public model artifacts.
 
 See [the compatibility report](docs/COMPATIBILITY.md) for module boundaries,
 reproduction details and the difference between passing fail-closed tests and
