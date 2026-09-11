@@ -8,7 +8,7 @@ import { z } from "zod";
 import { configRootPath, hasCode, loadBinding, privateDirectory } from "./binding-registry.js";
 import type { BindingReference } from "./binding-registry.js";
 import { main as enrollmentCommand } from "./enrollment-cli.js";
-import { contextBootstrap, contextExtensionContent, removeEnrollment } from "./enrollment.js";
+import { contextExtensionContent, removeEnrollment } from "./enrollment.js";
 import { MemoryStore } from "./memory-store.js";
 import { ToolError } from "./memory-protocol.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
@@ -192,7 +192,6 @@ export async function uninstall(paths: Locations, stopped: boolean) {
     enrolled.push(ref);
   }
   for (const ref of enrolled) await removeEnrollment(ref);
-  await contextBootstrap(paths.root, true);
   if (await exists(extension)) await unlink(extension);
   await rm(paths.app, { recursive: true });
   if (state.previous) await rm(paths.previous, { recursive: true });

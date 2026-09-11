@@ -4,6 +4,13 @@
 live-model gate to make experimentation possible. That gate remains unvalidated.
 Desktop support is not advertised.
 
+**Known blocker at handoff:** the native CLI smoke check currently reports
+`INSTALL_DIAGNOSTIC_FAILED_FOREGROUND_SAVE_MISSING_REQUEST_CONTEXT`. Installation
+therefore still stops at its check. The existing SDK-driven memory workflow
+passes, but that does not prove native CLI startup. The commands below document
+the intended preview workflow; resolve this context-hook issue before expecting
+an end-to-end successful install. No check has been weakened to hide the failure.
+
 ## 1. Install once
 
 Prerequisites: **Node.js 22.18.0**, npm, Git, and a Copilot account for your own
@@ -204,9 +211,6 @@ source checkout/                         Build input, not the active runtime
 ```
 
 No command changes native memory or model settings or broadens host permissions.
-Enrollment adds one tagged no-op `sessionStart` hook to initialize the public
-CLI's root hook processor before the context extension joins. Other hooks and
-settings are preserved; uninstall removes only that exact bootstrap hook.
 Recalled snippets enter your configured model's context. Same-user shell/file
 access is not isolated by tool namespaces. Forgetting a note cannot retract
 previously sent context, provider logs or backups; see [PRIVACY.md](../PRIVACY.md).

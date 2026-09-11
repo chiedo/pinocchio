@@ -14,44 +14,6 @@ import { isRecord } from "./identity.js";
 
 const BEGIN = "<!-- pinocchio-memory:v1 -->";
 const END = "<!-- /pinocchio-memory:v1 -->";
-const BOOTSTRAP = { type: "command", bash: ": # pinocchio-context-bootstrap-v1", timeoutSec: 1 };
-
-// The public CLI must initialize its root hook processor before extensions join.
-export async function contextBootstrap(configRoot: string, remove = false) {
-  const path = join(configRoot, "config.json");
-  let original: string;
-  try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink()) throw new ToolError("UNSAFE_CONFIG");
-    original = await readFile(path, "utf8");
-  } catch (error) {
-    if (!isRecord(error) || error.code !== "ENOENT") throw error;
-    if (remove) return;
-    const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try {
-      await handle.writeFile(JSON.stringify({ hooks: { sessionStart: [BOOTSTRAP] } }) + "\n");
-      await handle.sync();
-    } finally { await handle.close(); }
-    return;
-  }
-  const config: unknown = JSON.parse(original);
-  if (!isRecord(config) || (config.hooks !== undefined && !isRecord(config.hooks))) throw new ToolError("INVALID_HOOK_CONFIG");
-  const hooks = isRecord(config.hooks) ? config.hooks : {};
-  const starts = hooks.sessionStart ?? [];
-  if (!Array.isArray(starts)) throw new ToolError("INVALID_HOOK_CONFIG");
-  const matches = (value: unknown) => JSON.stringify(value) === JSON.stringify(BOOTSTRAP);
-  if (remove) {
-    if (!starts.some(matches)) return;
-    hooks.sessionStart = starts.filter((value: unknown) => !matches(value));
-    if (Array.isArray(hooks.sessionStart) && hooks.sessionStart.length === 0) delete hooks.sessionStart;
-    if (Object.keys(hooks).length === 0) delete config.hooks;
-  } else {
-    if (starts.some(matches)) return;
-    hooks.sessionStart = [...starts, BOOTSTRAP];
-    config.hooks = hooks;
-  }
-  await replace(path, original, JSON.stringify(config) + "\n");
-}
 function instructions(server: string) {
   return `${BEGIN}
 ## Persistent memory
@@ -126,7 +88,6 @@ export function contextExtensionContent() {
   return `// Pinocchio memory context v1\nimport ${JSON.stringify(new URL("./memory-extension.js", import.meta.url).href)};\n`;
 }
 export async function prepareContextExtension(configRoot: string) {
-  await contextBootstrap(configRoot);
   const root = join(configRoot, "extensions");
   await mkdir(root, { recursive: true, mode: 0o700 });
   const directory = join(root, "pinocchio-memory");
