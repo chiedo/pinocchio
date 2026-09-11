@@ -204,6 +204,9 @@ source checkout/                         Build input, not the active runtime
 ```
 
 No command changes native memory or model settings or broadens host permissions.
+Enrollment adds one tagged no-op `sessionStart` hook to initialize the public
+CLI's root hook processor before the context extension joins. Other hooks and
+settings are preserved; uninstall removes only that exact bootstrap hook.
 Recalled snippets enter your configured model's context. Same-user shell/file
 access is not isolated by tool namespaces. Forgetting a note cannot retract
 previously sent context, provider logs or backups; see [PRIVACY.md](../PRIVACY.md).
