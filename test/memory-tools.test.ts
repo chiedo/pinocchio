@@ -121,9 +121,9 @@ test("worker save receipts survive restart; correction and disabled reads remain
   await f.store.setDisabled(true, "disable");
   await assert.rejects(f.call(), { code: "STORE_DISABLED" });
 });
-test("MCP denies untrusted context and exposes both real tool schemas", async (t) => {
+test("MCP uses bound process context when host hooks are unavailable and rejects malformed context", async (t) => {
   const f = await fixture(t);
-  const server = createMemoryMcpServer(f.ref, f.launch.serverName);
+  const server = createMemoryMcpServer(f.ref, f.launch.serverName, f.repository);
   const client = new Client({ name: "synthetic", version: "1" });
   const [left, right] = InMemoryTransport.createLinkedPair();
   await server.connect(left); await client.connect(right);
@@ -139,7 +139,10 @@ test("MCP denies untrusted context and exposes both real tool schemas", async (t
   assert.ok(Array.isArray(strict.oneOf));
   assert.deepEqual(save.inputSchema.oneOf, strict.oneOf);
   assert.equal(save.inputSchema.additionalProperties, false);
-  const denied = await client.callTool({ name: SEARCH_TOOL, arguments: { query: "synthetic" } });
+  const direct = await client.callTool({ name: SEARCH_TOOL, arguments: { query: "synthetic" } });
+  assert.equal(direct.isError, false);
+  const denied = await client.callTool({ name: SEARCH_TOOL, arguments: { query: "synthetic" },
+    _meta: { [CONTEXT_META]: {} } });
   assert.equal(denied.isError, true);
   const args = { query: "synthetic" };
   const ticket = f.ledger.issue({ root: "root", recipient: "foreground", server: f.launch.serverName,

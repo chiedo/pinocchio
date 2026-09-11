@@ -1,9 +1,13 @@
 # Contributing
 
 Pinocchio has configuration-bound identity, local SQLite administration and
-worker-backed keyword-memory tools with development enrollment, not a production
-installer. The production identity gate is verified on the pinned
+worker-backed keyword-memory tools and a CLI preview installer. The production identity gate is verified on the pinned
 public CLI/Linux baseline; shared caller-metadata inference remains unsupported.
+
+The preview intentionally does not claim the missing live-model certification.
+`npm run package:release -- <new-directory>` produces a file-hashed payload;
+runtime installation uses `npm ci --omit=dev --ignore-scripts` with the lockfile.
+The full suite includes clean installation and native CLI synthetic diagnostics.
 
 Read [the design](docs/DESIGN.md), [installation requirements](docs/INSTALL.md)
 and [privacy policy](PRIVACY.md) before proposing changes.

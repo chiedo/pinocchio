@@ -1,8 +1,8 @@
 {
   "name": "pinocchio",
-  "version": "0.0.0",
+  "version": "0.1.0-rc.1",
   "private": true,
-  "description": "Fail-closed agent identity compatibility gate for a local Copilot extension.",
+  "description": "Scoped local memory for named Copilot CLI agents.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -14,19 +14,21 @@
     "bindings": "node dist/src/bindings-cli.js",
     "memory": "node dist/src/memory-cli.js",
     "enroll": "node dist/src/enrollment-cli.js",
+    "installer": "node dist/src/install-cli.js",
+    "package:release": "node scripts/package-release.mjs",
     "semantic": "node dist/src/semantic-cli.js",
     "evaluate:live": "node dist/test/support/live-evaluation.js",
     "evaluate:release": "node dist/src/evaluation-cli.js",
     "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js"
   },
   "dependencies": {
+    "@github/copilot": "1.0.83",
+    "@github/copilot-sdk": "1.0.13",
     "@modelcontextprotocol/sdk": "1.30.0",
     "yaml": "2.9.0",
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@github/copilot": "1.0.83",
-    "@github/copilot-sdk": "1.0.13",
     "@types/node": "22.18.0",
     "typescript": "5.9.3"
   }
