@@ -16,7 +16,7 @@ budget changes.
 | Dimensions / input cap | 384 / 256 WordPiece tokens including special tokens |
 | Download | 23,684,031 bytes total: model and tokenizer |
 | Index | FAISS `IndexFlatIP` over normalized vectors (cosine similarity) |
-| Development baseline | Linux x64, Python 3.12+, Node 22.18.0 |
+| Tested development baseline | Linux x64, Python 3.12, Node 22.18.0 |
 | Runtime pins | `semantic/requirements.txt`: FAISS 1.15.0, NumPy 2.5.3, ONNX Runtime 1.30.0, tokenizers 0.23.2 |
 
 [Pinned model](https://huggingface.co/Xenova/all-MiniLM-L6-v2/tree/751bff37182d3f1213fa05d7196b954e230abad9)
@@ -49,7 +49,8 @@ python3 -m venv .venv
 .venv/bin/pip install -r semantic/requirements.txt
 ```
 
-Use Python 3.12 or newer when creating the environment. Then choose the same
+Use Python 3.12 for the validated setup. Dependencies require at least 3.12;
+other interpreter versions are not certified here. Then choose the same
 private config root used by your bindings:
 
 ```bash
@@ -143,6 +144,12 @@ Publication holds a SQLite writer transaction, verifies the entire live
 ID/revision set still matches the snapshot, atomically replaces and syncs the
 active pointer, and completes matching pending index jobs. A concurrent edit
 returns `STALE_INDEX_BUILD`; source records remain untouched and jobs retry.
+
+The authoritative SQLite schema is unchanged. To revert to keyword-only mode,
+stop the memory processes and move `pinocchio/semantic.json` aside, then restart.
+This preserves records, runtime assets and derived generations; it does not
+claim to delete cached vectors. The previous keyword-only runtime ignores
+these derived files. Restoring the configuration re-enables local retrieval.
 
 The filesystem pointer and SQLite are **not a distributed transaction**. A crash
 after pointer publication but before job commit can leave a valid generation
