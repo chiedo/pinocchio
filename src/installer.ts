@@ -178,6 +178,7 @@ export async function uninstall(paths: Locations, stopped: boolean) {
   const state = await stateAt(paths);
   if (!state.installed) throw new ToolError("NOT_INSTALLED");
   await ownedApp(paths.app, state.release);
+  await launcher(paths);
   if (state.previous) await ownedApp(paths.previous, state.previous);
   const extension = join(paths.root, "extensions", "pinocchio-memory", "extension.mjs");
   if (await exists(extension) && await readFile(extension, "utf8") !== contextExtensionContent()) {
@@ -228,7 +229,8 @@ export async function start(paths: Locations, agent?: string) {
   const state = await stateAt(paths);
   if (!state.installed) throw new ToolError("NOT_INSTALLED");
   const child = spawn(join(paths.app, "node_modules/.bin/copilot"),
-    ["--experimental", "--no-auto-update", ...(agent ? ["--agent", agent] : [])], {
+    ["--experimental", "--no-auto-update", "--extension-sdk-path",
+      join(paths.app, "node_modules/@github/copilot-sdk/dist"), ...(agent ? ["--agent", agent] : [])], {
       stdio: "inherit", env: { ...process.env, COPILOT_HOME: paths.root, COPILOT_CONFIG_DIR: paths.root },
     });
   return new Promise<void>((done, reject) => {

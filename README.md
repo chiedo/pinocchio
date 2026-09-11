@@ -15,8 +15,9 @@ The [local administrative CLI](docs/STORAGE.md) supports sourced notes, search,
 correction, deletion, disable controls and durable retry recovery.
 [Agent memory tools](docs/MEMORY-TOOLS.md) add bounded worker execution and
 persistent per-request/session limits. [Optional local semantic retrieval](docs/SEMANTIC.md)
-adds pinned embeddings and rebuildable FAISS indexes. Release evaluations and a
-production installer remain separate steps.
+adds pinned embeddings and rebuildable FAISS indexes. An installable CLI preview
+now provides a separate pinned runtime, named-agent creation and lifecycle controls.
+Live-model release certification remains unvalidated.
 
 ## The idea
 
@@ -31,13 +32,14 @@ the memory tool, but do not guarantee a lookup before every answer.
 
 ## Installation and compatibility
 
-Read the [installation guide](docs/INSTALL.md) for the current status, source
-checkout instructions, planned setup flow, and release requirements.
+Start with the [copy/paste installation and blank-session agent setup guide](docs/INSTALL.md).
+Create each named agent in a fresh CLI session, then start a new session with that
+agent selected. The preview does not replace your existing `copilot` command.
 
 | Host | Current Pinocchio support |
 |---|---|
-| GitHub Copilot CLI | Configuration-bound identity verified on 1.0.83 / Linux x64; no released memory product. |
-| GitHub Copilot desktop app | Targeted; requires separate compatibility validation. |
+| GitHub Copilot CLI | Pinned 1.0.83 / Linux x64 preview; install-time synthetic smoke gate. macOS is explicit unvalidated opt-in. |
+| GitHub Copilot desktop app | Unsupported/unvalidated; CLI results do not establish desktop support. |
 | GitHub web, GitHub Mobile, or a hosted GitHub App | Not targeted by this local extension design. |
 
 CLI support alone will not be presented as proof of desktop-app support.

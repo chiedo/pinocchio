@@ -12,8 +12,8 @@ import { ToolError } from "./memory-protocol.js";
 
 export async function main(args: string[]) {
   // Administrative subcommands retain their explicit scope/record validation.
-  const domain = args.findIndex((arg) => ["memory", "semantic", "bindings"].includes(arg));
-  if (domain >= 0) {
+  const domain = args[0] === "--config-root" ? 2 : 0;
+  if (["memory", "semantic", "bindings"].includes(args[domain] ?? "")) {
     const command = args[domain];
     const forwarded = [...args.slice(0, domain), ...args.slice(domain + 1)];
     return command === "memory" ? memory(forwarded) : command === "semantic" ? semantic(forwarded) : bindings(forwarded);

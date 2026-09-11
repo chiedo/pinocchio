@@ -1,5 +1,13 @@
 # Memory compatibility gates
 
+**CLI preview installation:** [INSTALL.md](INSTALL.md) provides the separate pinned
+runtime and blank-session agent setup. The full suite publishes
+`installation.json` for a clean custom-root installation, native CLI saves,
+new-process/helper recall, deletion and reversible lifecycle operations. This is
+synthetic evidence only; #6's live certification was explicitly waived for this
+preview, not retroactively passed. macOS requires unvalidated preview opt-in;
+desktop and Windows are not supported.
+
 **Release certification:** use the separate [release evaluations](EVALUATIONS.md)
 and versioned contract. Earlier component passes below are not a live-model
 release verdict; missing authorized evidence remains explicitly unvalidated.
@@ -232,9 +240,9 @@ session ID, display name or parent selection can grant access.
 The host supplies the Copilot SDK when loading the shared extension. The pinned
 npm Copilot SDK is a development dependency for reproducible public-host probes.
 The separate production server uses the pinned MCP SDK and Zod runtime dependencies.
-There is no bundler, database, embedding engine, installer or profile mutation.
-Future persistence belongs behind a separately proven identity boundary, outside
-the dispatch path and the source checkout; it is not implemented here.
+That historical shared-extension scaffold did not include storage or installation.
+The current preview adds them behind the separate configuration-bound identity
+layer; see the installation, storage and memory-tool guides above.
 
 The extension registers no prompt hooks, submits no prompts, starts no agents,
 switches no models and forces no continuation. Only the synthetic test harness

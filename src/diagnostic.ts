@@ -97,7 +97,7 @@ export async function diagnose(previewPlatform = false) {
         "--extension-sdk-path", fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
         "--agent", "check-main", "--allow-tool", "task",
         ...[...launches.values()].flatMap((launch) =>
-          [SEARCH_TOOL, SAVE_TOOL].flatMap((tool) => ["--allow-tool", `${launch.serverName}-${tool}`])),
+          [SEARCH_TOOL, SAVE_TOOL].flatMap((tool) => ["--allow-tool", `${launch.serverName}(${tool})`])),
         "-p", prompt], { cwd: repository, env, timeout: 45_000, maxBuffer: 1024 * 1024 });
       const results = observed.join("\n");
       assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
@@ -123,8 +123,12 @@ export async function diagnose(previewPlatform = false) {
     assert.equal(provider.counts().failures, 0);
     return { status: "passed", host, cases, sessions: 6, syntheticOnly: true,
       liveCertification: "unvalidated", desktop: "unvalidated" };
-  } catch {
-    throw new ToolError(`INSTALL_DIAGNOSTIC_FAILED_${stage.replaceAll(" ", "_")}`);
+  } catch (error) {
+    const toolCode = /"code"\s*:\s*"([A-Z_]+)"/.exec(observed.join("\n"))?.[1];
+    const providerCode = provider.counts().failureCodes[0];
+    const reason = toolCode ?? providerCode ??
+      (error instanceof Error && error.message === "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING" ? "RESULT_MISSING" : "HOST_CALL_FAILED");
+    throw new ToolError(`INSTALL_DIAGNOSTIC_FAILED_${stage.replaceAll(" ", "_")}_${reason}`);
   } finally {
     try { await provider.close(); }
     finally { await rm(root, { recursive: true, force: true }); }

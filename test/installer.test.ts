@@ -74,6 +74,14 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     } finally { store.close(); }
     await assert.rejects(installed("create", "--name", "../bad", "--global"));
     await assert.rejects(installed("uninstall"));
+    await assert.rejects(main(["upgrade", "--config-root", config]), /UPGRADE_REQUIRES/);
+    await main(["upgrade", "--config-root", config, "--host-stopped"]);
+    assert.equal((await installed("status")).rollbackAvailable, true);
+    await installed("rollback", "--host-stopped");
+    assert.equal(await readFile(profile, "utf8"), text);
+    await installed("discard-previous", "--host-stopped");
+    assert.equal((await installed("status")).rollbackAvailable, false);
+    cases.push("same-schema-upgrade-rollback-preserves-profiles");
     await installed("uninstall", "--host-stopped");
     const after = await readFile(profile, "utf8");
     assert.ok(after.includes("Preserve these later instructions."));
