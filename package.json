@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "setup": "npm run build && node dist/src/setup-cli.js",
     "typecheck": "tsc --noEmit",
     "bindings": "node dist/src/bindings-cli.js",
     "memory": "node dist/src/memory-cli.js",
