@@ -32,7 +32,31 @@ npm run setup -- --name reviewer --repository /absolute/path/to/your/project
 Run setup from the Pinocchio folder. Change the name to create more agents.
 Existing agent files are never overwritten.
 
-## 3. Chat
+## 3. Give your agent instructions
+
+**Edit the `profile` file printed by setup.** For `builder`, this is normally
+`~/.copilot/agents/builder.agent.md`. This file defines the agent's role and
+behavior; you don't need a separate `AGENTS.md`.
+
+Replace the default "Follow the user's instructions." text **below the YAML
+frontmatter and above the generated Pinocchio memory block** with your own:
+
+```markdown
+You are a software engineer.
+
+- Read the existing code before making changes.
+- Implement focused fixes and add relevant tests.
+- Explain what changed and any remaining risks.
+```
+
+You can also edit the YAML `description` and model settings. **Keep the generated
+`mcp-servers`, Pinocchio tool entries, and memory block intact.** Don't move or
+rename the profile: its path is part of its memory identity.
+
+Repository `AGENTS.md` files still supply project instructions; they are separate
+from this agent profile. Start a fresh session after editing the profile.
+
+## 4. Chat
 
 Start a fresh CLI session and approve the Pinocchio extension if prompted:
 
