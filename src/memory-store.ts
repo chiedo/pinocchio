@@ -276,7 +276,8 @@ export class MemoryStore {
     return this.searchSnapshot(query, pagination, (result) => result);
   }
   searchSnapshot<T>(query: string, pagination: { limit?: number; offset?: number },
-    consume: (result: MemorySearchResult) => T | Promise<T>, candidates?: SemanticCandidate[]) {
+    consume: (result: MemorySearchResult) => T | Promise<T>, candidates?: SemanticCandidate[], conversation = false,
+    conversationSession?: string) {
     validate(z.string().min(1).max(500).refine((value) => Boolean(value.trim())), query);
     const terms = keywords(query);
     if (terms.length > 64) throw new MemoryError("INVALID_INPUT");
@@ -284,14 +285,14 @@ export class MemoryStore {
     const literal = normalizeText(query);
     const keywordMatch = terms.length
       ? `OR r.id IN (SELECT record_id FROM keyword_terms WHERE term IN (${terms.map(() => "?").join(",")})
-        GROUP BY record_id HAVING count(*)=?)` : "";
+        GROUP BY record_id HAVING count(*)>=?)` : "";
     return this.#transaction(() => {
       const rows = this.#db.prepare(`${SELECT_CURRENT}
         JOIN keyword_entries k ON k.record_id=r.id AND k.revision=r.revision
         WHERE r.scope=? AND r.status IN ('active','tentative')
         AND (instr(k.literal_text,?)>0 ${keywordMatch})
         ORDER BY (instr(k.literal_text,?)>0) DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)
-        .all(this.#scope, literal, ...(terms.length ? [...terms, terms.length] : []), literal,
+        .all(this.#scope, literal, ...(terms.length ? [...terms, conversation ? 1 : terms.length] : []), literal,
           candidates ? 100 : limit, candidates ? 0 : offset).map(view);
       let items = rows;
       if (candidates) {
@@ -303,8 +304,36 @@ export class MemoryStore {
         });
         items = fuseRanks(query, rows, semanticRows, candidates).slice(offset, offset + limit);
       }
+      if (conversation) {
+        const recent = this.#db.prepare(`${SELECT_CURRENT} WHERE r.scope=? AND r.status IN ('active','tentative')
+          AND json_extract(v.evidence_json,'$[0].reference.value') LIKE 'pinocchio-conversation:v1:%'
+          ORDER BY r.updated_at DESC, r.id LIMIT 6`).all(this.#scope).map(view);
+        const ranked = [...items].sort((a, b) => {
+          const score = (content: string) => terms.filter((term) => keywords(content).includes(term)).length;
+          return score(b.content) - score(a.content);
+        });
+        const seen = new Set<string>();
+        items = [...ranked, ...recent].filter((item) => {
+          const evidence = z.array(z.object({ reference: z.object({ value: z.string() }) })).safeParse(item.evidence);
+          if (conversationSession && evidence.success && evidence.data.some((source) =>
+            source.reference.value.startsWith(`pinocchio-conversation:v1:${conversationSession}:`))) return false;
+          if (seen.has(item.id)) return false;
+          seen.add(item.id); return true;
+        }).slice(0, limit);
+      }
       return consume({ status: items.length ? "ok" : "no_match", items });
     });
+  }
+  conversationPruneCandidates(before: string) {
+    return this.#transaction(() => this.#db.prepare(`${SELECT_CURRENT}
+      WHERE r.scope=? AND r.status IN ('active','tentative')
+      AND json_extract(v.evidence_json,'$[0].reference.value') LIKE 'pinocchio-conversation:v1:%'
+      AND (v.source_at < ? OR r.id NOT IN (
+        SELECT r.id FROM records r JOIN revisions v ON v.record_id=r.id AND v.revision=r.revision
+        WHERE r.scope=? AND r.status IN ('active','tentative')
+        AND json_extract(v.evidence_json,'$[0].reference.value') LIKE 'pinocchio-conversation:v1:%'
+        ORDER BY r.updated_at DESC, r.id LIMIT 2500))
+      ORDER BY r.updated_at LIMIT 100`).all(this.#scope, before, this.#scope).map(view));
   }
   #indexMetadata(): IndexRecord[] {
     const rows = this.#db.prepare(`SELECT id,revision FROM records WHERE scope=?

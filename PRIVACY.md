@@ -44,12 +44,21 @@ alias and a GitHub-provided noreply address, not a private email or legal name.
 |---|---|
 | Storage | Keep memories and indexes outside the source checkout, with restrictive local permissions. |
 | Ownership | Derive agent namespace and repository scope from trusted runtime identity, not a model-supplied agent name. |
-| Collection | Save selected sourced notes; do not capture entire conversations by default. |
+| Collection | Selected enrolled foreground agents capture new user/assistant text by default. Exclude tool output, hidden reasoning, attachments, and system-injected messages. No transcript backfill. Pause automatic capture and recall through the setup command. |
 | Sensitive content | Exclude secrets and sensitive personal information. Do not claim detection or redaction is infallible. |
 | Model access | Explain that retrieved snippets enter the configured model's context. Local persistence is not offline inference. |
 | Telemetry | No Pinocchio memory-upload service or outbound telemetry by default. Host/provider behavior is separate. |
 | Diagnostics | Prefer status codes, public version numbers and aggregate counters; no raw note or prompt content by default. |
 | Deletion | Remove the selected record's content revisions and stop its return through indexes or queued work. |
+
+Automatic conversation records are labelled with their speaker and timestamp;
+assistant content is tentative evidence, not a confirmed fact. Known credential
+patterns, email addresses, and identifier patterns are redacted before storage.
+This is not a comprehensive sensitive-content detector. Pause conversation
+memory before discussing private material you do not want retained.
+Retention cleanup during capture targets 30 days and 2,500 conversation chunks
+per scope; it is not an always-running deletion service. Curated notes remain
+under explicit user control. See [conversation controls](docs/INSTALL.md#conversation-controls).
 
 Deleting a Pinocchio record cannot remove content already delivered to a model,
 native Copilot memory/history, external backups, or other processes' copies.
