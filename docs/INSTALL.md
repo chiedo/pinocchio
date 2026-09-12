@@ -4,6 +4,12 @@
 Pinocchio installs a memory extension and a named agent with its own memory tools.
 It is not a skill-only installation.
 
+**Conversation memory is on by default for enrolled, selected agents.** New
+user messages and assistant responses are captured locally as they arrive;
+relevant earlier-session passages are supplied before your next prompt.
+You do not have to say "remember this." Existing enrolled agents get this
+behavior after restarting the CLI with the rebuilt extension.
+
 ## Install
 
 Requires an existing `copilot` on PATH, Node.js 22.18 or newer **22.x**, and npm.
@@ -44,6 +50,37 @@ Start a fresh session with the same agent and ask:
 Only enrolled named agents get this memory. Each has a separate store; an
 unnamed session does not automatically gain it. Repository-scoped agents must
 run in the repository used during setup. Recall by the model is best-effort.
+
+Capture applies to the selected foreground agent, not unnamed sessions or
+delegated helper event streams. Helpers still have their explicit scoped
+memory tools. Old session transcripts are not retroactively imported.
+
+## Conversation controls
+
+```bash
+npm run setup -- --pause-conversation
+npm run setup -- --resume-conversation
+# Append --name builder for another agent.
+```
+
+These controls take effect without restarting. Pausing stops automatic capture
+and recall; explicit memory tools remain available. Removal below stops both
+by removing the agent's memory integration.
+
+Captured text is chunked into SQLite notes with speaker, time, and source IDs.
+Assistant text is marked tentative, never treated as a user-confirmed fact.
+Keyword/recency recall works immediately; optional FAISS retrieval is used when
+configured. Raw tool output, hidden reasoning, attachments, and system-injected
+messages are excluded. Recognizable credentials and identifiers are redacted,
+but pattern matching cannot guarantee that all sensitive text is detected.
+Pause before discussing anything you do not want retained.
+
+Conversation retention is 30 days with a target cap of 2,500 chunks per agent
+scope. Cleanup removes up to 100 expired/excess chunks per captured message;
+it runs during capture, not while the CLI is closed. Curated notes are not
+removed by this cleanup. Use the existing scoped `memory forget` command to
+delete individual captured notes. Deletion cannot retract prior model context.
+Automatic recall shares the existing per-request and per-session context budgets.
 
 ## Update or remove
 

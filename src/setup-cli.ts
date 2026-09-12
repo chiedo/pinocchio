@@ -11,6 +11,7 @@ import { enroll, removeEnrollment, verifyMemoryTools } from "./enrollment.js";
 import { isRecord } from "./identity.js";
 import { ToolError } from "./memory-protocol.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
+import { setConversationEnabled } from "./conversation-memory.js";
 
 const referenceSchema = z.object({
   configRoot: z.string(), bindingId: z.string().uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -18,12 +19,14 @@ const referenceSchema = z.object({
 
 export async function setup(options: {
   configRoot?: string; name: string; repository?: string; global?: boolean; remove?: boolean; tools?: string;
+  conversation?: boolean;
 }) {
   if (!/^[a-z][a-z0-9-]{0,39}$/.test(options.name) || (options.global && options.repository)) {
     throw new ToolError("INVALID_ARGUMENTS");
   }
   const root = configRootPath(options.configRoot);
-  const repository = options.remove || options.global ? undefined : await canonicalRepository(options.repository ?? process.cwd());
+  const repository = options.remove || options.global || options.conversation !== undefined
+    ? undefined : await canonicalRepository(options.repository ?? process.cwd());
   await mkdir(root, { recursive: true, mode: 0o700 });
   await privateDirectory(join(root, "pinocchio"), true);
   const directory = join(root, "pinocchio", "setup");
@@ -43,6 +46,10 @@ export async function setup(options: {
       if (binding.definition.path !== join(root, "agents", `${options.name}.agent.md`)) {
         throw new ToolError("SETUP_SCOPE_MISMATCH");
       }
+      if (options.conversation !== undefined) {
+        await setConversationEnabled(reference, options.conversation);
+        return { status: options.conversation ? "conversation-enabled" : "conversation-paused", restartRequired: false };
+      }
       if (!options.remove && (binding.scope.kind !== (options.global ? "global" : "repository") ||
           (binding.scope.kind === "repository" && binding.scope.root !== repository))) {
         throw new ToolError("SETUP_SCOPE_MISMATCH");
@@ -57,7 +64,7 @@ export async function setup(options: {
       else await verifyMemoryTools(reference);
       return { status: "ready", agent: options.name, profile: binding.definition.path, reference, restartRequired: true };
     }
-    if (options.remove) throw new ToolError("AGENT_NOT_INSTALLED");
+    if (options.remove || options.conversation !== undefined) throw new ToolError("AGENT_NOT_INSTALLED");
     const agents = join(root, "agents");
     await mkdir(agents, { recursive: true, mode: 0o700 });
     const result = await create(["create", "--config-root", root, "--name", options.name,
@@ -74,8 +81,12 @@ export async function main(args: string[]) {
     "config-root": { type: "string" }, name: { type: "string", default: "pinocchio" },
     repository: { type: "string" }, global: { type: "boolean" }, remove: { type: "boolean" },
     tools: { type: "string" },
+    "pause-conversation": { type: "boolean" }, "resume-conversation": { type: "boolean" },
   } });
-  if (positionals.length || (values.remove && (values.repository || values.global || values.tools))) {
+  const control = values["pause-conversation"] || values["resume-conversation"];
+  if (positionals.length || (values["pause-conversation"] && values["resume-conversation"]) ||
+      (control && (values.remove || values.repository || values.global || values.tools)) ||
+      (values.remove && (values.repository || values.global || values.tools))) {
     throw new ToolError("INVALID_ARGUMENTS");
   }
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -90,9 +101,11 @@ export async function main(args: string[]) {
     ...(values.global ? { global: true } : {}),
     ...(values.remove ? { remove: true } : {}),
     ...(values.tools ? { tools: values.tools } : {}),
+    ...(control ? { conversation: !values["pause-conversation"] } : {}),
   });
   return { ...result, host: host.stdout.trim().split("\n")[0], compatibility: "preview",
-    next: values.remove ? "Restart Copilot to unload the agent's memory tools." : `Restart Copilot, then select /agent ${values.name}. Or run: copilot --agent ${values.name}`,
+    next: control ? "Conversation capture and automatic recall settings apply immediately; explicit memory tools remain available."
+      : values.remove ? "Restart Copilot to unload the agent's memory tools." : `Restart Copilot, then select /agent ${values.name}. Or run: copilot --agent ${values.name}`,
     runtime: "This checkout supplies the runtime. Keep it and its node_modules in place." };
 }
 

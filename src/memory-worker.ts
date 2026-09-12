@@ -21,7 +21,8 @@ const commandSchema = z.discriminatedUnion("action", [
     call: z.string(), server: z.string(), tool: z.string(), directory: z.string(),
     arguments: z.unknown(), deadline: z.number() }).strict(),
   z.object({ action: z.literal("tool"), reference: referenceSchema, server: z.string(),
-    tool: z.enum([SEARCH_TOOL, SAVE_TOOL]), arguments: z.unknown(), ticket: z.unknown() }).strict(),
+    tool: z.enum([SEARCH_TOOL, SAVE_TOOL]), arguments: z.unknown(), ticket: z.unknown(),
+    conversation: z.boolean().optional(), conversationSession: z.string().optional() }).strict(),
 ]);
 
 async function execute(raw: unknown): Promise<unknown> {
@@ -109,7 +110,7 @@ async function execute(raw: unknown): Promise<unknown> {
           snippets, chargedTokens: cost, accounting: "conservative_utf8_bytes",
           requestRemaining: 800 - requestUsed - cost, sessionRemaining: 6_000 - sessionUsed - cost,
         };
-        }, retrieval.candidates ?? []);
+        }, retrieval.candidates ?? [], command.conversation ?? false, command.conversationSession);
       } catch (error) {
         if (ledger.db.isTransaction) ledger.db.exec("ROLLBACK");
         throw error;
