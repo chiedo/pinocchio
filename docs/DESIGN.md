@@ -57,8 +57,8 @@ toward latency and cost. There is no claim that recall already works reliably.
 
 Implemented model-facing tools provided by the shared Pinocchio extension:
 
-- `agent_memory_search(query)`: returns bounded, sourced matches for the caller.
-- `agent_memory_save(...)`: saves a sourced note or an expected-revision correction,
+- `pinocchio_memory_search(query)`: returns bounded, sourced matches for the caller.
+- `pinocchio_memory_save(...)`: saves a sourced note or an expected-revision correction,
   or resolves a durable operation ID.
 
 The installer must preserve existing profile content, tool access and model

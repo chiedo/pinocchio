@@ -10,17 +10,8 @@ import { loadBinding } from "./binding-registry.js";
 import { BoundIdentityAdapter } from "./bound-identity.js";
 import { ContextLedger } from "./context-ledger.js";
 import { MemoryWorker } from "./memory-worker-client.js";
-import { CONTEXT_META, MEMORY_DEADLINE_MS, SAVE_TOOL, SEARCH_TOOL, saveSchema, searchSchema, ticketSchema, ToolError } from "./memory-protocol.js";
+import { CONTEXT_META, MEMORY_DEADLINE_MS, SAVE_TOOL, SEARCH_TOOL, saveInputSchema, saveSchema, searchSchema, ticketSchema, ToolError } from "./memory-protocol.js";
 import { isRecord } from "./identity.js";
-
-const saveInputSchema = {
-  ...z.toJSONSchema(saveSchema, { io: "input", unrepresentable: "any" }),
-  // Surface parameters at the root for model clients while retaining the strict action branches.
-  ...z.toJSONSchema(saveSchema.options[1].partial({ note: true, recordId: true, expectedRevision: true }).extend({
-    action: z.enum(saveSchema.options.map((option) => option.shape.action.value)),
-  }), { io: "input", unrepresentable: "any" }),
-  type: "object" as const,
-};
 
 export function memoryLaunch(reference: BindingReference) {
   const serverName = `pinocchio_${reference.bindingId.replaceAll("-", "")}`;
