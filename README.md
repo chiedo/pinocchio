@@ -1,4 +1,4 @@
-# 🤥 Pinocchio
+# 👃 Pinocchio
 
 **Give your Copilot CLI agents a memory.** Each named agent remembers what it
 learned in past conversations — your preferences, decisions, and unfinished
