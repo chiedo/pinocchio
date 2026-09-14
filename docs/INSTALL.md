@@ -104,6 +104,46 @@ agent. Your authored instructions, YAML settings, binding, and stored notes are
 preserved. Repeat setup for each existing agent, then start fresh sessions to
 load the updated profiles.
 
+### Shared instructions and live sessions
+
+Setup creates `<config-root>/pinocchio/AGENTS.md`, normally
+`~/.copilot/pinocchio/AGENTS.md`, once and preserves its contents on later setups.
+Every enrolled agent profile names that exact file and instructs the agent to
+read it at session start, including delegated helper work. This is profile-driven
+guidance, not host-enforced injection or a new memory scope. An agent without file
+read permission must report the blocker rather than claim it loaded the rules.
+
+The shared rules supplement individual roles and repository instructions; they do
+not override higher-priority instructions. **Instruction edits default to the
+individual agent profile.** Only explicitly all-Pinocchio-agent changes belong
+in the shared file; "always" or "remember" alone does not establish that scope.
+Removing an agent's memory integration leaves the shared file for other agents.
+
+After installing this update, repeat each agent's original setup command (same
+name, configuration root, and global/repository scope). This upgrades both older
+memory-only profiles and the previous self-awareness profiles without changing
+authored text or memory bindings. For profiles enrolled through the lower-level
+CLI, use `npm run enroll -- refresh` with the original binding and fingerprint
+(and `--allow-shared` for repository/plugin profiles).
+
+**Already-running sessions do not automatically reload profile changes.** Start
+a fresh session with the same named agent after setup. To update an ongoing
+conversation immediately, send this to each live agent, substituting the exact
+paths printed by setup:
+
+```text
+Read your agent profile at <profile> and the shared Pinocchio instructions at
+<sharedInstructions> now. Follow the shared rules for this conversation alongside
+your individual role and repository instructions. Default instruction edits to
+your own profile; edit the shared file only when I explicitly ask for an
+all-Pinocchio-agent change. Tell me if either file cannot be read.
+```
+
+New delegated instances receive their refreshed named profile; existing helpers
+need the same message or must be relaunched. There is no broadcast to other live
+sessions. After later shared-file edits, ask existing sessions to reread it;
+fresh sessions are already instructed to read its current contents.
+
 To remove memory from this agent:
 
 ```bash

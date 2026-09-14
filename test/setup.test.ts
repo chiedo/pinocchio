@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -35,6 +35,53 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
     assert.match(await readFile(profile, "utf8"), /pinocchio-memory:v1/);
     await assert.rejects(setup({ ...options, global: false, repository: process.cwd() }), /SETUP_SCOPE_MISMATCH/);
     await assert.rejects(setup({ ...options, name: "../bad" }), /INVALID_ARGUMENTS/);
+  } finally { await rm(root, { recursive: true }); }
+});
+
+test("agents share one instructions file without overwriting authored rules", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pinocchio-shared-"));
+  try {
+    const shared = join(root, "pinocchio", "AGENTS.md");
+    for (const name of ["first", "second"]) {
+      const result = await setup({ configRoot: root, name, global: true });
+      assert.equal(result.sharedInstructions, shared);
+      const profile = await readFile(join(root, "agents", `${name}.agent.md`), "utf8");
+      assert.ok(profile.includes(`Shared Pinocchio instructions: ${JSON.stringify(shared)}`));
+      assert.match(profile, /including delegated helper work/);
+      assert.match(profile, /Default instruction edits to your own agent profile, not the shared file/);
+      assert.match(profile, /missing or unreadable, report that explicitly/);
+      if (name === "first") {
+        assert.match(await readFile(shared, "utf8"), /explicitly requests an all-Pinocchio-agent rule/);
+        await writeFile(shared, "User-authored shared rule.\n");
+      }
+    }
+    await setup({ configRoot: root, name: "first", global: true });
+    assert.equal(await readFile(shared, "utf8"), "User-authored shared rule.\n");
+    await setup({ configRoot: root, name: "first", remove: true });
+    assert.equal(await readFile(shared, "utf8"), "User-authored shared rule.\n");
+  } finally { await rm(root, { recursive: true }); }
+});
+
+test("setup migrates pre-shared profiles exactly and rejects unsafe shared files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pinocchio-shared-upgrade-"));
+  try {
+    const options = { configRoot: root, name: "old-agent", global: true };
+    await setup(options);
+    const path = join(root, "agents", "old-agent.agent.md");
+    const shared = join(root, "pinocchio", "AGENTS.md");
+    const current = await readFile(path, "utf8");
+    const previous = current.replace(/- Shared Pinocchio instructions:[\s\S]*?(?=- Copilot configuration root:)/, "");
+    assert.notEqual(previous, current);
+    await writeFile(path, previous);
+    await setup(options);
+    assert.equal(await readFile(path, "utf8"), current);
+    await rm(shared);
+    const target = join(root, "unrelated.md");
+    await writeFile(target, "Do not change.\n");
+    await symlink(target, shared);
+    await assert.rejects(setup(options), { code: "UNSAFE_SHARED_INSTRUCTIONS" });
+    assert.equal(await readFile(target, "utf8"), "Do not change.\n");
+    assert.equal(await readFile(path, "utf8"), current);
   } finally { await rm(root, { recursive: true }); }
 });
 

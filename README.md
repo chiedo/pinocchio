@@ -62,6 +62,13 @@ instructions?" For an existing agent, rerun its original setup command after
 updating Pinocchio; this refreshes the generated guidance without changing your
 custom instructions or memory binding.
 
+**Rules for all Pinocchio agents:** setup creates
+`~/.copilot/pinocchio/AGENTS.md` (under your configuration root if customized).
+Every enrolled profile tells foreground and delegated agents to read it at session
+start. Agents default instruction edits to their **own profile**; they should
+only edit the shared file when you explicitly request an all-agent rule.
+Setup preserves your shared rules. See [updating existing sessions](docs/INSTALL.md#shared-instructions-and-live-sessions).
+
 ## 4. Chat
 
 Start a fresh CLI session and approve the Pinocchio extension if prompted:
