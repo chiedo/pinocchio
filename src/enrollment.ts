@@ -27,7 +27,7 @@ function legacyInstructions(server: string) {
 - If memory is unavailable or exhausted, say so briefly and continue without it. Recall is best-effort; do not force another turn.
 ${END}`;
 }
-function instructions(server: string, binding: BindingRecord, configRoot: string) {
+function profileInstructions(server: string, binding: BindingRecord, configRoot: string) {
   const context = `## Your Pinocchio agent
 
 You are the named Copilot CLI agent below, with Pinocchio memory. These are configuration facts, not recalled conversation notes.
@@ -45,6 +45,46 @@ You are the named Copilot CLI agent below, with Pinocchio memory. These are conf
 
 `;
   return legacyInstructions(server).replace("## Persistent memory", () => `${context}## Persistent memory`);
+}
+function instructions(server: string, binding: BindingRecord, configRoot: string) {
+  const shared = `- Shared Pinocchio instructions: ${JSON.stringify(join(configRoot, "pinocchio", "AGENTS.md"))}. Read this file at the start of each session, including delegated helper work, and reread it when the user says it changed. Apply its rules to all Pinocchio agents; it does not replace your individual role or repository instructions, or override higher-priority instructions.
+- Default instruction edits to your own agent profile, not the shared file. Edit the shared file only when the user explicitly requests a rule for all Pinocchio agents. Do not infer all-agent scope from "always", "remember", or "going forward"; clarify scope when needed.
+- If the shared file is missing or unreadable, report that explicitly and continue with your available instructions; do not claim you loaded it or silently create a replacement.
+`;
+  return profileInstructions(server, binding, configRoot).replace("- Copilot configuration root:", () => `${shared}- Copilot configuration root:`);
+}
+
+async function prepareSharedInstructions(configRoot: string) {
+  const directory = join(configRoot, "pinocchio");
+  await privateDirectory(directory, true);
+  const path = join(directory, "AGENTS.md");
+  let handle;
+  try {
+    handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  } catch (error) {
+    if (!isRecord(error) || error.code !== "EEXIST") throw error;
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new ToolError("UNSAFE_SHARED_INSTRUCTIONS");
+    await readFile(path, "utf8");
+    return path;
+  }
+  try {
+    await handle.writeFile(`# Shared Pinocchio instructions
+
+These rules apply to all Pinocchio agents, including delegated helpers.
+Individual agent profiles still define their own roles and workflows.
+Repository instructions still apply; higher-priority instructions take precedence.
+
+## Editing scope
+
+- Default instruction changes to the individual agent's profile.
+- Edit this shared file only when the user explicitly requests an all-Pinocchio-agent rule.
+- Do not interpret "always", "remember", or "going forward" as all-agent scope; clarify when needed.
+- Read this file at session start and reread it when the user says it changed.
+`);
+    await handle.sync();
+  } finally { await handle.close(); }
+  return path;
 }
 function profile(text: string) {
   const match = /^(---\r?\n)([\s\S]*?)(\r?\n---)(\r?\n|$)/.exec(text);
@@ -65,9 +105,12 @@ function enrolledProfile(text: string, reference: BindingReference, binding: Bin
   const parsed = profile(text);
   const launch = memoryLaunch(reference);
   const currentBlock = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", parsed.newline);
-  const legacyBlock = legacyInstructions(launch.serverName).replaceAll("\n", parsed.newline);
-  const block = parsed.body.includes(currentBlock) ? currentBlock : legacyBlock;
-  if (!parsed.body.includes(block) || parsed.body.split(BEGIN).length !== 2 || parsed.body.split(END).length !== 2) {
+  const previousBlocks = [
+    profileInstructions(launch.serverName, binding, reference.configRoot),
+    legacyInstructions(launch.serverName),
+  ].map((block) => block.replaceAll("\n", parsed.newline));
+  const block = [currentBlock, ...previousBlocks].find((candidate) => parsed.body.includes(candidate));
+  if (!block || parsed.body.split(BEGIN).length !== 2 || parsed.body.split(END).length !== 2) {
     throw new ToolError("MANAGED_BLOCK_CHANGED");
   }
   const configured = parsed.doc.getIn(["mcp-servers", launch.serverName]);
@@ -154,13 +197,14 @@ export async function enroll(reference: BindingReference, explicitShared = false
   if (doc.hasIn(["mcp-servers", launch.serverName])) throw new ToolError("PROFILE_SERVER_CONFLICT");
   if (tools.items.some((item) => String(item).startsWith("pinocchio_"))) throw new ToolError("PROFILE_SERVER_CONFLICT");
   const extension = await prepareContextExtension(reference.configRoot);
+  const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
   doc.setIn(["mcp-servers", launch.serverName], launch.config);
   for (const tool of [SEARCH_TOOL, SAVE_TOOL]) tools.add(`${launch.serverName}-${tool}`);
   const block = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", newline);
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body}${newline}${block}${newline}`;
   await loadBinding(reference);
   await replace(path, original, next);
-  return { ...extension, status: "enrolled", version: 1, serverName: launch.serverName, profile: path };
+  return { ...extension, status: "enrolled", version: 1, serverName: launch.serverName, profile: path, sharedInstructions };
 }
 export async function refreshEnrollment(reference: BindingReference, explicitShared = false) {
   const binding = await loadBinding(reference);
@@ -170,12 +214,13 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   const { launch, block, currentBlock } = enrolledProfile(original, reference, binding);
   await verifyMemoryTools(reference);
   const extension = await prepareContextExtension(reference.configRoot);
+  const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
   const updated = block !== currentBlock;
   if (updated) {
     await loadBinding(reference);
     await replace(path, original, original.replace(block, () => currentBlock));
   }
-  return { ...extension, status: "refreshed", updated, version: 1, serverName: launch.serverName, profile: path };
+  return { ...extension, status: "refreshed", updated, version: 1, serverName: launch.serverName, profile: path, sharedInstructions };
 }
 export async function removeEnrollment(reference: BindingReference, dryRun = false) {
   const binding = await loadBinding(reference);

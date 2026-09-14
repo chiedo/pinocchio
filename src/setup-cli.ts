@@ -62,7 +62,8 @@ export async function setup(options: {
       }
       if (!enrolled) await enroll(reference);
       else await refreshEnrollment(reference);
-      return { status: "ready", agent: options.name, profile: binding.definition.path, reference, restartRequired: true };
+      return { status: "ready", agent: options.name, profile: binding.definition.path,
+        sharedInstructions: join(root, "pinocchio", "AGENTS.md"), reference, restartRequired: true };
     }
     if (options.remove || options.conversation !== undefined) throw new ToolError("AGENT_NOT_INSTALLED");
     const agents = join(root, "agents");
