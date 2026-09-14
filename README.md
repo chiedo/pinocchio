@@ -1,7 +1,9 @@
 # 🤥 Pinocchio
 
-**Copilot CLI agents that remember your conversations across sessions.**
-Use your existing CLI and login. Each agent gets its own memory.
+**Copilot CLI agents where each agent gets its own memory and remembers your conversations across sessions. Built to be used in [Herdr](https://herdr.dev/).**
+
+<img width="2014" height="1338" alt="Screenshot 2026-09-14 at 4 20 33 PM" src="https://github.com/user-attachments/assets/2c681738-274b-4acf-9144-142b2ae25c9e" />
+
 
 ## 1. Install
 
