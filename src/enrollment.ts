@@ -9,7 +9,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { loadBinding, privateDirectory } from "./binding-registry.js";
 import type { BindingRecord, BindingReference } from "./binding-registry.js";
 import { memoryLaunch } from "./memory-mcp.js";
-import { SAVE_TOOL, SEARCH_TOOL, ToolError } from "./memory-protocol.js";
+import { EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, ToolError } from "./memory-protocol.js";
 import { isRecord } from "./identity.js";
 
 const BEGIN = "<!-- pinocchio-memory:v1 -->";
@@ -48,8 +48,8 @@ You are the named Copilot CLI agent below, with Pinocchio memory. These are conf
 }
 function extensionInstructions(binding: BindingRecord, configRoot: string) {
   return profileInstructions("pinocchio_extension", binding, configRoot)
-    .replaceAll("pinocchio_extension-agent_memory_search", SEARCH_TOOL)
-    .replaceAll("pinocchio_extension-agent_memory_save", SAVE_TOOL);
+    .replaceAll("pinocchio_extension-agent_memory_search", EXTENSION_SEARCH_TOOL)
+    .replaceAll("pinocchio_extension-agent_memory_save", EXTENSION_SAVE_TOOL);
 }
 function instructions(server: string, binding: BindingRecord, configRoot: string) {
   const shared = `- Shared Pinocchio instructions: ${JSON.stringify(join(configRoot, "pinocchio", "AGENTS.md"))}. Read this file at the start of each session, including delegated helper work, and reread it when the user says it changed. Apply its rules to all Pinocchio agents; it does not replace your individual role or repository instructions, or override higher-priority instructions.
@@ -204,7 +204,7 @@ export async function enroll(reference: BindingReference, explicitShared = false
   if (tools.items.some((item) => String(item).startsWith("pinocchio_"))) throw new ToolError("PROFILE_SERVER_CONFLICT");
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
-  for (const tool of [SEARCH_TOOL, SAVE_TOOL]) tools.add(tool);
+  for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL]) tools.add(tool);
   const block = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", newline);
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body}${newline}${block}${newline}`;
   await loadBinding(reference);
@@ -221,15 +221,18 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
   const configured = doc.getIn(["mcp-servers", launch.serverName]);
-  doc.deleteIn(["mcp-servers", launch.serverName]);
+  if (configured !== undefined) doc.deleteIn(["mcp-servers", launch.serverName]);
   const servers = doc.get("mcp-servers", true);
   if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
-  const legacyTools = [SEARCH_TOOL, SAVE_TOOL].map((tool) => `${launch.serverName}-${tool}`);
-  const hadLegacyTool = tools.items.some((item) => legacyTools.includes(String(item)));
+  const obsoleteTools = [
+    SEARCH_TOOL, SAVE_TOOL,
+    `${launch.serverName}-${SEARCH_TOOL}`, `${launch.serverName}-${SAVE_TOOL}`,
+  ];
+  const hadLegacyTool = tools.items.some((item) => obsoleteTools.includes(String(item)));
   for (let index = tools.items.length - 1; index >= 0; index--) {
-    if (legacyTools.includes(String(tools.items[index]))) tools.delete(index);
+    if (obsoleteTools.includes(String(tools.items[index]))) tools.delete(index);
   }
-  for (const tool of [SEARCH_TOOL, SAVE_TOOL]) {
+  for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL]) {
     if (!tools.items.some((item) => String(item) === tool)) tools.add(tool);
   }
   const updated = block !== currentBlock || configured !== undefined || hadLegacyTool;
@@ -245,11 +248,11 @@ export async function removeEnrollment(reference: BindingReference, dryRun = fal
   const path = binding.definition.path;
   const original = await readFile(path, "utf8");
   const { doc, tools, body, newline, launch, block } = enrolledProfile(original, reference, binding);
-  doc.deleteIn(["mcp-servers", launch.serverName]);
+  if (doc.get("mcp-servers", true) !== undefined) doc.deleteIn(["mcp-servers", launch.serverName]);
   const servers = doc.get("mcp-servers", true);
   if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
   for (let index = tools.items.length - 1; index >= 0; index--) {
-    if ([SEARCH_TOOL, SAVE_TOOL].some((tool) =>
+    if ([SEARCH_TOOL, SAVE_TOOL, EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL].some((tool) =>
       [tool, `${launch.serverName}-${tool}`].includes(String(tools.items[index])))) tools.delete(index);
   }
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(`${newline}${block}${newline}`, "")}`;

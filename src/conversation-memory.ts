@@ -5,7 +5,7 @@ import type { BindingReference } from "./binding-registry.js";
 import { bindingForDefinition, canonicalRepository, fingerprint, hasCode, loadBinding, privateDirectory } from "./binding-registry.js";
 import { MemoryStore } from "./memory-store.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
-import { EXTENSION_MEMORY_SERVER, SAVE_TOOL, ToolError, SEARCH_TOOL } from "./memory-protocol.js";
+import { EXTENSION_MEMORY_SERVER, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, ToolError, SEARCH_TOOL } from "./memory-protocol.js";
 import { MemoryWorker } from "./memory-worker-client.js";
 import { isRecord } from "./identity.js";
 
@@ -76,7 +76,7 @@ export async function conversationOwner(configRoot: string, current: unknown): P
   if (!isRecord(current) || !isRecord(current.agent)) return;
   const agent = current.agent;
   if (typeof agent.path !== "string" || !Array.isArray(agent.tools) ||
-      !agent.tools.includes(SEARCH_TOOL) || !agent.tools.includes(SAVE_TOOL)) return;
+      !agent.tools.includes(EXTENSION_SEARCH_TOOL) || !agent.tools.includes(EXTENSION_SAVE_TOOL)) return;
   const reference = await bindingForDefinition(configRoot, agent.path);
   return reference ? { reference, server: EXTENSION_MEMORY_SERVER } : undefined;
 }

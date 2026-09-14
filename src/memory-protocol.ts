@@ -4,6 +4,8 @@ import { noteSchema, operationIdSchema, recordIdSchema, revisionSchema } from ".
 export const SEARCH_TOOL = "agent_memory_search";
 export const SAVE_TOOL = "agent_memory_save";
 export const EXTENSION_MEMORY_SERVER = "pinocchio_extension";
+export const EXTENSION_SEARCH_TOOL = "pinocchio_memory_search";
+export const EXTENSION_SAVE_TOOL = "pinocchio_memory_save";
 export const CONTEXT_META = "pinocchio/context-v1";
 export const MEMORY_DEADLINE_MS = 1_000;
 export const searchSchema = z.object({ query: z.string().trim().min(1).max(500) }).strict();
@@ -13,6 +15,27 @@ export const saveSchema = z.discriminatedUnion("action", [
     expectedRevision: revisionSchema, note: noteSchema }).strict(),
   z.object({ action: z.literal("status"), operationId: operationIdSchema }).strict(),
 ]);
+export const saveInputSchema = {
+  ...z.toJSONSchema(saveSchema, { io: "input", unrepresentable: "any" }),
+  ...z.toJSONSchema(saveSchema.options[1].partial({
+    note: true, recordId: true, expectedRevision: true,
+  }).extend({
+    action: z.enum(saveSchema.options.map((option) => option.shape.action.value)),
+  }), { io: "input", unrepresentable: "any" }),
+  type: "object" as const,
+};
+export const extensionSaveInputSchema = {
+  type: "object" as const,
+  properties: {
+    action: { type: "string" as const, enum: ["remember", "correct", "status"] },
+    operationId: { type: "string" as const },
+    recordId: { type: "string" as const },
+    expectedRevision: { type: "integer" as const },
+    note: { type: "object" as const },
+  },
+  required: ["action", "operationId"],
+  additionalProperties: false,
+};
 export const ticketSchema = z.object({
   version: z.literal(1), root: z.string().min(1), recipient: z.string().min(1),
   request: z.string().min(1), call: z.string().min(1), server: z.string().min(1),

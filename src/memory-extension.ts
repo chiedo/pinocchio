@@ -3,7 +3,7 @@ import { configRootPath } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
-import { SAVE_TOOL, SEARCH_TOOL, saveSchema, searchSchema, ToolError } from "./memory-protocol.js";
+import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, ToolError } from "./memory-protocol.js";
 import { z } from "zod";
 
 const configRoot = configRootPath();
@@ -49,14 +49,14 @@ session = await joinSession({
     },
   }, ...[
     {
-      name: SEARCH_TOOL,
+      name: EXTENSION_SEARCH_TOOL,
       description: "Search the selected Pinocchio agent's scoped historical memory. Recall is best-effort.",
       parameters: z.toJSONSchema(searchSchema, { io: "input" }),
     },
     {
-      name: SAVE_TOOL,
+      name: EXTENSION_SAVE_TOOL,
       description: "Save, correct, or check a sourced memory operation for the selected Pinocchio agent.",
-      parameters: z.toJSONSchema(saveSchema, { io: "input", unrepresentable: "any" }),
+      parameters: extensionSaveInputSchema,
     },
   ].map((tool) => ({
     ...tool,
@@ -70,7 +70,7 @@ session = await joinSession({
         if (!owner) throw new ToolError("MEMORY_OWNER_UNAVAILABLE");
         const result = await context.call(owner, {
           sessionId: invocation.sessionId, directory, toolCallId: invocation.toolCallId,
-          tool: tool.name as typeof SEARCH_TOOL | typeof SAVE_TOOL,
+          tool: tool.name === EXTENSION_SEARCH_TOOL ? SEARCH_TOOL : SAVE_TOOL,
           arguments: args, ...(invocation.signal ? { signal: invocation.signal } : {}),
         });
         return { resultType: "success" as const, textResultForLlm: JSON.stringify(result) };
