@@ -12,7 +12,7 @@ import { MemoryStore } from "../src/memory-store.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
 import { createMemoryMcpServer, memoryLaunch } from "../src/memory-mcp.js";
 import { CONTEXT_META, SAVE_TOOL, SEARCH_TOOL, saveSchema } from "../src/memory-protocol.js";
-import { enroll, removeEnrollment } from "../src/enrollment.js";
+import { enroll, refreshEnrollment, removeEnrollment } from "../src/enrollment.js";
 import { main as enrollmentMain } from "../src/enrollment-cli.js";
 import { isRecord } from "../src/identity.js";
 import { createProductionFixture } from "./support/production-fixture.js";
@@ -160,6 +160,9 @@ test("enrollment preserves defaults and unrelated edits; removal only removes ma
   assert.match(contents, /model: synthetic-native/);
   assert.match(contents, /reasoning-effort: high/);
   assert.match(contents, /pinocchio-memory:v1/);
+  assert.ok(contents.includes('- Agent ID: "shared"'));
+  assert.ok(contents.includes(`- Agent profile: ${JSON.stringify(path)}`));
+  assert.ok(contents.includes(`- Memory scope: repository ${JSON.stringify(f.repository)}`));
   contents += "\nUnrelated new instructions.\n";
   await writeFile(path, contents);
   await removeEnrollment(f.ref);
@@ -167,13 +170,73 @@ test("enrollment preserves defaults and unrelated edits; removal only removes ma
   assert.match(removed, /Original instructions/);
   assert.match(removed, /Unrelated new instructions/);
   assert.match(removed, /model: synthetic-native/);
-  assert.doesNotMatch(removed, /pinocchio-memory:v1|agent_memory_search/);
+  assert.doesNotMatch(removed, /pinocchio-memory:v1|agent_memory_search|Your Pinocchio agent/);
   assert.equal((await f.store.list()).items.length, 4);
 });
 test("enrollment refuses implicit broad access and unapproved shared profiles", async (t) => {
   const f = await fixture(t);
   await assert.rejects(enroll(f.ref), { code: "EXPLICIT_TOOL_LIST_REQUIRED" });
   await assert.rejects(enroll(await f.bind("beta")), { code: "EXPLICIT_SHARED_ENROLLMENT_REQUIRED" });
+});
+test("legacy enrollment can still be removed without a refresh", async (t) => {
+  const f = await fixture(t);
+  const path = join(f.definitions.alpha.root, "shared.agent.md");
+  await writeFile(path, "---\nname: shared\ndescription: Synthetic\ntools: [view]\n---\nKeep this role.\n");
+  await enroll(f.ref);
+  const legacy = (await readFile(path, "utf8"))
+    .replace(/## Your Pinocchio agent\n[\s\S]*?(?=## Persistent memory)/, "");
+  assert.doesNotMatch(legacy, /## Your Pinocchio agent/);
+  await writeFile(path, legacy);
+  await removeEnrollment(f.ref, true);
+  assert.equal(await readFile(path, "utf8"), legacy);
+  await removeEnrollment(f.ref);
+  const removed = await readFile(path, "utf8");
+  assert.match(removed, /Keep this role/);
+  assert.doesNotMatch(removed, /pinocchio-memory:|agent_memory_search/);
+  assert.equal((await f.store.list()).items.length, 4);
+});
+test("refresh refuses changed servers and duplicate managed blocks without rewriting the profile", async (t) => {
+  const f = await fixture(t);
+  const path = join(f.definitions.alpha.root, "shared.agent.md");
+  await writeFile(path, "---\nname: shared\ndescription: Synthetic\ntools: [view]\n---\nKeep this role.\n");
+  await enroll(f.ref);
+  const original = await readFile(path, "utf8");
+  const changedServer = original.replace(f.ref.fingerprint, "0".repeat(64));
+  assert.notEqual(changedServer, original);
+  await writeFile(path, changedServer);
+  await assert.rejects(refreshEnrollment(f.ref), { code: "MANAGED_SERVER_CHANGED" });
+  assert.equal(await readFile(path, "utf8"), changedServer);
+  const block = original.slice(original.indexOf("<!-- pinocchio-memory:v1 -->"));
+  const duplicated = original + block;
+  await writeFile(path, duplicated);
+  await assert.rejects(refreshEnrollment(f.ref), { code: "MANAGED_BLOCK_CHANGED" });
+  assert.equal(await readFile(path, "utf8"), duplicated);
+});
+test("shared agents get their actual profile paths and require explicit permission to refresh", async (t) => {
+  const f = await fixture(t);
+  for (const origin of ["foreground", "beta"] as const) {
+    const path = join(f.definitions[origin].root, "shared.agent.md");
+    await writeFile(path, "---\nname: Different display name\ndescription: Synthetic\ntools: [view]\n---\nKeep this role.\n");
+    const ref = await f.bind(origin);
+    await enroll(ref, true);
+    const modern = await readFile(path, "utf8");
+    assert.ok(modern.includes('- Agent ID: "shared"'));
+    assert.ok(modern.includes(`- Agent profile: ${JSON.stringify(path)}`));
+    assert.ok(modern.includes(`- Memory scope: repository ${JSON.stringify(f.repository)}`));
+    const legacy = modern.replace(/## Your Pinocchio agent\n[\s\S]*?(?=## Persistent memory)/, "");
+    await writeFile(path, legacy);
+    await assert.rejects(refreshEnrollment(ref), { code: "EXPLICIT_SHARED_ENROLLMENT_REQUIRED" });
+    assert.equal(await readFile(path, "utf8"), legacy);
+    const args = ["refresh", "--config-root", f.config, "--binding", ref.bindingId,
+      "--fingerprint", ref.fingerprint, "--allow-shared"];
+    const refreshed = await enrollmentMain(args);
+    assert.equal(refreshed.status, "refreshed");
+    assert.ok("updated" in refreshed && refreshed.updated === true);
+    assert.equal(await readFile(path, "utf8"), modern);
+    const repeated = await enrollmentMain(args);
+    assert.ok("updated" in repeated && repeated.updated === false);
+    assert.equal(await readFile(path, "utf8"), modern);
+  }
 });
 test("new-profile helper enrolls memory without overriding native defaults", async (t) => {
   const f = await fixture(t);
@@ -185,6 +248,8 @@ test("new-profile helper enrolls memory without overriding native defaults", asy
   const content = await readFile(path, "utf8");
   assert.match(content, /pinocchio-memory:v1/);
   assert.match(content, /agent_memory_search/);
+  assert.ok(content.includes('- Agent ID: "created-agent"'));
+  assert.ok(content.includes(`- Agent profile: ${JSON.stringify(path)}`));
   assert.doesNotMatch(content, /^model:|^reasoning-effort:/m);
   await assert.rejects(enrollmentMain(["remove", "--config-root", f.config,
     "--binding", f.ref.bindingId, "--fingerprint", f.ref.fingerprint, "--global"]), { code: "INVALID_ARGUMENTS" });

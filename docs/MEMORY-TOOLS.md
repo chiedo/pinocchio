@@ -155,6 +155,21 @@ memory. Use `--global` instead of `--repository` only for intentionally global
 memory. A failed setup reports an error; any newly created profile/registration
 is left inspectable rather than silently deleted.
 
+Refresh an existing profile's generated guidance after updating Pinocchio:
+
+```bash
+node dist/src/enrollment-cli.js refresh \
+  --config-root "$CONFIG_ROOT" --binding "$BINDING_ID" --fingerprint "$FINGERPRINT"
+```
+
+For agents created with `npm run setup`, rerun that original setup command instead.
+The managed block now includes the agent's filename-based ID, exact profile path,
+memory scope, and configuration/editing guidance. Refresh accepts the original
+memory-only block and the current block, preserving all bytes outside it. It is
+idempotent, keeps the same binding and memories, and still requires `--allow-shared`
+for project/plugin profiles. Modified managed content is a conflict, not an
+invitation to overwrite. Restart the host to load the refreshed profile.
+
 Remove managed enrollment without deleting notes:
 
 ```bash

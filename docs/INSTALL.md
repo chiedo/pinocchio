@@ -23,10 +23,16 @@ npm run setup -- --repository /absolute/path/to/your/project
 ```
 
 This creates the `pinocchio` agent in your existing Copilot configuration
-(normally `~/.copilot`), scoped to that Git repository. It does not overwrite
-existing agent files or change your login, model, native memory, or permissions.
+(normally `~/.copilot`), scoped to that Git repository. It does not replace
+unrelated agent files or change your login, model, native memory, or permissions.
 For another name, append `--name builder`. For intentionally cross-repository
 memory, use `--global` instead of `--repository`.
+
+The generated profile tells the agent its filename-based ID, exact profile path,
+configuration root, and memory scope. It also explains the YAML settings, authored
+instructions, separate memory storage, and which generated wiring to preserve.
+This context is part of the profile, so it also applies when the agent is delegated
+helper work; no memory search is needed to discover its own configuration.
 
 **Keep this checkout and its `node_modules`: they supply the runtime.** Setup
 does not copy or launch a second CLI. The current dependency lock still includes
@@ -93,7 +99,10 @@ npm run setup -- --repository /absolute/path/to/your/project
 ```
 
 Repeat the original name and scope. Re-running setup checks the existing
-binding rather than creating a second agent.
+binding and refreshes older generated guidance rather than creating a second
+agent. Your authored instructions, YAML settings, binding, and stored notes are
+preserved. Repeat setup for each existing agent, then start fresh sessions to
+load the updated profiles.
 
 To remove memory from this agent:
 
