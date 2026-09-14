@@ -24,6 +24,10 @@ export const saveInputSchema = {
   }), { io: "input", unrepresentable: "any" }),
   type: "object" as const,
 };
+const { $schema: _noteSchema, ...extensionNoteInputSchema } = z.toJSONSchema(noteSchema, {
+  io: "input",
+  unrepresentable: "any",
+});
 export const extensionSaveInputSchema = {
   type: "object" as const,
   properties: {
@@ -31,7 +35,7 @@ export const extensionSaveInputSchema = {
     operationId: { type: "string" as const },
     recordId: { type: "string" as const },
     expectedRevision: { type: "integer" as const },
-    note: { type: "object" as const },
+    note: extensionNoteInputSchema,
   },
   required: ["action", "operationId"],
   additionalProperties: false,

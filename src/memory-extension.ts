@@ -55,7 +55,7 @@ session = await joinSession({
     },
     {
       name: EXTENSION_SAVE_TOOL,
-      description: "Save, correct, or check a sourced memory operation for the selected Pinocchio agent.",
+      description: "Save, correct, or check a memory operation. For remember/correct, note requires content, kind, and at least one evidence item with kind plus reference type/value.",
       parameters: extensionSaveInputSchema,
     },
   ].map((tool) => ({
