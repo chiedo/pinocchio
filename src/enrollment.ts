@@ -36,9 +36,9 @@ You are the named Copilot CLI agent below, with Pinocchio memory. These are conf
 - Agent profile: ${JSON.stringify(binding.definition.path)}. Use this exact path when asked where your agent file or configuration lives; do not guess from the working directory.
 - Copilot configuration root: ${JSON.stringify(configRoot)}.
 - Memory scope: ${binding.scope.kind === "global" ? "global, available across repositories" : `repository ${JSON.stringify(binding.scope.root)}`}.
-- The profile's YAML frontmatter configures model preference, tools, skills, and MCP servers. Its authored Markdown defines your role, behavior, and workflows. Read the current file before reporting settings or editing it; runtime model overrides may differ from the profile.
+- The profile's YAML frontmatter configures model preference, tools, and skills. Its authored Markdown defines your role, behavior, and workflows. Read the current file before reporting settings or editing it; runtime model overrides may differ from the profile.
 - Repository AGENTS.md and copilot-instructions.md files supply separate project instructions; they are not your agent profile.
-- Preserve the generated Pinocchio MCP server, memory tool entries, and this managed block when editing your role. Do not move or rename the profile: its path is part of your memory identity.
+- Preserve the Pinocchio extension memory tool entries and this managed block when editing your role. Do not move or rename the profile: its path is part of your memory identity.
 - The shared memory extension is ${JSON.stringify(join(configRoot, "extensions", "pinocchio-memory", "extension.mjs"))}. Private bindings/settings live under ${JSON.stringify(join(configRoot, "pinocchio"))}; memory lives separately under ${JSON.stringify(join(configRoot, "agent-memories"))}. The profile is not the conversation database. Use memory tools, not direct database or binding edits.
 - New foreground conversations are captured by default when the extension is active; capture/recall can be paused independently of explicit memory tools. Do not assume memory is available just because the profile is enrolled.
 - After profile edits, restart Copilot or start a fresh session with this same agent. Do not claim an already-running session has loaded the changes.
@@ -46,12 +46,18 @@ You are the named Copilot CLI agent below, with Pinocchio memory. These are conf
 `;
   return legacyInstructions(server).replace("## Persistent memory", () => `${context}## Persistent memory`);
 }
+function extensionInstructions(binding: BindingRecord, configRoot: string) {
+  return profileInstructions("pinocchio_extension", binding, configRoot)
+    .replaceAll("pinocchio_extension-agent_memory_search", SEARCH_TOOL)
+    .replaceAll("pinocchio_extension-agent_memory_save", SAVE_TOOL);
+}
 function instructions(server: string, binding: BindingRecord, configRoot: string) {
   const shared = `- Shared Pinocchio instructions: ${JSON.stringify(join(configRoot, "pinocchio", "AGENTS.md"))}. Read this file at the start of each session, including delegated helper work, and reread it when the user says it changed. Apply its rules to all Pinocchio agents; it does not replace your individual role or repository instructions, or override higher-priority instructions.
 - Default instruction edits to your own agent profile, not the shared file. Edit the shared file only when the user explicitly requests a rule for all Pinocchio agents. Do not infer all-agent scope from "always", "remember", or "going forward"; clarify scope when needed.
 - If the shared file is missing or unreadable, report that explicitly and continue with your available instructions; do not claim you loaded it or silently create a replacement.
 `;
-  return profileInstructions(server, binding, configRoot).replace("- Copilot configuration root:", () => `${shared}- Copilot configuration root:`);
+  void server;
+  return extensionInstructions(binding, configRoot).replace("- Copilot configuration root:", () => `${shared}- Copilot configuration root:`);
 }
 
 async function prepareSharedInstructions(configRoot: string) {
@@ -105,16 +111,16 @@ function enrolledProfile(text: string, reference: BindingReference, binding: Bin
   const parsed = profile(text);
   const launch = memoryLaunch(reference);
   const currentBlock = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", parsed.newline);
-  const previousBlocks = [
-    profileInstructions(launch.serverName, binding, reference.configRoot),
-    legacyInstructions(launch.serverName),
-  ].map((block) => block.replaceAll("\n", parsed.newline));
-  const block = [currentBlock, ...previousBlocks].find((candidate) => parsed.body.includes(candidate));
-  if (!block || parsed.body.split(BEGIN).length !== 2 || parsed.body.split(END).length !== 2) {
+  const start = parsed.body.indexOf(BEGIN);
+  const finish = parsed.body.indexOf(END);
+  if (start === -1 || finish < start || parsed.body.indexOf(BEGIN, start + BEGIN.length) !== -1 ||
+      parsed.body.indexOf(END, finish + END.length) !== -1) {
     throw new ToolError("MANAGED_BLOCK_CHANGED");
   }
+  const block = parsed.body.slice(start, finish + END.length);
   const configured = parsed.doc.getIn(["mcp-servers", launch.serverName]);
-  if (!isMap(configured) || JSON.stringify(configured.toJSON()) !== JSON.stringify(launch.config)) {
+  if (configured !== undefined && (!isMap(configured) ||
+      JSON.stringify(configured.toJSON()) !== JSON.stringify(launch.config))) {
     throw new ToolError("MANAGED_SERVER_CHANGED");
   }
   return { ...parsed, launch, block, currentBlock };
@@ -198,8 +204,7 @@ export async function enroll(reference: BindingReference, explicitShared = false
   if (tools.items.some((item) => String(item).startsWith("pinocchio_"))) throw new ToolError("PROFILE_SERVER_CONFLICT");
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
-  doc.setIn(["mcp-servers", launch.serverName], launch.config);
-  for (const tool of [SEARCH_TOOL, SAVE_TOOL]) tools.add(`${launch.serverName}-${tool}`);
+  for (const tool of [SEARCH_TOOL, SAVE_TOOL]) tools.add(tool);
   const block = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", newline);
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body}${newline}${block}${newline}`;
   await loadBinding(reference);
@@ -211,14 +216,27 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   if (binding.definition.origin !== "user" && !explicitShared) throw new ToolError("EXPLICIT_SHARED_ENROLLMENT_REQUIRED");
   const path = binding.definition.path;
   const original = await readFile(path, "utf8");
-  const { launch, block, currentBlock } = enrolledProfile(original, reference, binding);
+  const { doc, tools, body, newline, launch, block, currentBlock } = enrolledProfile(original, reference, binding);
   await verifyMemoryTools(reference);
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
-  const updated = block !== currentBlock;
+  const configured = doc.getIn(["mcp-servers", launch.serverName]);
+  doc.deleteIn(["mcp-servers", launch.serverName]);
+  const servers = doc.get("mcp-servers", true);
+  if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
+  const legacyTools = [SEARCH_TOOL, SAVE_TOOL].map((tool) => `${launch.serverName}-${tool}`);
+  const hadLegacyTool = tools.items.some((item) => legacyTools.includes(String(item)));
+  for (let index = tools.items.length - 1; index >= 0; index--) {
+    if (legacyTools.includes(String(tools.items[index]))) tools.delete(index);
+  }
+  for (const tool of [SEARCH_TOOL, SAVE_TOOL]) {
+    if (!tools.items.some((item) => String(item) === tool)) tools.add(tool);
+  }
+  const updated = block !== currentBlock || configured !== undefined || hadLegacyTool;
   if (updated) {
     await loadBinding(reference);
-    await replace(path, original, original.replace(block, () => currentBlock));
+    const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(block, () => currentBlock)}`;
+    await replace(path, original, next);
   }
   return { ...extension, status: "refreshed", updated, version: 1, serverName: launch.serverName, profile: path, sharedInstructions };
 }
@@ -231,7 +249,8 @@ export async function removeEnrollment(reference: BindingReference, dryRun = fal
   const servers = doc.get("mcp-servers", true);
   if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
   for (let index = tools.items.length - 1; index >= 0; index--) {
-    if ([SEARCH_TOOL, SAVE_TOOL].some((tool) => String(tools.items[index]) === `${launch.serverName}-${tool}`)) tools.delete(index);
+    if ([SEARCH_TOOL, SAVE_TOOL].some((tool) =>
+      [tool, `${launch.serverName}-${tool}`].includes(String(tools.items[index])))) tools.delete(index);
   }
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(`${newline}${block}${newline}`, "")}`;
   if (!dryRun) await replace(path, original, next);

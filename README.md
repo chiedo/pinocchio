@@ -75,7 +75,7 @@ You are a software engineer.
 - Explain what changed and any remaining risks.
 ```
 
-Keep the generated `mcp-servers`, tool entries, and memory block intact, and
+Keep the generated memory tool entries and memory block intact, and
 don't move or rename the file — its path is part of its memory identity.
 
 ### 3. Chat

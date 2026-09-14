@@ -2,10 +2,10 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { BindingReference } from "./binding-registry.js";
-import { canonicalRepository, fingerprint, hasCode, loadBinding, privateDirectory } from "./binding-registry.js";
+import { bindingForDefinition, canonicalRepository, fingerprint, hasCode, loadBinding, privateDirectory } from "./binding-registry.js";
 import { MemoryStore } from "./memory-store.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
-import { ToolError, SEARCH_TOOL } from "./memory-protocol.js";
+import { EXTENSION_MEMORY_SERVER, SAVE_TOOL, ToolError, SEARCH_TOOL } from "./memory-protocol.js";
 import { MemoryWorker } from "./memory-worker-client.js";
 import { isRecord } from "./identity.js";
 
@@ -71,29 +71,14 @@ export async function captureConversation(reference: BindingReference, message: 
 
 export interface ConversationOwner { reference: BindingReference; server: string }
 
-// Resolve only runtime-reported file identity and its matching immutable MCP binding.
+// Resolve the selected agent's stable profile path to its Pinocchio binding.
 export async function conversationOwner(configRoot: string, current: unknown): Promise<ConversationOwner | undefined> {
   if (!isRecord(current) || !isRecord(current.agent)) return;
   const agent = current.agent;
-  if (typeof agent.path !== "string" || !isRecord(agent.mcpServers)) return;
-  const matches: ConversationOwner[] = [];
-  for (const [server, config] of Object.entries(agent.mcpServers)) {
-    if (!server.startsWith("pinocchio_") || !isRecord(config) || !Array.isArray(config.args)) continue;
-    const args = config.args;
-    const argument = (name: string) => {
-      const positions = args.flatMap((arg, index) => arg === name ? [index] : []);
-      return positions.length === 1 ? args[(positions[0] ?? -1) + 1] : undefined;
-    };
-    const root = argument("--config-root"), bindingId = argument("--binding"), digest = argument("--fingerprint");
-    if (root !== configRoot || typeof bindingId !== "string" || typeof digest !== "string") continue;
-    const reference = { configRoot, bindingId, fingerprint: digest };
-    const binding = await loadBinding(reference);
-    if (binding.definition.path !== agent.path || server !== `pinocchio_${bindingId.replaceAll("-", "")}`) continue;
-    if (!Array.isArray(agent.tools) || !agent.tools.includes(`${server}-${SEARCH_TOOL}`)) continue;
-    matches.push({ reference, server });
-  }
-  if (matches.length > 1) throw new ToolError("AMBIGUOUS_CONVERSATION_OWNER");
-  return matches[0];
+  if (typeof agent.path !== "string" || !Array.isArray(agent.tools) ||
+      !agent.tools.includes(SEARCH_TOOL) || !agent.tools.includes(SAVE_TOOL)) return;
+  const reference = await bindingForDefinition(configRoot, agent.path);
+  return reference ? { reference, server: EXTENSION_MEMORY_SERVER } : undefined;
 }
 
 const stopWords = new Set("a an and are as at be did do does for from have how i in is it its me my of on or our that the this to was we what when which who with you your about".split(" "));

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -247,6 +247,34 @@ export async function loadBinding(reference: BindingReference, signal?: AbortSig
   signal?.throwIfAborted();
   await assertNotRevoked(reference);
   return record;
+}
+
+export async function bindingForDefinition(configRoot: string, definitionPath: string) {
+  await checkRegistry(configRoot);
+  const matches: BindingReference[] = [];
+  for (const name of await readdir(registryPath(configRoot))) {
+    if (!name.endsWith(".json")) continue;
+    const path = join(registryPath(configRoot), name);
+    let text: string;
+    try {
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try { text = await file.readFile("utf8"); } finally { await file.close(); }
+      const json: unknown = JSON.parse(text);
+      const parsed = recordSchema.safeParse(json);
+      if (!parsed.success || parsed.data.definition.path !== definitionPath) continue;
+      const reference = {
+        configRoot,
+        bindingId: parsed.data.id,
+        fingerprint: fingerprint(text),
+      };
+      await loadBinding(reference);
+      matches.push(reference);
+    } catch (error) {
+      if (!hasCode(error, "REVOKED_BINDING")) throw error;
+    }
+  }
+  if (matches.length > 1) throw new BindingError("INVALID_BINDING");
+  return matches[0];
 }
 export async function revokeBinding(reference: BindingReference): Promise<void> {
   // Revocation must remain possible after the definition or repository is gone.

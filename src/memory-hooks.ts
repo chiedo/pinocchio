@@ -1,6 +1,6 @@
 import type { SessionHooks } from "@github/copilot-sdk";
 import { MemoryWorker } from "./memory-worker-client.js";
-import { CONTEXT_META, MEMORY_DEADLINE_MS, SAVE_TOOL, SEARCH_TOOL, ToolError } from "./memory-protocol.js";
+import { CONTEXT_META, EXTENSION_MEMORY_SERVER, MEMORY_DEADLINE_MS, SAVE_TOOL, SEARCH_TOOL, ToolError } from "./memory-protocol.js";
 import { recallConversation } from "./conversation-memory.js";
 import type { ConversationOwner } from "./conversation-memory.js";
 
@@ -50,6 +50,25 @@ export function createMemoryHooks(configRoot: string, onPrompt?: (input: {
     health: () => worker.call({ action: "health", configRoot }),
     recall: (owner: ConversationOwner, input: { sessionId: string; directory: string; prompt: string }) =>
       recallConversation(worker, owner, input),
+    call: async (owner: ConversationOwner, input: {
+      sessionId: string; directory: string; toolCallId: string;
+      tool: typeof SEARCH_TOOL | typeof SAVE_TOOL; arguments: unknown; signal?: AbortSignal;
+    }) => {
+      const deadline = Date.now() + MEMORY_DEADLINE_MS;
+      await worker.call({
+        action: "start", configRoot, root: input.sessionId, recipient: input.sessionId,
+        stamp: new Date().toISOString(),
+      }, deadline, input.signal);
+      const ticket = await worker.call({
+        action: "ticket", configRoot, root: input.sessionId, recipient: input.sessionId,
+        call: input.toolCallId, server: EXTENSION_MEMORY_SERVER, tool: input.tool,
+        directory: input.directory, arguments: input.arguments, deadline,
+      }, deadline, input.signal);
+      return worker.call({
+        action: "tool", reference: owner.reference, server: EXTENSION_MEMORY_SERVER,
+        tool: input.tool, arguments: input.arguments, ticket,
+      }, deadline, input.signal);
+    },
     invalidate: (root: string) => worker.call({ action: "invalidate", configRoot, root }),
     close: () => worker.close(),
   };

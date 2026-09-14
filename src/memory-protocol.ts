@@ -3,6 +3,7 @@ import { noteSchema, operationIdSchema, recordIdSchema, revisionSchema } from ".
 
 export const SEARCH_TOOL = "agent_memory_search";
 export const SAVE_TOOL = "agent_memory_save";
+export const EXTENSION_MEMORY_SERVER = "pinocchio_extension";
 export const CONTEXT_META = "pinocchio/context-v1";
 export const MEMORY_DEADLINE_MS = 1_000;
 export const searchSchema = z.object({ query: z.string().trim().min(1).max(500) }).strict();
