@@ -9,9 +9,11 @@ work — so you stop re-explaining context every session. Built to be used in
 
 ## Why
 
-Copilot CLI agents forget everything when a session ends. Pinocchio fixes
-that: each named agent gets its own isolated memory it can search and update
-across sessions — no copy-pasting context, no "as I mentioned before."
+Copilot CLI's built-in memory is one shared, global/repo-level store — it
+doesn't distinguish between your different custom agents. Pinocchio gives
+each named agent its own isolated memory it can search and update across
+sessions, so a `builder` agent and a `reviewer` agent each remember their own
+history instead of sharing one pool.
 
 - **Per-agent memory** — a `builder` agent and a `reviewer` agent each get
   their own store; they never bleed into each other.
