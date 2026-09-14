@@ -1,4 +1,4 @@
-# Pinocchio
+# 🤥 Pinocchio
 
 **Copilot CLI agents that remember your conversations across sessions.**
 Use your existing CLI and login. Each agent gets its own memory.
