@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BindingReference } from "./binding-registry.js";
+import { loadBinding } from "./binding-registry.js";
 import { BoundIdentityAdapter } from "./bound-identity.js";
 import { ContextLedger } from "./context-ledger.js";
 import { MemoryWorker } from "./memory-worker-client.js";
@@ -33,9 +34,17 @@ export function memoryLaunch(reference: BindingReference) {
     },
   };
 }
-export function createMemoryMcpServer(reference: BindingReference, serverName: string, directDirectory = process.cwd()) {
+export async function createMemoryMcpServer(reference: BindingReference, serverName: string, directDirectory = process.cwd()) {
   reference = Object.freeze({ ...reference });
+  await loadBinding(reference);
   const worker = new MemoryWorker();
+  try {
+    // Initialize before accepting requests, not inside the first signed tool deadline.
+    await worker.initialize(reference.configRoot);
+  } catch (error) {
+    worker.close();
+    throw error;
+  }
   const identity = new BoundIdentityAdapter(reference);
   const directRoot = randomUUID();
   let directSequence = 0;
@@ -122,9 +131,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (!values["config-root"] || !values.binding || !values.fingerprint || !values["server-name"]) {
       throw new ToolError("INVALID_LAUNCH");
     }
-    await createMemoryMcpServer({
+    const server = await createMemoryMcpServer({
       configRoot: values["config-root"], bindingId: values.binding, fingerprint: values.fingerprint,
-    }, values["server-name"]).connect(new StdioServerTransport());
+    }, values["server-name"]);
+    try { await server.connect(new StdioServerTransport()); }
+    catch (error) { await server.close(); throw error; }
   } catch {
     process.stderr.write("Pinocchio: MEMORY_LAUNCH_FAILED\n");
     process.exitCode = 1;

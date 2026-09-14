@@ -9,6 +9,7 @@ import { registerBinding, loadBinding } from "./binding-registry.js";
 import { enroll } from "./enrollment.js";
 import { memoryLaunch } from "./memory-mcp.js";
 import { MemoryStore } from "./memory-store.js";
+import { setConversationEnabled } from "./conversation-memory.js";
 import { SEARCH_TOOL, SAVE_TOOL, ToolError } from "./memory-protocol.js";
 import { startSyntheticProvider } from "../test/support/provider.js";
 import { pinnedCliPath, PUBLIC_HOST, PUBLIC_NODE } from "./release.js";
@@ -95,6 +96,8 @@ export async function diagnose(previewPlatform = false) {
       const ref = await registerBinding({ configRoot: config, definitionPath: path, origin: "user",
         originRoot: join(config, "agents"), scope: { kind: "repository", root: repository } });
       await enroll(ref);
+      // This gate checks explicit saves/deletes; automatic capture has its own native-host gate.
+      await setConversationEnabled(ref, false);
       references.push(ref);
       launches.set(name, memoryLaunch(ref));
     }
