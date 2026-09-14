@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { configRootPath, registerBinding } from "./binding-registry.js";
 import type { BindingReference } from "./binding-registry.js";
-import { enroll, prepareContextExtension, removeEnrollment } from "./enrollment.js";
+import { enroll, prepareContextExtension, refreshEnrollment, removeEnrollment } from "./enrollment.js";
 import { ToolError } from "./memory-protocol.js";
 import { isRecord } from "./identity.js";
 
@@ -19,6 +19,7 @@ export async function main(args: string[], beforeEnroll?: (reference: BindingRef
   const allowed: Record<string, string[]> = {
     "prepare-context": ["config-root"],
     enroll: ["config-root", "binding", "fingerprint", "allow-shared"],
+    refresh: ["config-root", "binding", "fingerprint", "allow-shared"],
     remove: ["config-root", "binding", "fingerprint"],
     create: ["config-root", "definition", "origin-root", "repository", "global", "name", "tools"],
   };
@@ -51,6 +52,7 @@ export async function main(args: string[], beforeEnroll?: (reference: BindingRef
   if (!values.binding || !values.fingerprint) throw new ToolError("INVALID_ARGUMENTS");
   const reference = { configRoot, bindingId: values.binding, fingerprint: values.fingerprint };
   if (positionals[0] === "enroll") return enroll(reference, values["allow-shared"] ?? false);
+  if (positionals[0] === "refresh") return refreshEnrollment(reference, values["allow-shared"] ?? false);
   if (positionals[0] === "remove") return removeEnrollment(reference);
   throw new ToolError("INVALID_ARGUMENTS");
 }

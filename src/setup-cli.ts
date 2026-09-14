@@ -7,7 +7,7 @@ import { parseArgs, promisify } from "node:util";
 import { z } from "zod";
 import { canonicalRepository, configRootPath, hasCode, loadBinding, privateDirectory } from "./binding-registry.js";
 import { main as create } from "./enrollment-cli.js";
-import { enroll, removeEnrollment, verifyMemoryTools } from "./enrollment.js";
+import { enroll, refreshEnrollment, removeEnrollment } from "./enrollment.js";
 import { isRecord } from "./identity.js";
 import { ToolError } from "./memory-protocol.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
@@ -61,7 +61,7 @@ export async function setup(options: {
         return { status: "removed", profilePreserved: true, memoriesPreserved: true, restartRequired: true };
       }
       if (!enrolled) await enroll(reference);
-      else await verifyMemoryTools(reference);
+      else await refreshEnrollment(reference);
       return { status: "ready", agent: options.name, profile: binding.definition.path, reference, restartRequired: true };
     }
     if (options.remove || options.conversation !== undefined) throw new ToolError("AGENT_NOT_INSTALLED");

@@ -30,7 +30,7 @@ npm run setup -- --name reviewer --repository /absolute/path/to/your/project
 ```
 
 Run setup from the Pinocchio folder. Change the name to create more agents.
-Existing agent files are never overwritten.
+Setup preserves your custom instructions.
 
 ## 3. Give your agent instructions
 
@@ -55,6 +55,12 @@ rename the profile: its path is part of its memory identity.
 
 Repository `AGENTS.md` files still supply project instructions; they are separate
 from this agent profile. Start a fresh session after editing the profile.
+
+**Each agent knows its own name, exact profile path, memory scope, and how its
+configuration works.** Ask "Where is your agent file?" or "How do I change your
+instructions?" For an existing agent, rerun its original setup command after
+updating Pinocchio; this refreshes the generated guidance without changing your
+custom instructions or memory binding.
 
 ## 4. Chat
 
