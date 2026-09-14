@@ -14,6 +14,10 @@ export class MemoryWorker {
   #sequence = 0;
   #closed = false;
   constructor(private readonly createWorker: () => Worker = () => new Worker(new URL("./memory-worker.js", import.meta.url))) {}
+  async initialize(configRoot: string) {
+    const result = await this.call({ action: "health", configRoot }, Date.now() + 5_000);
+    if (!isRecord(result) || result.status !== "ready") throw new ToolError("WORKER_STARTUP_FAILED");
+  }
   call(payload: unknown, deadline = Date.now() + 1_000, signal?: AbortSignal): Promise<unknown> {
     if (this.#closed) return Promise.reject(new ToolError("WORKER_CLOSED"));
     if (signal?.aborted) return Promise.reject(new ToolError("CALL_CANCELLED"));

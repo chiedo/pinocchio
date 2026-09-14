@@ -42,12 +42,14 @@ The extension also registers `pinocchio_memory_context_status`, a bounded,
 content-free service-health diagnostic. It does not select an owner or expose
 session identifiers, usage history or notes.
 
-Blocking SQLite and identity/file work run in lazy worker threads, outside MCP
-dispatch. A context extension and each bound MCP process own a worker; this is
-not an always-running daemon. Each worker has one active operation and at most
+Blocking SQLite and identity/file work run in worker threads, outside MCP
+dispatch. Each bound MCP server initializes its worker before connecting, with
+a separate five-second startup limit, so the first tool call does not pay for
+cold module loading. A context extension and each bound MCP process own a worker;
+this is not an always-running daemon. Each worker has one active operation and at most
 eight queued operations. A one-second deadline starts at the pre-MCP hook and
-includes context issuance, queueing, startup and identity checks. Late responses
-are discarded and the timed-out worker is terminated. Contention and worker
+includes context issuance, queueing, any worker restart, and identity checks.
+Late responses are discarded and the timed-out worker is terminated. Contention and worker
 failures are explicit, never disguised as no match.
 
 ## Bounds and persistent accounting
@@ -193,6 +195,10 @@ Run `npm run typecheck && npm test` in CI or an isolated development environment
 The synthetic suite covers authenticated context, per-recipient/session limits,
 worker restart, compaction accounting, queue/deadline failures, scoped saves,
 enrollment preservation and real public-host foreground/helper behavior.
+Explicit save/recall/delete gates pause automatic capture only for their synthetic
+bindings so conversation snippets cannot consume those assertions' request budgets.
+A separate native-host gate leaves automatic capture enabled and verifies cold-session
+recall without model memory calls, cross-agent isolation, and pause behavior.
 Normal CI uses no paid model calls. Only aggregate reports may be uploaded.
 
 Live-model compliance/quality evaluation, release

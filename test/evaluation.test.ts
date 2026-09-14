@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { acceptance, distribution, LiveBudget, releaseFaults, releaseVerdict, roles } from "../src/evaluation.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
+import { MEMORY_DEADLINE_MS } from "../src/memory-protocol.js";
 
 test("release statistics use nearest-rank p95, preserve empty samples and reject invalid latency", async () => {
   const { config, hash } = await acceptance();
@@ -44,6 +45,25 @@ test("worker launch, crash, clone and late replies cannot strand the queue or ac
       assert.equal(await recovered, "current");
     } finally { worker.close(); }
   }
+});
+test("worker initialization absorbs cold startup without relaxing ordinary call deadlines", async () => {
+  const worker = new MemoryWorker(() => new Worker(new URL("./support/fault-worker.js", import.meta.url), {
+    workerData: "cold-start",
+  }));
+  try {
+    assert.equal(MEMORY_DEADLINE_MS, 1_000);
+    await worker.initialize("synthetic-config");
+    assert.equal(await worker.call({}, Date.now() + MEMORY_DEADLINE_MS), "current");
+    await assert.rejects(worker.call({}, Date.now() - 1), { code: "MEMORY_DEADLINE" });
+  } finally { worker.close(); }
+});
+test("worker initialization rejects a non-readiness response", async () => {
+  const worker = new MemoryWorker(() => new Worker(new URL("./support/fault-worker.js", import.meta.url), {
+    workerData: "reply",
+  }));
+  try {
+    await assert.rejects(worker.initialize("synthetic-config"), { code: "WORKER_STARTUP_FAILED" });
+  } finally { worker.close(); }
 });
 test("release decisions recompute thresholds and reject missing, stale, incomplete or forged pass flags", async () => {
   const contract = await acceptance(), { config } = contract, commit = "synthetic-commit";

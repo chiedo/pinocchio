@@ -8,6 +8,7 @@ import { approveAll, CopilotClient, RuntimeConnection, ToolSet } from "@github/c
 import type { CopilotSession, SessionConfig } from "@github/copilot-sdk";
 import { registerBinding } from "../src/binding-registry.js";
 import { enroll } from "../src/enrollment.js";
+import { setConversationEnabled } from "../src/conversation-memory.js";
 import { memoryLaunch } from "../src/memory-mcp.js";
 import { SEARCH_TOOL, SAVE_TOOL } from "../src/memory-protocol.js";
 import { isRecord } from "../src/identity.js";
@@ -105,6 +106,8 @@ test("enrolled native profiles recall independently through the production conte
         originRoot: root, scope: { kind: "repository", root: f.repository },
       });
       await enroll(reference, true);
+      // Keep explicit-tool assertions independent of automatic recall's shared budget.
+      await setConversationEnabled(reference, false);
       launches.set(name, memoryLaunch(reference));
       assert.match(await readFile(path, "utf8"), /model: synthetic-model/);
     }
