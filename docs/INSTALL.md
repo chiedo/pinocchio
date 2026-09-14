@@ -2,7 +2,8 @@
 
 **Use your normal `copilot`. No second CLI, separate login, or launcher.**
 Pinocchio installs a memory extension and a named agent with its own memory tools.
-It is not a skill-only installation.
+The extension provides the tools directly; agent profiles do not launch their
+own MCP processes. It is not a skill-only installation.
 
 **Conversation memory is on by default for enrolled, selected agents.** New
 user messages and assistant responses are captured locally as they arrive;
@@ -158,10 +159,9 @@ produce an explicit conflict rather than being overwritten.
 
 ## Preview limitations
 
-The normal CLI path uses per-agent MCP fallback accounting when extension
-request metadata is unavailable: 800 bytes per call and 6,000 bytes per MCP
-process, not a shared budget across helper processes or restarts. Keyword
-search works without downloading embeddings. See [optional semantic search](SEMANTIC.md),
+The normal CLI path uses extension-local fallback accounting: 800 bytes per call
+and 6,000 bytes per extension process. Keyword search works without downloading
+embeddings. See [optional semantic search](SEMANTIC.md),
 [memory administration](STORAGE.md), and [privacy](../PRIVACY.md).
 
 The [isolated developer preview](ISOLATED-PREVIEW.md) retains the pinned CLI,

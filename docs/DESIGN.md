@@ -55,7 +55,7 @@ toward latency and cost. There is no claim that recall already works reliably.
 
 ## Agent profiles and tools
 
-Implemented model-facing tools (prefixed by the profile's bound MCP server):
+Implemented model-facing tools provided by the shared Pinocchio extension:
 
 - `agent_memory_search(query)`: returns bounded, sourced matches for the caller.
 - `agent_memory_save(...)`: saves a sourced note or an expected-revision correction,
@@ -94,16 +94,16 @@ to a particular model.
 | Administrative command | Explicit, unambiguous namespace and repository/global scope; no active conversation required. |
 | Unknown or ambiguous identity | Deny visibly; never guess from query text or a model-supplied agent name. |
 
-An alternative to caller-metadata lookup is **configuration-bound ownership**:
-trusted local setup binds an agent-specific MCP server to a stable definition
-and repository scope, and the host restricts that agent to its own memory tools.
-The model never supplies the owner. This replaces runtime caller discovery with
-explicit enrollment; it does not remove origin, scope or stale-binding checks.
+The current implementation uses **profile-path ownership**: trusted local setup
+binds each enrolled agent definition path to a repository or global memory scope.
+The shared extension resolves the host-selected profile path to that binding;
+the model never supplies the owner. This avoids agent-scoped MCP lifecycle races
+without removing origin, scope or stale-binding checks.
 The [public-host evidence](COMPATIBILITY.md#production-identity-gate) covers the
 production registry, stable origin-aware identities, explicit scopes, revocation
-and restart. Trusted setup uses `bindingLaunch` to supply agent-specific MCP
-configuration and explicit tool allowlists. Automatic profile enrollment remains
-step 3, not part of the identity layer.
+and restart. Trusted setup adds the extension tool names to explicit profile
+allowlists. Automatic profile enrollment remains step 3, not part of the
+identity layer.
 
 The implementation must map execution identity to a stable definition ID and
 origin, including canonical definition location where available. Distinct

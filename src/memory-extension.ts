@@ -3,13 +3,15 @@ import { configRootPath } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
+import { SAVE_TOOL, SEARCH_TOOL, saveSchema, searchSchema, ToolError } from "./memory-protocol.js";
+import { z } from "zod";
 
 const configRoot = configRootPath();
 let session: Awaited<ReturnType<typeof joinSession>> | undefined;
 let pending = Promise.resolve();
 let queued = 0;
 let generation = 0;
-let directory: string | undefined;
+let directory = process.cwd();
 let captureFailure = false;
 let previousUser = "";
 let previousOwner = "";
@@ -45,7 +47,43 @@ session = await joinSession({
         return { resultType: "failure", textResultForLlm: '{"status":"unavailable","code":"CONTEXT_UNAVAILABLE"}' };
       }
     },
-  }],
+  }, ...[
+    {
+      name: SEARCH_TOOL,
+      description: "Search the selected Pinocchio agent's scoped historical memory. Recall is best-effort.",
+      parameters: z.toJSONSchema(searchSchema, { io: "input" }),
+    },
+    {
+      name: SAVE_TOOL,
+      description: "Save, correct, or check a sourced memory operation for the selected Pinocchio agent.",
+      parameters: z.toJSONSchema(saveSchema, { io: "input", unrepresentable: "any" }),
+    },
+  ].map((tool) => ({
+    ...tool,
+    defer: "never" as const,
+    async handler(args: unknown, invocation: {
+      sessionId: string; toolCallId: string; signal?: AbortSignal;
+    }) {
+      try {
+        if (!session || !directory) throw new ToolError("CONVERSATION_CONTEXT_UNAVAILABLE");
+        const owner = await conversationOwner(configRoot, await session.rpc.agent.getCurrent());
+        if (!owner) throw new ToolError("MEMORY_OWNER_UNAVAILABLE");
+        const result = await context.call(owner, {
+          sessionId: invocation.sessionId, directory, toolCallId: invocation.toolCallId,
+          tool: tool.name as typeof SEARCH_TOOL | typeof SAVE_TOOL,
+          arguments: args, ...(invocation.signal ? { signal: invocation.signal } : {}),
+        });
+        return { resultType: "success" as const, textResultForLlm: JSON.stringify(result) };
+      } catch (error) {
+        const code = error instanceof ToolError ? error.code : "MEMORY_UNAVAILABLE";
+        return {
+          resultType: "failure" as const,
+          textResultForLlm: JSON.stringify({ status: "unavailable", code }),
+          error: code,
+        };
+      }
+    },
+  }))],
 });
 for (const name of ["subagent.selected", "subagent.deselected"] as const) {
   session.on(name, () => { generation++; previousUser = ""; previousOwner = ""; });
