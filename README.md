@@ -9,12 +9,9 @@ work — so you stop re-explaining context every session. Built to be used in
 
 ## Why
 
-Copilot CLI already has its own [memory feature](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/copilot-memory) —
-one global, account-level store (plus optional repo-level facts), shared across
-every `copilot` session. Pinocchio is different: it gives **each named custom
-agent its own separate, isolated memory**, so a `builder` agent and a
-`reviewer` agent never see each other's history, even in the same repo. It
-supplements native Copilot memory rather than replacing or reconfiguring it.
+Copilot CLI agents forget everything when a session ends. Pinocchio fixes
+that: each named agent gets its own isolated memory it can search and update
+across sessions — no copy-pasting context, no "as I mentioned before."
 
 - **Per-agent memory** — a `builder` agent and a `reviewer` agent each get
   their own store; they never bleed into each other.
@@ -22,6 +19,10 @@ supplements native Copilot memory rather than replacing or reconfiguring it.
   to everywhere, or to one repository.
 - **Local by default** — memory lives in SQLite on your machine
   (`~/.copilot/agent-memories/`), not a hosted service.
+- **Adds to, not replaces** — layers on top of Copilot CLI's own built-in
+  [memory feature](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/copilot-memory),
+  which is one global/repo-level store shared across sessions rather than
+  scoped per agent.
 - **Automatic capture** — no need to say "remember this"; conversations are
   captured as you go.
 
