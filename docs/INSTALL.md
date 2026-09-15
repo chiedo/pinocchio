@@ -167,3 +167,13 @@ embeddings. See [optional semantic search](SEMANTIC.md),
 The [isolated developer preview](ISOLATED-PREVIEW.md) retains the pinned CLI,
 synthetic diagnostic gate, runtime snapshots, and rollback workflow. These are
 not prerequisites for trying Pinocchio in your existing CLI.
+
+## Optional cloud jobs
+
+Enrolled agents can publish explicitly approved, read-only scheduled jobs to a
+private GitHub Actions repository. Memory and conversation history remain
+local; the cloud receives the approved prompt and a sanitized snapshot of the
+selected `~/.copilot/agents/<agent-name>.agent.md`.
+
+See [Cloud-scheduled agent jobs](CLOUD-JOBS.md) for configuration, repository
+bootstrap, authentication, previews, results, drift checks and removal.

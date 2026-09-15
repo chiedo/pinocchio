@@ -48,6 +48,7 @@ alias and a GitHub-provided noreply address, not a private email or legal name.
 | Sensitive content | Exclude secrets and sensitive personal information. Do not claim detection or redaction is infallible. |
 | Model access | Explain that retrieved snippets enter the configured model's context. Local persistence is not offline inference. |
 | Telemetry | No Pinocchio memory-upload service or outbound telemetry by default. Host/provider behavior is separate. |
+| Optional cloud jobs | Publish only after an exact preview and explicit approval. Export the selected `~/.copilot/agents/<agent-name>.agent.md` without Pinocchio memory wiring, local skills or MCP configuration. Never upload memory/history automatically. Prompts, exported instructions, logs and results in the configured private repository are cloud data. |
 | Diagnostics | Prefer status codes, public version numbers and aggregate counters; no raw note or prompt content by default. |
 | Deletion | Remove the selected record's content revisions and stop its return through indexes or queued work. |
 

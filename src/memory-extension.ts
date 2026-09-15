@@ -4,6 +4,13 @@ import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
 import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, ToolError } from "./memory-protocol.js";
+import {
+  CLOUD_JOBS_TOOL,
+  CloudJobsError,
+  cloudJobToolInputSchema,
+  handleCloudJobTool,
+  startCloudJobDriftMonitor,
+} from "./cloud-jobs.js";
 import { z } from "zod";
 
 const configRoot = configRootPath();
@@ -15,6 +22,9 @@ let directory = process.cwd();
 let captureFailure = false;
 let previousUser = "";
 let previousOwner = "";
+let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
+  status: "unavailable"; code: string;
+} | undefined;
 const context = createMemoryHooks(configRoot, async (input) => {
   directory = input.workingDirectory;
   await pending;
@@ -24,7 +34,15 @@ const context = createMemoryHooks(configRoot, async (input) => {
   const recalled = await context.recall(owner, {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
   });
-  return `${captureFailure ? "Pinocchio automatic capture failed for an earlier message. Tell the user; do not claim it was saved.\n" : ""}${recalled}`;
+  const cloudNotice = cloudStatus?.status === "checked" && cloudStatus.drifted
+    ? `Pinocchio cloud jobs: ${cloudStatus.drifted} published agent snapshot(s) differ from local profiles or need attention. Tell the user and use ${CLOUD_JOBS_TOOL} with action=drift before proposing a sync.\n`
+    : cloudStatus?.status === "unavailable"
+      ? `Pinocchio cloud job drift checking is unavailable (${cloudStatus.code}). Tell the user if cloud jobs are relevant to this request.\n`
+      : "";
+  return `${captureFailure ? "Pinocchio automatic capture failed for an earlier message. Tell the user; do not claim it was saved.\n" : ""}${cloudNotice}${recalled}`;
+});
+const stopCloudMonitor = startCloudJobDriftMonitor(configRoot, (result) => {
+  cloudStatus = result;
 });
 session = await joinSession({
   hooks: context.hooks,
@@ -83,7 +101,33 @@ session = await joinSession({
         };
       }
     },
-  }))],
+  })), {
+    name: CLOUD_JOBS_TOOL,
+    description:
+      "Manage approved GitHub Actions cloud jobs for the selected Pinocchio agent. Preview returns the exact upload and approval token. Never configure, bootstrap, publish, sync, pause, resume, or delete without the user's explicit approval.",
+    parameters: z.toJSONSchema(cloudJobToolInputSchema, { io: "input", unrepresentable: "any" }),
+    defer: "never",
+    async handler(args: unknown) {
+      try {
+        if (!session) throw new CloudJobsError("CONVERSATION_CONTEXT_UNAVAILABLE");
+        const owner = await conversationOwner(configRoot, await session.rpc.agent.getCurrent());
+        if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
+        const result = await handleCloudJobTool(owner.reference, args);
+        return { resultType: "success" as const, textResultForLlm: JSON.stringify(result) };
+      } catch (error) {
+        const code = error instanceof CloudJobsError || error instanceof ToolError
+          ? error.code
+          : error instanceof z.ZodError
+            ? "INVALID_ARGUMENTS"
+            : "CLOUD_JOBS_UNAVAILABLE";
+        return {
+          resultType: "failure" as const,
+          textResultForLlm: JSON.stringify({ status: "unavailable", code }),
+          error: code,
+        };
+      }
+    },
+  }],
 });
 for (const name of ["subagent.selected", "subagent.deselected"] as const) {
   session.on(name, () => { generation++; previousUser = ""; previousOwner = ""; });
@@ -130,6 +174,7 @@ session.on("session.compaction_complete", () => {
   });
 });
 process.once("SIGTERM", () => {
+  stopCloudMonitor();
   const deadline = setTimeout(() => {
     process.stderr.write("Pinocchio: CONTEXT_DETACH_DEADLINE\n");
     process.exit(1);

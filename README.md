@@ -27,6 +27,9 @@ their own history instead of sharing one pool.
   scoped per agent.
 - **Automatic capture** — no need to say "remember this"; conversations are
   captured as you go.
+- **Optional cloud jobs** — publish explicitly approved, read-only scheduled
+  jobs to a private GitHub Actions repository while memory and history stay
+  local.
 
 ## Requirements
 
@@ -110,6 +113,7 @@ restart but keeps stored notes and the agent's other instructions.
 ## Docs
 
 [Setup, updates & controls](docs/INSTALL.md) ·
+[Cloud-scheduled jobs](docs/CLOUD-JOBS.md) ·
 [Design](docs/DESIGN.md) ·
 [Privacy](PRIVACY.md) ·
 [Contributing](CONTRIBUTING.md) ·
