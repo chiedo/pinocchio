@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { parse } from "yaml";
 import { main } from "../src/install-cli.js";
 import { CLOUD_JOBS_TOOL } from "../src/cloud-jobs.js";
@@ -66,7 +67,7 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     }
     assert.equal(installedProfile["mcp-servers"], undefined);
     const extension = await readFile(join(config, "extensions/pinocchio-memory/extension.mjs"), "utf8");
-    assert.ok(extension.includes(join(app, "dist/src/memory-extension.js")));
+    assert.ok(extension.includes(pathToFileURL(join(app, "dist/src/memory-extension.js")).href));
     assert.ok(!text.includes(releaseRoot));
     text = text.replace("description: Named agent with scoped memory",
       "description: A later user edit\nmodel: synthetic-personal-model") + "\nPreserve these later instructions.\n";

@@ -112,7 +112,7 @@ test("setup upgrades legacy guidance without changing custom text, CRLF, setting
     await setup(options);
     assert.equal(await readFile(profile, "utf8"), refreshed);
 
-    const changed = refreshed.replace("<!-- pinocchio-memory:v1 -->", "<!-- pinocchio-memory:changed -->");
+    const changed = refreshed.replace("<!-- /pinocchio-memory:v1 -->", "<!-- /pinocchio-memory:changed -->");
     assert.notEqual(changed, refreshed);
     await writeFile(profile, changed);
     await assert.rejects(setup(options), { code: "MANAGED_BLOCK_CHANGED" });
