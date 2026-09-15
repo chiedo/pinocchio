@@ -58,8 +58,10 @@ CLI to redact that variable. GitHub's current documentation describes both
 eligible `GITHUB_TOKEN` setups and fine-grained personal access tokens with
 the **Copilot Requests** permission. Set `token_secret: GITHUB_TOKEN` only when
 the configured repository is eligible for GitHub's built-in token flow;
-otherwise Pinocchio verifies that the named repository secret exists before
-publishing.
+Pinocchio then grants only `contents: read` and `copilot-requests: write`, and
+passes the short-lived token as `GITHUB_TOKEN`. Otherwise Pinocchio verifies
+that the named repository secret exists before publishing and passes it as
+`COPILOT_GITHUB_TOKEN`.
 
 After installing or updating Pinocchio, repeat the normal setup command for
 each enrolled agent and restart Copilot CLI. Refreshing setup adds the cloud
