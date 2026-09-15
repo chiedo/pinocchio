@@ -124,6 +124,7 @@ test("local configuration and preview keep agent history local", async () => {
     const configured = await configureCloudJobs({
       repository: "example/pinocchio-jobs",
       cloudHome,
+      tokenSecret: "GITHUB_TOKEN",
     });
     assert.equal(configured.credentialsStored, false);
     assert.equal((await lstat(configured.path)).mode & 0o077, 0);
@@ -146,9 +147,14 @@ test("local configuration and preview keep agent history local", async () => {
     const preview = await prepareCloudJob(reference, parsed, cloudHome);
     assert.equal(preview.status, "approval-required");
     assert.equal(preview.sourceProfile, profile);
-    assert.match(preview.exactUpload.workflow, /permissions:\n  contents: read/);
+    assert.match(
+      preview.exactUpload.workflow,
+      /permissions:\n  contents: read\n  copilot-requests: write/,
+    );
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
     assert.match(preview.exactUpload.workflow, /copilot -C "\.pinocchio\/jobs\/daily-release-notes"/);
+    assert.match(preview.exactUpload.workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+    assert.doesNotMatch(preview.exactUpload.workflow, /COPILOT_GITHUB_TOKEN: \$\{\{/);
     assert.match(preview.exactUpload.workflow, /--secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN/);
     assert.match(preview.exactUpload.workflow, /set -o pipefail/);
     assert.match(preview.exactUpload.workflow, /2>&1 \| tee result\.md/);

@@ -589,9 +589,13 @@ function workflowFor(
   const creditLimit = manifest.max_ai_credits === null
     ? ""
     : `            --max-ai-credits ${manifest.max_ai_credits} \\\n`;
-  const tokenExpression = tokenSecret === "GITHUB_TOKEN"
-    ? "${{ github.token }}"
-    : `\${{ secrets.${tokenSecret} }}`;
+  const builtInToken = tokenSecret === "GITHUB_TOKEN";
+  const copilotPermission = builtInToken
+    ? "  copilot-requests: write"
+    : "";
+  const tokenEnvironment = builtInToken
+    ? "          GITHUB_TOKEN: ${{ github.token }}"
+    : `          COPILOT_GITHUB_TOKEN: \${{ secrets.${tokenSecret} }}`;
   return `name: Pinocchio - ${manifest.id}
 
 on:
@@ -599,6 +603,7 @@ on:
 ${schedule}
 permissions:
   contents: read
+${copilotPermission}
 
 concurrency:
   group: pinocchio-${manifest.id}
@@ -629,7 +634,7 @@ jobs:
 
       - name: Run approved job
         env:
-          COPILOT_GITHUB_TOKEN: ${tokenExpression}
+${tokenEnvironment}
         run: |
           set -o pipefail
           copilot -C ".pinocchio/jobs/${manifest.id}" \\
