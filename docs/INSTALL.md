@@ -141,9 +141,60 @@ all-Pinocchio-agent change. Tell me if either file cannot be read.
 ```
 
 New delegated instances receive their refreshed named profile; existing helpers
-need the same message or must be relaunched. There is no broadcast to other live
-sessions. After later shared-file edits, ask existing sessions to reread it;
-fresh sessions are already instructed to read its current contents.
+need the same message or must be relaunched. For foreground sessions with the
+broadcast listener installed, use the command below instead of messaging each one.
+Fresh sessions are already instructed to read the shared file's current contents.
+
+### Broadcast an instruction upgrade
+
+From the checkout that supplies your installed extension:
+
+```bash
+npm run build
+npm run broadcast -- upgrade
+npm run broadcast -- status
+# Add --config-root /path/to/copilot/config to target another configuration.
+```
+
+`upgrade` refreshes all enrolled user profiles using their existing bindings and
+scopes, then publishes a local update notice. It preserves authored instructions,
+settings, and memory; it does not pull code, install dependencies, grant permissions,
+or publish/sync cloud jobs. Repository/plugin profiles that require explicit
+shared-enrollment approval are reported as failures rather than changed implicitly.
+Run their documented enrollment refresh separately.
+
+Each listening foreground conversation checks every five seconds and queues an
+instruction-only turn, without interrupting ongoing work. The extension supplies
+only that selected agent's updated body and shared instructions at the turn boundary.
+It does not copy these notifications into conversation memory. The profile text is
+sent to the session's configured model just like normal instructions; it is not
+stored in the broadcast registry.
+
+`status` reports each live listener as `pending`, `updated`, `restart-required`, or
+`failed`. `updated` means the matching instruction snapshot was supplied and the
+queued turn completed, with the target runtime and tools checked. It is not proof
+of model compliance or replacement of the host's original system prompt. The
+refresh supplements existing instructions; conflicting higher-priority instructions
+still win. Restart for a clean replacement of the agent's system instructions.
+
+Runtime changes, changed YAML settings, or unavailable tools report
+`restart-required`. The command deliberately does not call the host's extension
+reload API: it would replace the listener mid-delivery and is not yet certified as
+a safe cross-process upgrade. In particular, adding the cloud-job tool to an old
+session still needs a restart. Inspect the per-agent errors for partial failures;
+`status` exits nonzero for failures or required restarts, not merely pending work.
+Rerun `upgrade` after resolving failures. A newer broadcast supersedes the prior target.
+
+**First installation needs a one-time restart of existing sessions.** Older
+processes have no listener and cannot be discovered or upgraded by this command.
+Coverage is limited to listening foreground sessions sharing this configuration
+root, not other machines, existing delegated helpers, or GitHub Actions jobs.
+Empty results do not mean every open conversation was upgraded. Heartbeats older
+than 30 seconds are excluded, so suspended sessions reappear when they resume.
+Private registry files under `pinocchio/broadcast` contain only identifiers,
+version hashes, tool names, timestamps, and status. A leftover `upgrade.lock`
+after a crashed publisher reports `BROADCAST_BUSY`; remove that exact file only
+after confirming no broadcast command is running.
 
 To remove memory from this agent:
 

@@ -276,6 +276,23 @@ export async function bindingForDefinition(configRoot: string, definitionPath: s
   if (matches.length > 1) throw new BindingError("INVALID_BINDING");
   return matches[0];
 }
+export async function listBindingReferences(configRoot: string): Promise<BindingReference[]> {
+  await checkRegistry(configRoot);
+  const references: BindingReference[] = [];
+  for (const name of (await readdir(registryPath(configRoot))).sort()) {
+    if (!/^[0-9a-f-]{36}\.json$/.test(name)) continue;
+    const file = await open(join(registryPath(configRoot), name), constants.O_RDONLY | constants.O_NOFOLLOW);
+    let text: string;
+    try { text = await file.readFile("utf8"); } finally { await file.close(); }
+    const reference = { configRoot, bindingId: name.slice(0, -5), fingerprint: fingerprint(text) };
+    try {
+      await readRecord(reference);
+      await assertNotRevoked(reference);
+      references.push(reference);
+    } catch (error) { if (!hasCode(error, "REVOKED_BINDING")) throw error; }
+  }
+  return references;
+}
 export async function revokeBinding(reference: BindingReference): Promise<void> {
   // Revocation must remain possible after the definition or repository is gone.
   await readRecord(reference);
