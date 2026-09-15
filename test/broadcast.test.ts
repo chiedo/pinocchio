@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { parseDocument } from "yaml";
 import { setup } from "../src/setup-cli.js";
 import { bindingForDefinition, revokeBinding } from "../src/binding-registry.js";
 import {
@@ -138,7 +139,13 @@ test("broadcast excludes removed agents and reports partial refresh failures", a
 test("broadcast restores missing managed tools even when the instruction block is current", async () => {
   const f = await fixture();
   try {
-    await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("  - pinocchio_cloud_jobs\n", ""));
+    const original = await readFile(f.profile, "utf8");
+    const match = /^---\n([\s\S]*?)\n---\n/.exec(original);
+    assert.ok(match);
+    const doc = parseDocument(match[1]!);
+    doc.set("tools", (await broadcastSnapshot(f.reference)).target.tools.filter((tool) => tool !== "pinocchio_cloud_jobs"));
+    await writeFile(f.profile, `---\n${String(doc)}---\n${original.slice(match[0].length)}`);
+    assert.equal((await broadcastSnapshot(f.reference)).target.tools.includes("pinocchio_cloud_jobs"), false);
     const result = await upgradeBroadcast(f.root);
     assert.equal(result.agents[0]?.status, "refreshed");
     assert.ok((await broadcastSnapshot(f.reference)).target.tools.includes("pinocchio_cloud_jobs"));
