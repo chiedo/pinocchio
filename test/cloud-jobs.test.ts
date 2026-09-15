@@ -268,8 +268,12 @@ prompt_hash: ${"c".repeat(64)}
       first.runs.map(({ run }) => [run.databaseId, run.conclusion]),
       [[11, "success"], [10, "failure"]],
     );
+    assert.equal(first.runs[0]?.content, "Synthetic cloud result.\n");
+    assert.equal("content" in (first.runs[1] ?? {}), false);
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: failure/);
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: success/);
+    assert.match(formatCloudJobResultNotices(first), /Synthetic cloud result/);
+    assert.match(formatCloudJobResultNotices(first), /Do not ask whether to retrieve/);
     assert.match(formatCloudJobResultNotices(first), /Do not save notices or cloud results/);
     const second = await checkCloudJobResultNotices(reference, cloudHome);
     assert.equal(second.status, "ready");
@@ -284,6 +288,18 @@ prompt_hash: ${"c".repeat(64)}
       [11, 10],
     );
     await markCloudJobResultNotices(retried, cloudHome);
+    const deliveredState = JSON.parse(
+      await readFile(join(cloudHome, "result-state.json"), "utf8"),
+    ) as {
+      jobs: Record<string, {
+        notifiedThrough: number;
+        readThrough: number;
+      }>;
+    };
+    assert.deepEqual(deliveredState.jobs["daily-release-notes"], {
+      notifiedThrough: 11,
+      readThrough: 11,
+    });
     const marked = await checkCloudJobResultNotices(reference, cloudHome);
     assert.equal(marked.status, "ready");
     if (marked.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
