@@ -104,6 +104,10 @@ if (args[0] === "repo" && args[1] === "view") {
     displayTitle: "Pinocchio - changelog",
     workflowName: "Pinocchio - changelog",
   }]));
+} else if (args[0] === "run" && args[1] === "download") {
+  const directory = args[args.indexOf("--dir") + 1];
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "result.md"), "Automatic changelog summary.\\n");
 } else {
   process.exit(1);
 }
@@ -167,10 +171,19 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.equal(user.data.content, "Pinocchio found new cloud job results");
     assert.equal(user.data.delivery, "idle");
     assert.match(user.data.transformedContent ?? "", /changelog: success/);
+    assert.match(
+      user.data.transformedContent ?? "",
+      /Automatic changelog summary/,
+    );
+    assert.match(
+      user.data.transformedContent ?? "",
+      /Do not ask whether to retrieve the result/,
+    );
     assert.ok(events.some((event) => event.type === "assistant.message"));
     let state: {
       jobs: Record<string, {
         notifiedThrough: number;
+        readThrough: number;
         claim?: unknown;
       }>;
     } | undefined;
@@ -178,13 +191,20 @@ if (args[0] === "repo" && args[1] === "view") {
       try {
         state = JSON.parse(
           await readFile(join(cloudHome, "result-state.json"), "utf8"),
-        ) as { jobs: Record<string, { notifiedThrough: number }> };
+        ) as {
+          jobs: Record<string, {
+            notifiedThrough: number;
+            readThrough: number;
+            claim?: unknown;
+          }>;
+        };
       } catch {
         await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
       }
     }
     assert.ok(state);
     assert.equal(state.jobs.changelog?.notifiedThrough, 31);
+    assert.equal(state.jobs.changelog?.readThrough, 31);
     assert.equal(state.jobs.changelog?.claim, undefined);
     const search = await session.rpc.tools.execute({
       name: EXTENSION_SEARCH_TOOL,

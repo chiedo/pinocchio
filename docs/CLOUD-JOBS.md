@@ -141,14 +141,17 @@ exact preview remains the security boundary.
 When an enrolled agent session is open, Pinocchio checks for newly completed
 runs belonging to that agent after startup and every five minutes. Successful
 and failed runs trigger a non-billable agent notification with their completion
-time, status and Actions URL. If the session closes before delivery, the result
-remains unread and is announced in the next matching session. Pinocchio cannot
-notify through a closed CLI session. Checks fail open when GitHub is
-unavailable, and notification/result text is never imported into memory
-automatically. A short-lived cross-process claim prevents extension reloads
-from announcing the same runs more than once; failed deliveries release the
-claim immediately and interrupted deliveries become retryable after five
-minutes.
+time, status, Actions URL, and the actual artifact content for the newest run
+per job. Automatic content is capped at 32 KiB and treated as untrusted data,
+not instructions. Successfully reported full content is marked read; metadata
+and truncated or unavailable content remain distinguishable in local state. If
+the session closes before delivery, the result remains unread and is announced
+in the next matching session. Pinocchio cannot notify through a closed CLI
+session. Checks fail open when GitHub is unavailable, and notification/result
+text is never imported into memory automatically. A short-lived cross-process
+claim prevents extension reloads from announcing the same runs more than once;
+failed deliveries release the claim immediately and interrupted deliveries
+become retryable after five minutes.
 
 ```bash
 npm run jobs -- list
