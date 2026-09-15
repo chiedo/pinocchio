@@ -27,9 +27,10 @@ their own history instead of sharing one pool.
   scoped per agent.
 - **Automatic capture** — no need to say "remember this"; conversations are
   captured as you go.
-- **Optional cloud jobs** — publish explicitly approved, read-only scheduled
-  jobs to a private GitHub Actions repository while memory and history stay
-  local.
+- **Optional cloud jobs** — publish explicitly approved scheduled jobs with
+  full tool access, Playwright browsers, and screenshot artifacts to a private
+  GitHub Actions repository while local memory and history stay local.
+  Restricted read-only jobs remain available.
 
 ## Requirements
 
