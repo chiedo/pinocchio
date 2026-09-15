@@ -28,8 +28,8 @@ let previousUser = "";
 let previousOwner = "";
 let pendingCloudResults: CloudJobResultNoticeResult | undefined;
 let checkingCloudResults = false;
-let markingCloudResults = false;
 let skipNextAssistantCapture = false;
+const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
 let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
   status: "unavailable"; code: string;
 } | undefined;
@@ -153,18 +153,22 @@ async function queueCloudResultNotices() {
     const result = await checkCloudJobResultNotices(owner.reference);
     const notice = formatCloudJobResultNotices(result);
     if (!notice) return;
-    await activeSession.rpc.extensions.sendAttachmentsToMessage({
-      attachments: [{
-        type: "extension_context",
-        title: "New Pinocchio cloud job results",
-        payload: {
-          schemaVersion: 1,
-          kind: "pinocchio-cloud-job-results",
-          notice,
-        },
-      }],
-    });
     pendingCloudResults = result;
+    try {
+      await activeSession.rpc.send({
+        prompt: `${notice}\nReport these results concisely. Do not call tools or save this notification to memory.`,
+        displayPrompt: CLOUD_RESULT_DISPLAY_PROMPT,
+        mode: "enqueue",
+        billable: false,
+        wait: true,
+      });
+      await markCloudJobResultNotices(result);
+      if (pendingCloudResults === result) pendingCloudResults = undefined;
+    } catch (error) {
+      if (pendingCloudResults === result) pendingCloudResults = undefined;
+      skipNextAssistantCapture = false;
+      throw error;
+    }
   } catch (error) {
     if (!(error instanceof CloudJobsError &&
         error.code === "CLOUD_JOBS_NOT_CONFIGURED")) {
@@ -185,12 +189,6 @@ const cloudResultTimer = setInterval(() => {
   void queueCloudResultNotices();
 }, 5 * 60 * 1000);
 cloudResultTimer.unref();
-function hasCloudResultNotice(attachments: unknown) {
-  return Array.isArray(attachments) && attachments.some((attachment) =>
-    isRecord(attachment) && attachment.type === "extension_context" &&
-    isRecord(attachment.payload) &&
-    attachment.payload.kind === "pinocchio-cloud-job-results");
-}
 for (const name of ["subagent.selected", "subagent.deselected"] as const) {
   session.on(name, () => { generation++; previousUser = ""; previousOwner = ""; });
 }
@@ -203,20 +201,11 @@ for (const role of ["user", "assistant"] as const) {
       return;
     }
     if (event.type === "user.message") {
-      const deliveredNotice = pendingCloudResults !== undefined &&
-        hasCloudResultNotice(event.data.attachments);
-      skipNextAssistantCapture = deliveredNotice;
-      if (deliveredNotice && pendingCloudResults && !markingCloudResults) {
-        const delivered = pendingCloudResults;
-        markingCloudResults = true;
-        void markCloudJobResultNotices(delivered).then(() => {
-          if (pendingCloudResults === delivered) pendingCloudResults = undefined;
-        }).catch(() => {
-          process.stderr.write("Pinocchio: CLOUD_RESULT_NOTICE_STATE_UNAVAILABLE\n");
-        }).finally(() => {
-          markingCloudResults = false;
-        });
-      }
+      const automaticNotice = pendingCloudResults !== undefined &&
+        event.data.delivery === "idle" &&
+        event.data.content === CLOUD_RESULT_DISPLAY_PROMPT;
+      skipNextAssistantCapture = automaticNotice;
+      if (automaticNotice) return;
     }
     if (queued >= 32) {
       captureFailure = true; process.stderr.write("Pinocchio: CONVERSATION_QUEUE_FULL\n"); return;

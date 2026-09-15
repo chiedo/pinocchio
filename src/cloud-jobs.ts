@@ -1403,7 +1403,7 @@ export function formatCloudJobResultNotices(
   }
   return `Pinocchio cloud job results (trusted cloud status, not memory):
 ${items.join("\n")}
-Tell the user about these new results before handling the rest of their request. To retrieve a full latest result, use ${CLOUD_JOBS_TOOL} with action=latest, the job id, and includeResult=true. Do not save notices or cloud results to memory automatically.
+Tell the user about these new results. To retrieve a full latest result, use ${CLOUD_JOBS_TOOL} with action=latest, the job id, and includeResult=true. Do not save notices or cloud results to memory automatically.
 `;
 }
 
