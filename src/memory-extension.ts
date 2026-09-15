@@ -57,7 +57,9 @@ async function ownerForSession(sessionId: string) {
 }
 async function ownerForTool(toolCallId: string) {
   await new Promise<void>((resolve) => setImmediate(resolve));
-  return toolOwners.get(toolCallId);
+  if (toolOwners.has(toolCallId)) return toolOwners.get(toolCallId);
+  if (subagentOwners.size) return;
+  return selectedOwner();
 }
 const context = createMemoryHooks(configRoot, async (input) => {
   directory = input.workingDirectory;

@@ -112,7 +112,8 @@ test("setup upgrades legacy guidance without changing custom text, CRLF, setting
     await setup(options);
     assert.equal(await readFile(profile, "utf8"), refreshed);
 
-    const changed = refreshed.replace("Preserve the generated Pinocchio MCP server", "Overwrite the generated Pinocchio MCP server");
+    const changed = refreshed.replace("<!-- pinocchio-memory:v1 -->", "<!-- pinocchio-memory:changed -->");
+    assert.notEqual(changed, refreshed);
     await writeFile(profile, changed);
     await assert.rejects(setup(options), { code: "MANAGED_BLOCK_CHANGED" });
     assert.equal(await readFile(profile, "utf8"), changed);

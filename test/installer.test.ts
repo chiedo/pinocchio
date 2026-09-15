@@ -7,8 +7,13 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { parse } from "yaml";
 import { main } from "../src/install-cli.js";
+import { CLOUD_JOBS_TOOL } from "../src/cloud-jobs.js";
 import { packageRelease, releaseRoot, verifyRelease } from "../src/release.js";
 import { MemoryStore } from "../src/memory-store.js";
+import {
+  EXTENSION_SAVE_TOOL,
+  EXTENSION_SEARCH_TOOL,
+} from "../src/memory-protocol.js";
 import { loadBinding } from "../src/binding-registry.js";
 import type { BindingReference } from "../src/binding-registry.js";
 
@@ -53,10 +58,15 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     const profile = join(config, "agents/synthetic-agent.agent.md");
     let text = await readFile(profile, "utf8");
     const installedProfile = parse(text.split("---")[1] ?? "") as {
+      tools?: unknown[];
       "mcp-servers"?: Record<string, { args?: string[] }>;
     };
-    assert.ok(Object.values(installedProfile["mcp-servers"] ?? {})
-      .some((server) => server.args?.includes(join(app, "dist/src/memory-mcp.js"))));
+    for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL]) {
+      assert.ok(installedProfile.tools?.includes(tool));
+    }
+    assert.equal(installedProfile["mcp-servers"], undefined);
+    const extension = await readFile(join(config, "extensions/pinocchio-memory/extension.mjs"), "utf8");
+    assert.ok(extension.includes(join(app, "dist/src/memory-extension.js")));
     assert.ok(!text.includes(releaseRoot));
     text = text.replace("description: Named agent with scoped memory",
       "description: A later user edit\nmodel: synthetic-personal-model") + "\nPreserve these later instructions.\n";

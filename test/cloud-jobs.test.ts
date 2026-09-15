@@ -278,7 +278,7 @@ prompt_hash: ${"c".repeat(64)}
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: success/);
     assert.match(formatCloudJobResultNotices(first), /Synthetic cloud result/);
     assert.match(formatCloudJobResultNotices(first), /Do not ask whether to retrieve/);
-    assert.match(formatCloudJobResultNotices(first), /Do not save notices or cloud results/);
+    assert.match(formatCloudJobResultNotices(first), /do not save notices or cloud results to memory automatically/i);
     const second = await checkCloudJobResultNotices(reference, cloudHome);
     assert.equal(second.status, "ready");
     if (second.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");

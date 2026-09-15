@@ -9,6 +9,10 @@ export interface SyntheticProviderOptions {
     messages: Record<string, unknown>[],
     tools: unknown[],
   ) => string;
+  observeRequest?: (
+    messages: Record<string, unknown>[],
+    tools: unknown[],
+  ) => void;
   allowUnofferedTool?: boolean;
   toolArguments?: (messages: Record<string, unknown>[]) => Record<string, unknown>;
 }
@@ -55,6 +59,7 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
       }
       const messages = input.messages.filter(isRecord);
       const tools = Array.isArray(input.tools) ? input.tools : [];
+      options.observeRequest?.(messages, tools);
       const lastUser = messages.findLastIndex((item) => item.role === "user");
       const replied = options.textOnly || (options.replyWithoutTools && tools.length === 0) || messages
         .slice(lastUser + 1)
