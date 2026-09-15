@@ -7,10 +7,14 @@ import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, S
 import {
   CLOUD_JOBS_TOOL,
   CloudJobsError,
+  checkCloudJobResultNotices,
   extensionCloudJobInputSchema,
+  formatCloudJobResultNotices,
   handleCloudJobTool,
+  markCloudJobResultNotices,
   startCloudJobDriftMonitor,
 } from "./cloud-jobs.js";
+import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
 import { z } from "zod";
 
 const configRoot = configRootPath();
@@ -22,6 +26,10 @@ let directory = process.cwd();
 let captureFailure = false;
 let previousUser = "";
 let previousOwner = "";
+let pendingCloudResults: CloudJobResultNoticeResult | undefined;
+let checkingCloudResults = false;
+let markingCloudResults = false;
+let skipNextAssistantCapture = false;
 let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
   status: "unavailable"; code: string;
 } | undefined;
@@ -113,6 +121,11 @@ session = await joinSession({
         const owner = await conversationOwner(configRoot, await session.rpc.agent.getCurrent());
         if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
         const result = await handleCloudJobTool(owner.reference, args);
+        if (isRecord(args) && args.action === "latest" &&
+            args.includeResult === true && "result" in result &&
+            typeof result.result === "string") {
+          skipNextAssistantCapture = true;
+        }
         return { resultType: "success" as const, textResultForLlm: JSON.stringify(result) };
       } catch (error) {
         const code = error instanceof CloudJobsError || error instanceof ToolError
@@ -129,6 +142,55 @@ session = await joinSession({
     },
   }],
 });
+async function queueCloudResultNotices() {
+  if (!session || checkingCloudResults || pendingCloudResults) return;
+  checkingCloudResults = true;
+  try {
+    const activeSession = session;
+    const current = await activeSession.rpc.agent.getCurrent();
+    const owner = await conversationOwner(configRoot, current);
+    if (!owner) return;
+    const result = await checkCloudJobResultNotices(owner.reference);
+    const notice = formatCloudJobResultNotices(result);
+    if (!notice) return;
+    await activeSession.rpc.extensions.sendAttachmentsToMessage({
+      attachments: [{
+        type: "extension_context",
+        title: "New Pinocchio cloud job results",
+        payload: {
+          schemaVersion: 1,
+          kind: "pinocchio-cloud-job-results",
+          notice,
+        },
+      }],
+    });
+    pendingCloudResults = result;
+  } catch (error) {
+    if (!(error instanceof CloudJobsError &&
+        error.code === "CLOUD_JOBS_NOT_CONFIGURED")) {
+      process.stderr.write("Pinocchio: CLOUD_RESULT_NOTICE_UNAVAILABLE\n");
+    }
+  } finally {
+    checkingCloudResults = false;
+  }
+}
+const cloudResultStartupTimers = [1_000, 5_000].map((delay) => {
+  const timer = setTimeout(() => {
+    void queueCloudResultNotices();
+  }, delay);
+  timer.unref();
+  return timer;
+});
+const cloudResultTimer = setInterval(() => {
+  void queueCloudResultNotices();
+}, 5 * 60 * 1000);
+cloudResultTimer.unref();
+function hasCloudResultNotice(attachments: unknown) {
+  return Array.isArray(attachments) && attachments.some((attachment) =>
+    isRecord(attachment) && attachment.type === "extension_context" &&
+    isRecord(attachment.payload) &&
+    attachment.payload.kind === "pinocchio-cloud-job-results");
+}
 for (const name of ["subagent.selected", "subagent.deselected"] as const) {
   session.on(name, () => { generation++; previousUser = ""; previousOwner = ""; });
 }
@@ -136,6 +198,26 @@ for (const role of ["user", "assistant"] as const) {
   session.on(role === "user" ? "user.message" : "assistant.message", (event) => {
     if (event.agentId || !event.data.content.trim()) return;
     if (event.type === "user.message" && (event.data.source || event.data.isAutopilotContinuation)) return;
+    if (role === "assistant" && skipNextAssistantCapture) {
+      skipNextAssistantCapture = false;
+      return;
+    }
+    if (event.type === "user.message") {
+      const deliveredNotice = pendingCloudResults !== undefined &&
+        hasCloudResultNotice(event.data.attachments);
+      skipNextAssistantCapture = deliveredNotice;
+      if (deliveredNotice && pendingCloudResults && !markingCloudResults) {
+        const delivered = pendingCloudResults;
+        markingCloudResults = true;
+        void markCloudJobResultNotices(delivered).then(() => {
+          if (pendingCloudResults === delivered) pendingCloudResults = undefined;
+        }).catch(() => {
+          process.stderr.write("Pinocchio: CLOUD_RESULT_NOTICE_STATE_UNAVAILABLE\n");
+        }).finally(() => {
+          markingCloudResults = false;
+        });
+      }
+    }
     if (queued >= 32) {
       captureFailure = true; process.stderr.write("Pinocchio: CONVERSATION_QUEUE_FULL\n"); return;
     }
@@ -175,6 +257,8 @@ session.on("session.compaction_complete", () => {
 });
 process.once("SIGTERM", () => {
   stopCloudMonitor();
+  for (const timer of cloudResultStartupTimers) clearTimeout(timer);
+  clearInterval(cloudResultTimer);
   const deadline = setTimeout(() => {
     process.stderr.write("Pinocchio: CONTEXT_DETACH_DEADLINE\n");
     process.exit(1);
