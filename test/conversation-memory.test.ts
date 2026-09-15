@@ -10,8 +10,11 @@ import type { BindingReference } from "../src/binding-registry.js";
 import { captureConversation, conversationOwner, recallConversation, redactConversation, setConversationEnabled } from "../src/conversation-memory.js";
 import { MemoryStore } from "../src/memory-store.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
-import { memoryLaunch } from "../src/memory-mcp.js";
-import { SEARCH_TOOL } from "../src/memory-protocol.js";
+import {
+  EXTENSION_MEMORY_SERVER,
+  EXTENSION_SAVE_TOOL,
+  EXTENSION_SEARCH_TOOL,
+} from "../src/memory-protocol.js";
 
 test("capture persists without model saves; next-session recall is automatic and scoped", async () => {
   const root = await mkdtemp(join(tmpdir(), "pinocchio-conversation-"));
@@ -20,10 +23,9 @@ test("capture persists without model saves; next-session recall is automatic and
     await setup({ configRoot: root, name: "synthetic-conversation", global: true });
     const reference = JSON.parse(await readFile(join(root, "pinocchio/setup/synthetic-conversation.json"), "utf8")) as BindingReference;
     const binding = await loadBinding(reference);
-    const launch = memoryLaunch(reference);
-    const owner = { reference, server: launch.serverName };
+    const owner = { reference, server: EXTENSION_MEMORY_SERVER };
     const current = { agent: { path: binding.definition.path,
-      tools: [`${launch.serverName}-${SEARCH_TOOL}`], mcpServers: { [launch.serverName]: launch.config } } };
+      tools: [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL] } };
     assert.deepEqual(await conversationOwner(root, current), owner);
     assert.equal(await conversationOwner(root, { agent: { ...current.agent, path: "/not/the/agent.agent.md" } }), undefined);
     assert.equal(await conversationOwner(root, {}), undefined);

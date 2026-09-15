@@ -21,7 +21,7 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
     assert.ok(original.includes("pinocchio_cloud_jobs"));
     assert.ok(original.includes(`Scheduled cloud jobs use this exact local profile as their source: ${JSON.stringify(profile)}`));
     assert.match(original, /Memory scope: global, available across repositories/);
-    assert.match(original, /YAML frontmatter configures model preference, tools, skills, and MCP servers/);
+    assert.match(original, /YAML frontmatter configures model preference, tools, and skills/);
     assert.match(original, /authored Markdown defines your role/);
     assert.ok(original.includes(JSON.stringify(join(root, "extensions", "pinocchio-memory", "extension.mjs"))));
     assert.ok(original.includes(JSON.stringify(join(root, "agent-memories"))));
@@ -112,7 +112,8 @@ test("setup upgrades legacy guidance without changing custom text, CRLF, setting
     await setup(options);
     assert.equal(await readFile(profile, "utf8"), refreshed);
 
-    const changed = refreshed.replace("Preserve the generated Pinocchio MCP server", "Overwrite the generated Pinocchio MCP server");
+    const changed = refreshed.replace("<!-- /pinocchio-memory:v1 -->", "<!-- /pinocchio-memory:changed -->");
+    assert.notEqual(changed, refreshed);
     await writeFile(profile, changed);
     await assert.rejects(setup(options), { code: "MANAGED_BLOCK_CHANGED" });
     assert.equal(await readFile(profile, "utf8"), changed);

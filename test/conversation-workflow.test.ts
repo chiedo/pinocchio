@@ -18,9 +18,8 @@ test("native automatic capture survives cold sessions without model memory calls
     const modelContexts: string[] = [];
     const provider = await startSyntheticProvider({
       textOnly: true,
-      selectTool(messages) {
+      observeRequest(messages) {
         modelContexts.push(JSON.stringify(messages));
-        return "unused";
       },
     });
     async function turn(agent: string, prompt: string) {

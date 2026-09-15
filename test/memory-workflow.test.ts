@@ -10,10 +10,17 @@ import { registerBinding } from "../src/binding-registry.js";
 import { enroll } from "../src/enrollment.js";
 import { setConversationEnabled } from "../src/conversation-memory.js";
 import { memoryLaunch } from "../src/memory-mcp.js";
-import { SEARCH_TOOL, SAVE_TOOL } from "../src/memory-protocol.js";
+import {
+  EXTENSION_SAVE_TOOL,
+  EXTENSION_SEARCH_TOOL,
+  SEARCH_TOOL,
+} from "../src/memory-protocol.js";
 import { isRecord } from "../src/identity.js";
 import { createProductionFixture } from "./support/production-fixture.js";
-import { startSyntheticProvider } from "./support/provider.js";
+import {
+  offeredToolName,
+  startSyntheticProvider,
+} from "./support/provider.js";
 import { acceptance } from "../src/evaluation.js";
 
 test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async (t) => {
@@ -31,11 +38,13 @@ test("enrolled native profiles recall independently through the production conte
   };
   const provider = await startSyntheticProvider({
     replyWithoutTools: true,
-    selectTool(messages) {
-      const { name, save } = selectName(messages);
-      const launch = launches.get(name);
-      if (!launch) throw new Error("SYNTHETIC_TARGET_MISSING");
-      return `${launch.serverName}-${save ? SAVE_TOOL : SEARCH_TOOL}`;
+    selectTool(messages, tools) {
+      return offeredToolName(
+        tools,
+        selectName(messages).save
+          ? EXTENSION_SAVE_TOOL
+          : EXTENSION_SEARCH_TOOL,
+      );
     },
     toolArguments(messages) {
       const { name, save } = selectName(messages);
@@ -116,7 +125,7 @@ test("enrolled native profiles recall independently through the production conte
       requestExtensions: true, enableExperimentalMode: true, enableManagedSettings: false,
       extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
       model: "synthetic-model", provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
-      availableTools: new ToolSet().addMcp("*").addBuiltIn(["view", "task"]),
+      availableTools: new ToolSet().addCustom("*").addBuiltIn(["view", "task"]),
       agent: "memory-foreground", onPermissionRequest: approveAll, infiniteSessions: { enabled: true },
       hooks: { onSessionStart(input) { lifecycle.push(input.source); } },
     };

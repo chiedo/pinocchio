@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { parse } from "yaml";
 import { registerBinding } from "../src/binding-registry.js";
 import {
   checkCloudJobResultNotices,
@@ -84,7 +85,10 @@ test("cloud export preserves authored instructions without local memory wiring",
   const source = enrolledProfile();
   const result = exportCloudAgentProfile(source, ["view", "rg", "glob"]);
   assert.match(result.profile, /Research public release notes/);
-  assert.match(result.profile, /tools:\s*\n\s*- view\s*\n\s*- rg\s*\n\s*- glob/);
+  const frontmatter = parse(result.profile.split("---")[1] ?? "") as {
+    tools?: unknown;
+  };
+  assert.deepEqual(frontmatter.tools, ["view", "rg", "glob"]);
   assert.doesNotMatch(result.profile, /pinocchio_memory|pinocchio_cloud_jobs/);
   assert.doesNotMatch(result.profile, /Persistent memory|Your Pinocchio agent/);
   assert.doesNotMatch(result.profile, /skills:|mcp-servers:|bash/);
@@ -274,7 +278,7 @@ prompt_hash: ${"c".repeat(64)}
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: success/);
     assert.match(formatCloudJobResultNotices(first), /Synthetic cloud result/);
     assert.match(formatCloudJobResultNotices(first), /Do not ask whether to retrieve/);
-    assert.match(formatCloudJobResultNotices(first), /Do not save notices or cloud results/);
+    assert.match(formatCloudJobResultNotices(first), /do not save notices or cloud results to memory automatically/i);
     const second = await checkCloudJobResultNotices(reference, cloudHome);
     assert.equal(second.status, "ready");
     if (second.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
