@@ -114,6 +114,7 @@ restart but keeps stored notes and the agent's other instructions.
 
 [Setup, updates & controls](docs/INSTALL.md) ·
 [Cloud-scheduled jobs](docs/CLOUD-JOBS.md) ·
+[Local scheduled tasks](docs/LOCAL-SCHEDULED-TASKS.md) ·
 [Design](docs/DESIGN.md) ·
 [Privacy](PRIVACY.md) ·
 [Contributing](CONTRIBUTING.md) ·
