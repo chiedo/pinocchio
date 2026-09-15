@@ -1,5 +1,5 @@
 import { joinSession } from "@github/copilot-sdk/extension";
-import { configRootPath } from "./binding-registry.js";
+import { canonicalRepository, configRootPath, loadBinding } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
@@ -18,8 +18,11 @@ import {
 } from "./cloud-jobs.js";
 import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { BroadcastListener, BROADCAST_DISPLAY_PROMPT, BROADCAST_HEARTBEAT_MS, broadcastRuntimeVersion } from "./broadcast.js";
 
 const configRoot = configRootPath();
+const loadedRuntime = await broadcastRuntimeVersion();
 let session: Awaited<ReturnType<typeof joinSession>> | undefined;
 let pending = Promise.resolve();
 let queued = 0;
@@ -34,6 +37,13 @@ let checkingCloudResults = false;
 let skipNextAssistantCapture = false;
 const subagentOwners = new Map<string, Promise<ConversationOwner | undefined>>();
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
+let skipBroadcastCapture = false;
+let broadcastSending = false;
+let broadcastChecking = false;
+let broadcastStopped = false;
+let broadcastDelivery: {
+  trigger: string; prompt: string; bindingId: string; generation: number; injected: boolean;
+} | undefined;
 const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
 let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
   status: "unavailable"; code: string;
@@ -66,6 +76,17 @@ const context = createMemoryHooks(configRoot, async (input) => {
   await pending;
   if (!session) return;
   const owner = await ownerForSession(input.sessionId);
+  if (broadcastDelivery && input.prompt === broadcastDelivery.trigger) {
+    if (owner?.reference.bindingId !== broadcastDelivery.bindingId || generation !== broadcastDelivery.generation) {
+      return "Pinocchio broadcast skipped because the selected agent changed. Do not claim this conversation was upgraded.";
+    }
+    const binding = await loadBinding(owner.reference);
+    if (binding.scope.kind === "repository" && await canonicalRepository(input.workingDirectory) !== binding.scope.root) {
+      return "Pinocchio broadcast skipped because this conversation is outside the agent's repository scope.";
+    }
+    broadcastDelivery.injected = true;
+    return broadcastDelivery.prompt;
+  }
   if (!owner) return;
   const recalled = await context.recall(owner, {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
@@ -191,6 +212,60 @@ for (const name of ["subagent.completed", "subagent.failed"] as const) {
     if (event.agentId) subagentOwners.delete(event.agentId);
   });
 }
+const broadcast = new BroadcastListener(configRoot, session.sessionId, loadedRuntime);
+async function checkBroadcast() {
+  if (!session || broadcastChecking || broadcastStopped) return;
+  broadcastChecking = true;
+  try {
+    const active = session;
+    const current = await active.rpc.agent.getCurrent();
+    const owner = await conversationOwner(configRoot, current);
+    if (!owner) {
+      if (!broadcastSending) await broadcast.close();
+      return;
+    }
+    if (broadcastSending) {
+      if (owner.reference.bindingId === broadcastDelivery?.bindingId) await broadcast.heartbeat(owner.reference);
+      return;
+    }
+    await broadcast.heartbeat(owner.reference);
+    const metadata = await active.rpc.tools.getCurrentMetadata();
+    if (!metadata.tools) return;
+    const prompt = await broadcast.prepare(owner.reference, metadata.tools.flatMap((tool) =>
+      tool.namespacedName ? [tool.name, tool.namespacedName] : [tool.name]));
+    if (!prompt) return;
+    broadcastSending = true;
+    const selectedGeneration = generation;
+    const delivery = {
+      trigger: `Pinocchio broadcast notification ${randomUUID()}. Acknowledge the instruction refresh only if the extension supplies it; otherwise report that delivery failed.`,
+      prompt, bindingId: owner.reference.bindingId, generation: selectedGeneration, injected: false,
+    };
+    broadcastDelivery = delivery;
+    // Enqueue rather than interrupt an in-flight user turn. Keep heartbeats alive while it waits.
+    void active.rpc.send({
+      prompt: delivery.trigger, displayPrompt: BROADCAST_DISPLAY_PROMPT, mode: "enqueue", billable: false, wait: true,
+    }).then(async () => {
+      const selected = await conversationOwner(configRoot, await active.rpc.agent.getCurrent());
+      if (!delivery.injected || generation !== selectedGeneration || selected?.reference.bindingId !== owner.reference.bindingId) {
+        throw Object.assign(new Error("BROADCAST_AGENT_CHANGED"), { code: "BROADCAST_AGENT_CHANGED" });
+      }
+      await broadcast.acknowledge(owner.reference);
+    }).catch(async (error: unknown) => {
+      process.stderr.write("Pinocchio: BROADCAST_DELIVERY_FAILED\n");
+      await broadcast.failed(error);
+    }).finally(() => {
+      broadcastSending = false;
+      broadcastDelivery = undefined;
+      skipBroadcastCapture = false;
+    }).catch(() => { process.stderr.write("Pinocchio: BROADCAST_STATUS_WRITE_FAILED\n"); });
+  } catch (error) {
+    process.stderr.write("Pinocchio: BROADCAST_UNAVAILABLE\n");
+    await broadcast.failed(error).catch(() => { process.stderr.write("Pinocchio: BROADCAST_STATUS_WRITE_FAILED\n"); });
+  } finally { broadcastChecking = false; }
+}
+const broadcastTimer = setInterval(() => { void checkBroadcast(); }, BROADCAST_HEARTBEAT_MS);
+broadcastTimer.unref();
+void checkBroadcast();
 async function completeCloudResultNotice(result: CloudJobResultNoticeResult) {
   if (pendingCloudResults !== result) return;
   if (!cloudResultCompletion) {
@@ -263,6 +338,11 @@ for (const role of ["user", "assistant"] as const) {
   session.on(role === "user" ? "user.message" : "assistant.message", (event) => {
     if (event.agentId || !event.data.content.trim()) return;
     if (event.type === "user.message" && (event.data.source || event.data.isAutopilotContinuation)) return;
+    if (event.type === "user.message") {
+      skipBroadcastCapture = broadcastSending && event.data.content === BROADCAST_DISPLAY_PROMPT;
+      if (skipBroadcastCapture) return;
+    }
+    if (role === "assistant" && skipBroadcastCapture) return;
     if (role === "assistant" && skipNextAssistantCapture) {
       skipNextAssistantCapture = false;
       if (pendingCloudResults) {
@@ -316,6 +396,8 @@ session.on("session.compaction_complete", () => {
   });
 });
 process.once("SIGTERM", () => {
+  broadcastStopped = true;
+  clearInterval(broadcastTimer);
   stopCloudMonitor();
   for (const timer of cloudResultStartupTimers) clearTimeout(timer);
   clearInterval(cloudResultTimer);
@@ -323,7 +405,7 @@ process.once("SIGTERM", () => {
     process.stderr.write("Pinocchio: CONTEXT_DETACH_DEADLINE\n");
     process.exit(1);
   }, 4_000);
-  void pending.then(async () => { context.close(); await session?.disconnect(); }).then(() => {
+  void pending.then(async () => { await broadcast.close(); context.close(); await session?.disconnect(); }).then(() => {
     clearTimeout(deadline); process.exit(0);
   }, () => {
     clearTimeout(deadline);

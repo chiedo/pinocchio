@@ -15,6 +15,7 @@
     "bindings": "node dist/src/bindings-cli.js",
     "memory": "node dist/src/memory-cli.js",
     "jobs": "node dist/src/cloud-jobs-cli.js",
+    "broadcast": "node dist/src/broadcast-cli.js",
     "enroll": "node dist/src/enrollment-cli.js",
     "installer": "node dist/src/install-cli.js",
     "package:release": "node scripts/package-release.mjs",
