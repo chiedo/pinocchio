@@ -16,7 +16,7 @@ test("two open host sessions receive one broadcast without a user prompt or memo
   const observed: string[] = [];
   const provider = await startSyntheticProvider({
     textOnly: true,
-    selectTool: (messages) => { observed.push(JSON.stringify(messages)); return "unused"; },
+    observeRequest: (messages) => { observed.push(JSON.stringify(messages)); },
   });
   const config = await realpath(workspace.config);
   const repository = await realpath(workspace.repository);

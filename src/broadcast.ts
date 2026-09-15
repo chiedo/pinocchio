@@ -89,7 +89,8 @@ export async function broadcastRuntimeVersion() {
   if (!names.length) fail("BROADCAST_BUILD_REQUIRED");
   const files = await Promise.all(names.map(async (name) => [name, fingerprint(await readFile(join(path, name), "utf8"))]));
   const dependencies = fingerprint(await readFile(new URL("../../package-lock.json", import.meta.url), "utf8"));
-  return fingerprint(JSON.stringify({ files, dependencies, node: process.versions.node }));
+  // The extension host and the publisher intentionally run under different Node versions.
+  return fingerprint(JSON.stringify({ files, dependencies }));
 }
 export async function latestBroadcast(root: string) {
   const value = await optionalJson(join(await directory(root), "latest.json"));
