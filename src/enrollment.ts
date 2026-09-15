@@ -241,10 +241,11 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   for (let index = tools.items.length - 1; index >= 0; index--) {
     if (obsoleteTools.includes(String(tools.items[index]))) tools.delete(index);
   }
+  let addedTool = false;
   for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL]) {
-    if (!tools.items.some((item) => String(item) === tool)) tools.add(tool);
+    if (!tools.items.some((item) => String(item) === tool)) { tools.add(tool); addedTool = true; }
   }
-  const updated = block !== currentBlock || configured !== undefined || hadLegacyTool;
+  const updated = block !== currentBlock || configured !== undefined || hadLegacyTool || addedTool;
   if (updated) {
     await loadBinding(reference);
     const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(block, () => currentBlock)}`;
