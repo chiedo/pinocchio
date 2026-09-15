@@ -128,6 +128,13 @@ exact preview remains the security boundary.
 
 ## Results and lifecycle
 
+When an enrolled agent is used, Pinocchio checks for newly completed runs
+belonging to that agent. Successful and failed runs are announced once on the
+next prompt, with their completion time, status and Actions URL. This is
+next-session delivery, not real-time messaging into a closed CLI session.
+Checks fail open when GitHub is unavailable, and result text is never imported
+into memory automatically.
+
 ```bash
 npm run jobs -- list
 npm run jobs -- latest --id daily-release-notes
@@ -137,6 +144,9 @@ npm run jobs -- change --id daily-release-notes --operation pause --confirm
 npm run jobs -- change --id daily-release-notes --operation resume --confirm
 npm run jobs -- change --id daily-release-notes --operation delete --confirm
 ```
+
+Retrieving a completed run with `--include-result` marks it read locally and
+prevents a later automatic notice for that run.
 
 Pausing removes the schedule but keeps manual dispatch. Deleting removes the
 job definition and workflow from the jobs repository. Existing GitHub Actions

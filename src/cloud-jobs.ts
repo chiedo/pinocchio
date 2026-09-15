@@ -32,6 +32,8 @@ const MANAGED_END = "<!-- /pinocchio-memory:v1 -->";
 const PROFILE_LIMIT = 256 * 1024;
 const PROMPT_LIMIT = 32 * 1024;
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+const RESULT_NOTICE_LIMIT = 20;
+const RESULT_CHECK_TIMEOUT_MS = 5_000;
 const repositorySchema = z.string().regex(
   /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
 );
@@ -342,17 +344,20 @@ export async function configureCloudJobs(input: {
 async function run(
   command: string,
   args: string[],
-  options: { cwd?: string; maxBuffer?: number } = {},
+  options: { cwd?: string; maxBuffer?: number; timeout?: number } = {},
 ) {
   return exec(command, args, {
     ...(options.cwd ? { cwd: options.cwd } : {}),
     maxBuffer: options.maxBuffer ?? 4 * 1024 * 1024,
-    timeout: 60_000,
+    timeout: options.timeout ?? 60_000,
     env: process.env,
   });
 }
 
-async function repositoryInfo(config: CloudJobsConfig) {
+async function repositoryInfo(
+  config: CloudJobsConfig,
+  timeout = 60_000,
+) {
   let result;
   try {
     result = await run("gh", [
@@ -361,7 +366,7 @@ async function repositoryInfo(config: CloudJobsConfig) {
       config.jobs.repository,
       "--json",
       "isPrivate,viewerPermission,defaultBranchRef",
-    ]);
+    ], { timeout });
   } catch {
     throw new CloudJobsError("CLOUD_REPOSITORY_UNAVAILABLE");
   }
@@ -446,8 +451,9 @@ export async function bootstrapCloudJobsRepository(explicitHome?: string) {
 async function withRepository<T>(
   config: CloudJobsConfig,
   operation: (root: string, branch: string) => Promise<T>,
+  timeout = 60_000,
 ) {
-  const info = await repositoryInfo(config);
+  const info = await repositoryInfo(config, timeout);
   const root = await mkdtemp(join(tmpdir(), "pinocchio-cloud-jobs-"));
   try {
     try {
@@ -462,7 +468,7 @@ async function withRepository<T>(
         "--branch",
         info.branch,
         "--single-branch",
-      ]);
+      ], { timeout });
     } catch {
       throw new CloudJobsError("CLOUD_REPOSITORY_CLONE_FAILED");
     }
@@ -722,12 +728,7 @@ export async function prepareCloudJob(
   input: Extract<CloudJobToolInput, { action: "preview" }>,
   explicitHome?: string,
 ) {
-  const binding = await loadBinding(reference);
-  const agent = basename(binding.definition.path, ".agent.md");
-  if (!agentIdSchema.safeParse(agent).success ||
-      binding.definition.path !== join(reference.configRoot, "agents", `${agent}.agent.md`)) {
-    throw new CloudJobsError("CLOUD_PROFILE_SOURCE_INVALID");
-  }
+  const { agent, binding } = await boundCloudAgent(reference);
   const config = await loadCloudJobsConfig(explicitHome);
   const source = await readFile(binding.definition.path, "utf8");
   if (input.tools.includes("web_fetch") !== (input.allowUrls.length > 0)) {
@@ -1035,7 +1036,11 @@ async function readDriftCache(root: string) {
 }
 
 async function acquireDriftLock(root: string) {
-  const path = join(root, "drift.lock");
+  return acquireCloudLock(root, "drift");
+}
+
+async function acquireCloudLock(root: string, name: string) {
+  const path = join(root, `${name}.lock`);
   const create = () => open(
     path,
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL |
@@ -1187,8 +1192,246 @@ const runSchema = z.object({
   conclusion: z.string().nullable(),
   url: z.string().url(),
   createdAt: z.string(),
+  updatedAt: z.string(),
   displayTitle: z.string(),
+  workflowName: z.string(),
 }).strict();
+
+const resultStateEntrySchema = z.object({
+  notifiedThrough: z.number().int().nonnegative(),
+  readThrough: z.number().int().nonnegative(),
+}).strict();
+
+const resultStateSchema = z.object({
+  version: z.literal(1),
+  repository: repositorySchema,
+  jobs: z.record(jobIdSchema, resultStateEntrySchema),
+}).strict();
+
+type ResultState = z.infer<typeof resultStateSchema>;
+
+function emptyResultState(repository: string): ResultState {
+  return { version: 1, repository, jobs: {} };
+}
+
+async function readResultState(root: string, repository: string) {
+  try {
+    const parsed = resultStateSchema.safeParse(JSON.parse(
+      await readPrivateText(join(root, "result-state.json"), 1024 * 1024),
+    ) as unknown);
+    if (!parsed.success) throw new CloudJobsError("CLOUD_RESULT_STATE_INVALID");
+    return parsed.data.repository === repository
+      ? parsed.data
+      : emptyResultState(repository);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new CloudJobsError("CLOUD_RESULT_STATE_INVALID");
+    }
+    if (typeof error === "object" && error !== null && "code" in error &&
+        error.code === "ENOENT") {
+      return emptyResultState(repository);
+    }
+    throw error;
+  }
+}
+
+async function writeResultState(root: string, state: ResultState) {
+  await writePrivateText(
+    join(root, "result-state.json"),
+    `${JSON.stringify(state)}\n`,
+  );
+}
+
+async function listCloudJobRuns(
+  config: CloudJobsConfig,
+  options: {
+    id?: string;
+    limit: number;
+    timeout?: number;
+  },
+) {
+  let output;
+  try {
+    output = await run("gh", [
+      "run",
+      "list",
+      "--repo",
+      config.jobs.repository,
+      ...(options.id
+        ? ["--workflow", `pinocchio-${options.id}.yml`]
+        : []),
+      "--limit",
+      String(options.limit),
+      "--json",
+      "databaseId,status,conclusion,url,createdAt,updatedAt,displayTitle,workflowName",
+    ], options.timeout === undefined ? {} : { timeout: options.timeout });
+  } catch {
+    throw new CloudJobsError("CLOUD_JOB_RUN_LOOKUP_FAILED");
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(output.stdout) as unknown;
+  } catch {
+    throw new CloudJobsError("CLOUD_JOB_RUN_INVALID");
+  }
+  const parsed = z.array(runSchema).safeParse(json);
+  if (!parsed.success) throw new CloudJobsError("CLOUD_JOB_RUN_INVALID");
+  return parsed.data;
+}
+
+async function boundCloudAgent(reference: BindingReference) {
+  const binding = await loadBinding(reference);
+  const agent = basename(binding.definition.path, ".agent.md");
+  if (!agentIdSchema.safeParse(agent).success ||
+      binding.definition.path !== join(reference.configRoot, "agents", `${agent}.agent.md`)) {
+    throw new CloudJobsError("CLOUD_PROFILE_SOURCE_INVALID");
+  }
+  return { agent, binding };
+}
+
+export async function checkCloudJobResultNotices(
+  reference: BindingReference,
+  explicitHome?: string,
+) {
+  const { agent } = await boundCloudAgent(reference);
+  const config = await loadCloudJobsConfig(explicitHome);
+  const jobs = await withRepository(
+    config,
+    (root) => readRemoteJobs(root),
+    RESULT_CHECK_TIMEOUT_MS,
+  );
+  const ids = new Set(jobs
+    .filter((job) => job.agent === agent)
+    .map((job) => job.id));
+  const runs = ids.size
+    ? await listCloudJobRuns(config, {
+        limit: Math.min(100, Math.max(RESULT_NOTICE_LIMIT, ids.size * RESULT_NOTICE_LIMIT)),
+        timeout: RESULT_CHECK_TIMEOUT_MS,
+      })
+    : [];
+  const completed = runs.flatMap((run) => {
+    const prefix = "Pinocchio - ";
+    const id = run.workflowName.startsWith(prefix)
+      ? run.workflowName.slice(prefix.length)
+      : "";
+    return run.status === "completed" && ids.has(id)
+      ? [{ id, run }]
+      : [];
+  });
+
+  const root = await ensureCloudHome(explicitHome);
+  const lock = await acquireCloudLock(root, "result-state");
+  if (!lock) {
+    return {
+      status: "busy" as const,
+      agent,
+      repository: config.jobs.repository,
+    };
+  }
+  try {
+    const state = await readResultState(root, config.jobs.repository);
+    const fresh = completed.filter(({ id, run }) =>
+      run.databaseId > (state.jobs[id]?.notifiedThrough ?? 0));
+    if (!fresh.length) {
+      return {
+        status: "ready" as const,
+        agent,
+        repository: config.jobs.repository,
+        checkedAt: new Date().toISOString(),
+        runs: [],
+        omitted: 0,
+      };
+    }
+    const ordered = fresh.sort((left, right) =>
+      Date.parse(right.run.updatedAt) - Date.parse(left.run.updatedAt));
+    return {
+      status: "ready" as const,
+      agent,
+      repository: config.jobs.repository,
+      checkedAt: new Date().toISOString(),
+      runs: ordered.slice(0, RESULT_NOTICE_LIMIT),
+      omitted: Math.max(0, ordered.length - RESULT_NOTICE_LIMIT),
+    };
+  } finally {
+    await lock.handle.close();
+    await unlink(lock.path);
+  }
+}
+
+export type CloudJobResultNoticeResult =
+  Awaited<ReturnType<typeof checkCloudJobResultNotices>>;
+
+export async function markCloudJobResultNotices(
+  result: CloudJobResultNoticeResult,
+  explicitHome?: string,
+) {
+  if (result.status !== "ready" || !result.runs.length) return;
+  const config = await loadCloudJobsConfig(explicitHome);
+  if (config.jobs.repository !== result.repository) {
+    throw new CloudJobsError("CLOUD_RESULT_STATE_REPOSITORY_MISMATCH");
+  }
+  const root = await ensureCloudHome(explicitHome);
+  const lock = await acquireCloudLock(root, "result-state");
+  if (!lock) throw new CloudJobsError("CLOUD_RESULT_STATE_BUSY");
+  try {
+    const state = await readResultState(root, config.jobs.repository);
+    for (const { id, run } of result.runs) {
+      const previous = state.jobs[id] ?? {
+        notifiedThrough: 0,
+        readThrough: 0,
+      };
+      state.jobs[id] = {
+        ...previous,
+        notifiedThrough: Math.max(previous.notifiedThrough, run.databaseId),
+      };
+    }
+    await writeResultState(root, state);
+  } finally {
+    await lock.handle.close();
+    await unlink(lock.path);
+  }
+}
+
+export function formatCloudJobResultNotices(
+  result: CloudJobResultNoticeResult,
+) {
+  if (result.status !== "ready" || !result.runs.length) return "";
+  const items = result.runs.map(({ id, run }) =>
+    `- ${id}: ${run.conclusion ?? "completed"} at ${run.updatedAt} (${run.url})`);
+  if (result.omitted) {
+    items.push(`- ${result.omitted} additional completed run(s) omitted to avoid flooding.`);
+  }
+  return `Pinocchio cloud job results (trusted cloud status, not memory):
+${items.join("\n")}
+Tell the user about these new results before handling the rest of their request. To retrieve a full latest result, use ${CLOUD_JOBS_TOOL} with action=latest, the job id, and includeResult=true. Do not save notices or cloud results to memory automatically.
+`;
+}
+
+async function markCloudJobRunRead(
+  config: CloudJobsConfig,
+  id: string,
+  databaseId: number,
+  explicitHome?: string,
+) {
+  const root = await ensureCloudHome(explicitHome);
+  const lock = await acquireCloudLock(root, "result-state");
+  if (!lock) throw new CloudJobsError("CLOUD_RESULT_STATE_BUSY");
+  try {
+    const state = await readResultState(root, config.jobs.repository);
+    const previous = state.jobs[id] ?? {
+      notifiedThrough: 0,
+      readThrough: 0,
+    };
+    state.jobs[id] = {
+      notifiedThrough: Math.max(previous.notifiedThrough, databaseId),
+      readThrough: Math.max(previous.readThrough, databaseId),
+    };
+    await writeResultState(root, state);
+  } finally {
+    await lock.handle.close();
+    await unlink(lock.path);
+  }
+}
 
 export async function latestCloudJobResult(
   id: string,
@@ -1200,26 +1443,7 @@ export async function latestCloudJobResult(
   }
   const config = await loadCloudJobsConfig(explicitHome);
   await repositoryInfo(config);
-  let output;
-  try {
-    output = await run("gh", [
-      "run",
-      "list",
-      "--repo",
-      config.jobs.repository,
-      "--workflow",
-      `pinocchio-${id}.yml`,
-      "--limit",
-      "1",
-      "--json",
-      "databaseId,status,conclusion,url,createdAt,displayTitle",
-    ]);
-  } catch {
-    throw new CloudJobsError("CLOUD_JOB_RUN_LOOKUP_FAILED");
-  }
-  const parsed = z.array(runSchema).safeParse(JSON.parse(output.stdout) as unknown);
-  if (!parsed.success) throw new CloudJobsError("CLOUD_JOB_RUN_INVALID");
-  const latest = parsed.data[0];
+  const latest = (await listCloudJobRuns(config, { id, limit: 1 }))[0];
   if (!latest) return { status: "no-runs" as const, id };
   if (!includeResult || latest.status !== "completed") {
     return { status: "ready" as const, id, run: latest };
@@ -1245,6 +1469,7 @@ export async function latestCloudJobResult(
     if (Buffer.byteLength(result) > 256 * 1024) {
       throw new CloudJobsError("CLOUD_JOB_RESULT_OVERSIZED");
     }
+    await markCloudJobRunRead(config, id, latest.databaseId, explicitHome);
     return { status: "ready" as const, id, run: latest, result };
   } finally {
     await rm(root, { recursive: true, force: true });
