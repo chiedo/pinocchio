@@ -12,6 +12,7 @@ import {
   formatCloudJobResultNotices,
   handleCloudJobTool,
   markCloudJobResultNotices,
+  releaseCloudJobResultNotices,
   startCloudJobDriftMonitor,
 } from "./cloud-jobs.js";
 import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
@@ -27,6 +28,7 @@ let captureFailure = false;
 let previousUser = "";
 let previousOwner = "";
 let pendingCloudResults: CloudJobResultNoticeResult | undefined;
+let cloudResultCompletion: Promise<void> | undefined;
 let checkingCloudResults = false;
 let skipNextAssistantCapture = false;
 const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
@@ -142,6 +144,22 @@ session = await joinSession({
     },
   }],
 });
+async function completeCloudResultNotice(result: CloudJobResultNoticeResult) {
+  if (pendingCloudResults !== result) return;
+  if (!cloudResultCompletion) {
+    const completion = (async () => {
+      await markCloudJobResultNotices(result);
+      if (pendingCloudResults === result) pendingCloudResults = undefined;
+    })();
+    cloudResultCompletion = completion;
+    void completion.finally(() => {
+      if (cloudResultCompletion === completion) {
+        cloudResultCompletion = undefined;
+      }
+    }).catch(() => {});
+  }
+  await cloudResultCompletion;
+}
 async function queueCloudResultNotices() {
   if (!session || checkingCloudResults || pendingCloudResults) return;
   checkingCloudResults = true;
@@ -162,10 +180,12 @@ async function queueCloudResultNotices() {
         billable: false,
         wait: true,
       });
-      await markCloudJobResultNotices(result);
-      if (pendingCloudResults === result) pendingCloudResults = undefined;
+      await completeCloudResultNotice(result);
     } catch (error) {
-      if (pendingCloudResults === result) pendingCloudResults = undefined;
+      if (pendingCloudResults === result) {
+        pendingCloudResults = undefined;
+        await releaseCloudJobResultNotices(result).catch(() => {});
+      }
       skipNextAssistantCapture = false;
       throw error;
     }
@@ -198,11 +218,15 @@ for (const role of ["user", "assistant"] as const) {
     if (event.type === "user.message" && (event.data.source || event.data.isAutopilotContinuation)) return;
     if (role === "assistant" && skipNextAssistantCapture) {
       skipNextAssistantCapture = false;
+      if (pendingCloudResults) {
+        void completeCloudResultNotice(pendingCloudResults).catch(() => {
+          process.stderr.write("Pinocchio: CLOUD_RESULT_NOTICE_UNAVAILABLE\n");
+        });
+      }
       return;
     }
     if (event.type === "user.message") {
-      const automaticNotice = pendingCloudResults !== undefined &&
-        event.data.delivery === "idle" &&
+      const automaticNotice = event.data.delivery === "idle" &&
         event.data.content === CLOUD_RESULT_DISPLAY_PROMPT;
       skipNextAssistantCapture = automaticNotice;
       if (automaticNotice) return;

@@ -15,6 +15,7 @@ import {
   loadCloudJobsConfig,
   markCloudJobResultNotices,
   prepareCloudJob,
+  releaseCloudJobResultNotices,
 } from "../src/cloud-jobs.js";
 
 test("extension cloud tool schema is a host-compatible object", () => {
@@ -38,6 +39,20 @@ test("extension cloud tool schema is a host-compatible object", () => {
       ],
     },
   );
+  const defaultPreview = cloudJobToolInputSchema.parse({
+    action: "preview",
+    id: "default-limit",
+    prompt: "Summarize.",
+    cron: "0 * * * *",
+  });
+  assert.equal(defaultPreview.action, "preview");
+  if (defaultPreview.action !== "preview") throw new Error("INVALID_PREVIEW");
+  assert.equal(defaultPreview.maxAiCredits, 30);
+  assert.equal(defaultPreview.unlimitedAiCredits, false);
+  assert.throws(() => cloudJobToolInputSchema.parse({
+    ...defaultPreview,
+    maxAiCredits: 29,
+  }));
 });
 
 function enrolledProfile(body = "Research public release notes and summarize changes.\n") {
@@ -122,7 +137,8 @@ test("local configuration and preview keep agent history local", async () => {
       timezone: "UTC",
       tools: ["view", "rg", "glob"],
       allowUrls: [],
-      maxAiCredits: 3,
+      maxAiCredits: 30,
+      unlimitedAiCredits: true,
       timeoutMinutes: 20,
       retentionDays: 14,
     });
@@ -134,6 +150,10 @@ test("local configuration and preview keep agent history local", async () => {
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
     assert.match(preview.exactUpload.workflow, /copilot -C "\.pinocchio\/jobs\/daily-release-notes"/);
     assert.match(preview.exactUpload.workflow, /--secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN/);
+    assert.match(preview.exactUpload.workflow, /set -o pipefail/);
+    assert.match(preview.exactUpload.workflow, /2>&1 \| tee result\.md/);
+    assert.doesNotMatch(preview.exactUpload.workflow, /--max-ai-credits/);
+    assert.equal(preview.manifest.max_ai_credits, null);
     assert.match(preview.exactUpload.profile, /Research public release notes/);
     assert.doesNotMatch(preview.exactUpload.profile, /pinocchio-memory|Search local memory/);
     assert.doesNotMatch(JSON.stringify(preview.manifest), new RegExp(home));
@@ -193,7 +213,7 @@ timezone: UTC
 enabled: true
 tools: [view]
 allowed_urls: []
-max_ai_credits: 1
+max_ai_credits: 30
 timeout_minutes: 10
 retention_days: 7
 output: github-actions-summary-and-artifact
@@ -245,11 +265,23 @@ prompt_hash: ${"c".repeat(64)}
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: failure/);
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: success/);
     assert.match(formatCloudJobResultNotices(first), /Do not save notices or cloud results/);
-    await markCloudJobResultNotices(first, cloudHome);
     const second = await checkCloudJobResultNotices(reference, cloudHome);
     assert.equal(second.status, "ready");
     if (second.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
     assert.deepEqual(second.runs, []);
+    await releaseCloudJobResultNotices(first, cloudHome);
+    const retried = await checkCloudJobResultNotices(reference, cloudHome);
+    assert.equal(retried.status, "ready");
+    if (retried.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
+    assert.deepEqual(
+      retried.runs.map(({ run }) => run.databaseId),
+      [11, 10],
+    );
+    await markCloudJobResultNotices(retried, cloudHome);
+    const marked = await checkCloudJobResultNotices(reference, cloudHome);
+    assert.equal(marked.status, "ready");
+    if (marked.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
+    assert.deepEqual(marked.runs, []);
 
     const latest = await latestCloudJobResult(
       "daily-release-notes",

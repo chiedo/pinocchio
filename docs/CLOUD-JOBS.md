@@ -101,8 +101,16 @@ values; unrestricted URL access is not enabled.
 The workflow also grants only `contents: read`, disables persisted checkout
 credentials, starts Copilot in that job's directory so sibling job prompts and
 profiles are outside its allowed path, prevents overlapping runs, applies a
-timeout and AI-credit limit, installs Pinocchio's tested Copilot CLI version,
-and retains the final response as an Actions artifact.
+timeout and an AI-credit limit of at least 30, installs Pinocchio's tested
+Copilot CLI version, and retains the final response or CLI failure as an
+Actions artifact. Copilot failures propagate to the workflow instead of being
+masked by output capture. Republish legacy jobs configured below 30 credits;
+profile sync refuses to silently raise an already approved limit.
+
+Set `unlimitedAiCredits: true` in a tool preview, or pass
+`--unlimited-ai-credits` to the CLI preview, to explicitly omit Copilot's soft
+AI-credit cap. The published manifest records this as `max_ai_credits: null`;
+the workflow timeout still applies.
 
 ## Cloud-safe agent snapshots
 
@@ -135,7 +143,10 @@ time, status and Actions URL. If the session closes before delivery, the result
 remains unread and is announced in the next matching session. Pinocchio cannot
 notify through a closed CLI session. Checks fail open when GitHub is
 unavailable, and notification/result text is never imported into memory
-automatically.
+automatically. A short-lived cross-process claim prevents extension reloads
+from announcing the same runs more than once; failed deliveries release the
+claim immediately and interrupted deliveries become retryable after five
+minutes.
 
 ```bash
 npm run jobs -- list
