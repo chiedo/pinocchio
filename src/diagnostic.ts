@@ -1,17 +1,30 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  approveAll,
+  CopilotClient,
+  RuntimeConnection,
+  ToolSet,
+} from "@github/copilot-sdk";
+import type { SessionConfig } from "@github/copilot-sdk";
 import { registerBinding, loadBinding } from "./binding-registry.js";
 import { enroll } from "./enrollment.js";
-import { memoryLaunch } from "./memory-mcp.js";
 import { MemoryStore } from "./memory-store.js";
 import { setConversationEnabled } from "./conversation-memory.js";
-import { SEARCH_TOOL, SAVE_TOOL, ToolError } from "./memory-protocol.js";
-import { startSyntheticProvider } from "../test/support/provider.js";
+import {
+  EXTENSION_SAVE_TOOL,
+  EXTENSION_SEARCH_TOOL,
+  ToolError,
+} from "./memory-protocol.js";
+import {
+  offeredToolName,
+  startSyntheticProvider,
+} from "../test/support/provider.js";
 import { pinnedCliPath, PUBLIC_HOST, PUBLIC_NODE } from "./release.js";
 
 const execute = promisify(execFile);
@@ -41,13 +54,13 @@ export async function prerequisites(previewPlatform = false) {
 /** No account, real profiles, model inference or user memory enters this diagnostic. */
 export async function diagnose(previewPlatform = false) {
   const host = await prerequisites(previewPlatform);
-  const root = await mkdtemp(join(tmpdir(), "pinocchio-install-check-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "pinocchio-install-check-")));
   const home = join(root, "home");
   const config = join(home, "custom-config");
   const repository = join(root, "repository");
   const cases: string[] = [];
   let stage = "setup";
-  const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
+  let client: CopilotClient | undefined;
   const observed: string[] = [];
   const target = (messages: Record<string, unknown>[]) => {
     for (const message of messages) if (message.role === "tool") {
@@ -59,12 +72,13 @@ export async function diagnose(previewPlatform = false) {
   };
   const provider = await startSyntheticProvider({
     replyWithoutTools: true,
-    selectTool(messages) {
+    selectTool(messages, tools) {
       const t = target(messages);
       if (t.delegate) return "task";
-      const launch = launches.get(t.name);
-      assert.ok(launch);
-      return `${launch.serverName}-${t.save ? SAVE_TOOL : SEARCH_TOOL}`;
+      return offeredToolName(
+        tools,
+        t.save ? EXTENSION_SAVE_TOOL : EXTENSION_SEARCH_TOOL,
+      );
     },
     toolArguments(messages) {
       const t = target(messages);
@@ -99,18 +113,39 @@ export async function diagnose(previewPlatform = false) {
       // This gate checks explicit saves/deletes; automatic capture has its own native-host gate.
       await setConversationEnabled(ref, false);
       references.push(ref);
-      launches.set(name, memoryLaunch(ref));
     }
     cases.push("tools-verified-before-enrollment");
+    client = new CopilotClient({
+      connection: RuntimeConnection.forStdio({ path: installedHost }),
+      mode: "empty",
+      workingDirectory: repository,
+      baseDirectory: config,
+      env,
+      useLoggedInUser: false,
+      logLevel: "none",
+    });
+    const sessionConfig: SessionConfig = {
+      workingDirectory: repository,
+      configDirectory: config,
+      enableConfigDiscovery: true,
+      requestExtensions: true,
+      enableExperimentalMode: true,
+      enableManagedSettings: false,
+      extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
+      model: "synthetic-model",
+      provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
+      availableTools: new ToolSet().addCustom("*").addBuiltIn(["view", "task"]),
+      agent: "check-main",
+      onPermissionRequest: approveAll,
+      infiniteSessions: { enabled: false },
+    };
+    await client.start();
     async function turn(prompt: string, expected: string, absent?: string) {
       stage = prompt;
       observed.length = 0;
-      await execute(installedHost, ["--experimental", "--no-auto-update",
-        "--extension-sdk-path", fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
-        "--agent", "check-main", "--allow-tool", "task",
-        ...[...launches.values()].flatMap((launch) =>
-          [SEARCH_TOOL, SAVE_TOOL].flatMap((tool) => ["--allow-tool", `${launch.serverName}(${tool})`])),
-        "-p", prompt], { cwd: repository, env, timeout: 45_000, maxBuffer: 1024 * 1024 });
+      const session = await client!.createSession(sessionConfig);
+      await session.rpc.tools.initializeAndValidate();
+      await session.sendAndWait({ prompt }, 45_000);
       const results = observed.join("\n");
       assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
       if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
@@ -142,7 +177,11 @@ export async function diagnose(previewPlatform = false) {
       (error instanceof Error && error.message === "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING" ? "RESULT_MISSING" : "HOST_CALL_FAILED");
     throw new ToolError(`INSTALL_DIAGNOSTIC_FAILED_${stage.replaceAll(" ", "_")}_${reason}`);
   } finally {
-    try { await provider.close(); }
-    finally { await rm(root, { recursive: true, force: true }); }
+    try {
+      if (client) await client.stop();
+    } finally {
+      try { await provider.close(); }
+      finally { await rm(root, { recursive: true, force: true }); }
+    }
   }
 }

@@ -3,6 +3,7 @@ import { configRootPath } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
+import type { ConversationOwner } from "./conversation-memory.js";
 import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, ToolError } from "./memory-protocol.js";
 import {
   CLOUD_JOBS_TOOL,
@@ -31,15 +32,38 @@ let pendingCloudResults: CloudJobResultNoticeResult | undefined;
 let cloudResultCompletion: Promise<void> | undefined;
 let checkingCloudResults = false;
 let skipNextAssistantCapture = false;
+const subagentOwners = new Map<string, Promise<ConversationOwner | undefined>>();
+const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
 const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
 let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
   status: "unavailable"; code: string;
 } | undefined;
+async function selectedOwner() {
+  if (!session) return;
+  return conversationOwner(configRoot, await session.rpc.agent.getCurrent());
+}
+async function ownerForAgent(name: string) {
+  if (!session) return;
+  const matches = (await session.rpc.agent.list()).agents.filter(
+    (agent) => agent.name === name || agent.id === name,
+  );
+  if (matches.length !== 1) return;
+  return conversationOwner(configRoot, { agent: matches[0] });
+}
+async function ownerForSession(sessionId: string) {
+  if (!session) return;
+  if (sessionId === session.sessionId) return selectedOwner();
+  return subagentOwners.get(sessionId);
+}
+async function ownerForTool(toolCallId: string) {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  return toolOwners.get(toolCallId);
+}
 const context = createMemoryHooks(configRoot, async (input) => {
   directory = input.workingDirectory;
   await pending;
   if (!session) return;
-  const owner = await conversationOwner(configRoot, await session.rpc.agent.getCurrent());
+  const owner = await ownerForSession(input.sessionId);
   if (!owner) return;
   const recalled = await context.recall(owner, {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
@@ -94,7 +118,7 @@ session = await joinSession({
     }) {
       try {
         if (!session || !directory) throw new ToolError("CONVERSATION_CONTEXT_UNAVAILABLE");
-        const owner = await conversationOwner(configRoot, await session.rpc.agent.getCurrent());
+        const owner = await ownerForTool(invocation.toolCallId);
         if (!owner) throw new ToolError("MEMORY_OWNER_UNAVAILABLE");
         const result = await context.call(owner, {
           sessionId: invocation.sessionId, directory, toolCallId: invocation.toolCallId,
@@ -109,6 +133,8 @@ session = await joinSession({
           textResultForLlm: JSON.stringify({ status: "unavailable", code }),
           error: code,
         };
+      } finally {
+        toolOwners.delete(invocation.toolCallId);
       }
     },
   })), {
@@ -117,10 +143,10 @@ session = await joinSession({
       "Manage approved GitHub Actions cloud jobs for the selected Pinocchio agent. Preview returns the exact upload and approval token. Never configure, bootstrap, publish, sync, pause, resume, or delete without the user's explicit approval.",
     parameters: extensionCloudJobInputSchema,
     defer: "never",
-    async handler(args: unknown) {
+    async handler(args: unknown, invocation) {
       try {
         if (!session) throw new CloudJobsError("CONVERSATION_CONTEXT_UNAVAILABLE");
-        const owner = await conversationOwner(configRoot, await session.rpc.agent.getCurrent());
+        const owner = await ownerForTool(invocation.toolCallId);
         if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
         const result = await handleCloudJobTool(owner.reference, args);
         if (isRecord(args) && args.action === "latest" &&
@@ -140,10 +166,29 @@ session = await joinSession({
           textResultForLlm: JSON.stringify({ status: "unavailable", code }),
           error: code,
         };
+      } finally {
+        toolOwners.delete(invocation.toolCallId);
       }
     },
   }],
 });
+for (const name of ["subagent.started", "subagent.selected"] as const) {
+  session.on(name, (event) => {
+    if (event.agentId) subagentOwners.set(event.agentId, ownerForAgent(event.data.agentName));
+  });
+}
+session.on("tool.execution_start", (event) => {
+  if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL].includes(event.data.toolName)) {
+    toolOwners.set(event.data.toolCallId, event.agentId
+      ? subagentOwners.get(event.agentId) ?? Promise.resolve(undefined)
+      : selectedOwner());
+  }
+});
+for (const name of ["subagent.completed", "subagent.failed"] as const) {
+  session.on(name, (event) => {
+    if (event.agentId) subagentOwners.delete(event.agentId);
+  });
+}
 async function completeCloudResultNotice(result: CloudJobResultNoticeResult) {
   if (pendingCloudResults !== result) return;
   if (!cloudResultCompletion) {

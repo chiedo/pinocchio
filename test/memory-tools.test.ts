@@ -5,13 +5,20 @@ import test from "node:test";
 import type { TestContext } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { stringify } from "yaml";
 import { z } from "zod";
 import { loadBinding } from "../src/binding-registry.js";
 import { ContextLedger } from "../src/context-ledger.js";
 import { MemoryStore } from "../src/memory-store.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
 import { createMemoryMcpServer, memoryLaunch } from "../src/memory-mcp.js";
-import { CONTEXT_META, SAVE_TOOL, SEARCH_TOOL, saveSchema } from "../src/memory-protocol.js";
+import {
+  CONTEXT_META,
+  EXTENSION_SEARCH_TOOL,
+  SAVE_TOOL,
+  SEARCH_TOOL,
+  saveSchema,
+} from "../src/memory-protocol.js";
 import { enroll, refreshEnrollment, removeEnrollment } from "../src/enrollment.js";
 import { main as enrollmentMain } from "../src/enrollment-cli.js";
 import { isRecord } from "../src/identity.js";
@@ -202,8 +209,14 @@ test("refresh refuses changed servers and duplicate managed blocks without rewri
   await writeFile(path, "---\nname: shared\ndescription: Synthetic\ntools: [view]\n---\nKeep this role.\n");
   await enroll(f.ref);
   const original = await readFile(path, "utf8");
-  const changedServer = original.replace(f.ref.fingerprint, "0".repeat(64));
-  assert.notEqual(changedServer, original);
+  const legacyServer = stringify({
+    "mcp-servers": {
+      [f.launch.serverName]: f.launch.config,
+    },
+  }).trimEnd();
+  const legacy = original.replace("tools:", `${legacyServer}\ntools:`);
+  const changedServer = legacy.replace(f.ref.fingerprint, "0".repeat(64));
+  assert.notEqual(changedServer, legacy);
   await writeFile(path, changedServer);
   await assert.rejects(refreshEnrollment(f.ref), { code: "MANAGED_SERVER_CHANGED" });
   assert.equal(await readFile(path, "utf8"), changedServer);
@@ -248,7 +261,7 @@ test("new-profile helper enrolls memory without overriding native defaults", asy
   assert.equal(result.status, "enrolled");
   const content = await readFile(path, "utf8");
   assert.match(content, /pinocchio-memory:v1/);
-  assert.match(content, /agent_memory_search/);
+  assert.ok(content.includes(EXTENSION_SEARCH_TOOL));
   assert.ok(content.includes('- Agent ID: "created-agent"'));
   assert.ok(content.includes(`- Agent profile: ${JSON.stringify(path)}`));
   assert.doesNotMatch(content, /^model:|^reasoning-effort:/m);

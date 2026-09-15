@@ -5,9 +5,24 @@ import { IDENTITY_TOOL_NAME } from "../../src/tool.js";
 export interface SyntheticProviderOptions {
   textOnly?: boolean;
   replyWithoutTools?: boolean;
-  selectTool?: (messages: Record<string, unknown>[]) => string;
+  selectTool?: (
+    messages: Record<string, unknown>[],
+    tools: unknown[],
+  ) => string;
   allowUnofferedTool?: boolean;
   toolArguments?: (messages: Record<string, unknown>[]) => Record<string, unknown>;
+}
+
+export function offeredToolName(tools: unknown[], configuredName: string) {
+  const matches = tools.flatMap((tool) =>
+    isRecord(tool) &&
+      isRecord(tool.function) &&
+      typeof tool.function.name === "string" &&
+      tool.function.name.endsWith(configuredName)
+      ? [tool.function.name]
+      : []);
+  if (matches.length !== 1) throw new Error("SYNTHETIC_TARGET_MISSING");
+  return matches[0] as string;
 }
 
 export async function startSyntheticProvider(options: SyntheticProviderOptions = {}) {
@@ -39,13 +54,14 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
         throw new Error("SYNTHETIC_REQUEST_LIMIT");
       }
       const messages = input.messages.filter(isRecord);
-      const toolName = options.selectTool?.(messages) ?? IDENTITY_TOOL_NAME;
+      const tools = Array.isArray(input.tools) ? input.tools : [];
       const lastUser = messages.findLastIndex((item) => item.role === "user");
-      const replied = options.textOnly || (options.replyWithoutTools && (!Array.isArray(input.tools) || input.tools.length === 0)) || messages
+      const replied = options.textOnly || (options.replyWithoutTools && tools.length === 0) || messages
         .slice(lastUser + 1)
         .some((item) => item.role === "tool");
+      let toolName = IDENTITY_TOOL_NAME;
       if (!replied) {
-        const tools = Array.isArray(input.tools) ? input.tools : [];
+        toolName = options.selectTool?.(messages, tools) ?? IDENTITY_TOOL_NAME;
         const offered = tools.some(
           (tool: unknown) =>
             isRecord(tool) &&

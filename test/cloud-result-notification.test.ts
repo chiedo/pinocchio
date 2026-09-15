@@ -123,7 +123,7 @@ if (args[0] === "repo" && args[1] === "view") {
   const client = new CopilotClient({
     connection: RuntimeConnection.forStdio({
       path: fileURLToPath(
-        new URL("../node_modules/.bin/copilot", import.meta.url),
+        new URL("../../node_modules/.bin/copilot", import.meta.url),
       ),
     }),
     mode: "empty",

@@ -114,7 +114,13 @@ function profile(text: string) {
   if (!Array.isArray(names) || names.some((name: unknown) => typeof name !== "string" || name.includes("*"))) {
     throw new ToolError("EXPLICIT_TOOL_LIST_REQUIRED");
   }
-  return { doc, tools, body: text.slice(match[0].length), newline: match[1]?.includes("\r") ? "\r\n" : "\n" };
+  return {
+    doc,
+    tools,
+    frontmatter: match[2] ?? "",
+    body: text.slice(match[0].length),
+    newline: match[1]?.includes("\r") ? "\r\n" : "\n",
+  };
 }
 function enrolledProfile(text: string, reference: BindingReference, binding: BindingRecord) {
   const parsed = profile(text);
@@ -225,14 +231,25 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   if (binding.definition.origin !== "user" && !explicitShared) throw new ToolError("EXPLICIT_SHARED_ENROLLMENT_REQUIRED");
   const path = binding.definition.path;
   const original = await readFile(path, "utf8");
-  const { doc, tools, body, newline, launch, block, currentBlock } = enrolledProfile(original, reference, binding);
+  const {
+    doc,
+    tools,
+    frontmatter,
+    body,
+    newline,
+    launch,
+    block,
+    currentBlock,
+  } = enrolledProfile(original, reference, binding);
   await verifyMemoryTools(reference);
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
   const configured = doc.getIn(["mcp-servers", launch.serverName]);
-  if (configured !== undefined) doc.deleteIn(["mcp-servers", launch.serverName]);
-  const servers = doc.get("mcp-servers", true);
-  if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
+  if (configured !== undefined) {
+    doc.deleteIn(["mcp-servers", launch.serverName]);
+    const servers = doc.get("mcp-servers", true);
+    if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
+  }
   const obsoleteTools = [
     SEARCH_TOOL, SAVE_TOOL,
     `${launch.serverName}-${SEARCH_TOOL}`, `${launch.serverName}-${SAVE_TOOL}`,
@@ -241,13 +258,22 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   for (let index = tools.items.length - 1; index >= 0; index--) {
     if (obsoleteTools.includes(String(tools.items[index]))) tools.delete(index);
   }
+  let addedExtensionTool = false;
   for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL]) {
-    if (!tools.items.some((item) => String(item) === tool)) tools.add(tool);
+    if (!tools.items.some((item) => String(item) === tool)) {
+      tools.add(tool);
+      addedExtensionTool = true;
+    }
   }
-  const updated = block !== currentBlock || configured !== undefined || hadLegacyTool;
+  const frontmatterChanged = configured !== undefined || hadLegacyTool ||
+    addedExtensionTool;
+  const updated = block !== currentBlock || frontmatterChanged;
   if (updated) {
     await loadBinding(reference);
-    const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(block, () => currentBlock)}`;
+    const nextFrontmatter = frontmatterChanged
+      ? String(doc).trimEnd().replaceAll("\n", newline)
+      : frontmatter;
+    const next = `---${newline}${nextFrontmatter}${newline}---${newline}${body.replace(block, () => currentBlock)}`;
     await replace(path, original, next);
   }
   return { ...extension, status: "refreshed", updated, version: 1, serverName: launch.serverName, profile: path, sharedInstructions };
