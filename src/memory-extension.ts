@@ -7,7 +7,7 @@ import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, S
 import {
   CLOUD_JOBS_TOOL,
   CloudJobsError,
-  cloudJobToolInputSchema,
+  extensionCloudJobInputSchema,
   handleCloudJobTool,
   startCloudJobDriftMonitor,
 } from "./cloud-jobs.js";
@@ -105,7 +105,7 @@ session = await joinSession({
     name: CLOUD_JOBS_TOOL,
     description:
       "Manage approved GitHub Actions cloud jobs for the selected Pinocchio agent. Preview returns the exact upload and approval token. Never configure, bootstrap, publish, sync, pause, resume, or delete without the user's explicit approval.",
-    parameters: z.toJSONSchema(cloudJobToolInputSchema, { io: "input", unrepresentable: "any" }),
+    parameters: extensionCloudJobInputSchema,
     defer: "never",
     async handler(args: unknown) {
       try {

@@ -7,10 +7,34 @@ import { registerBinding } from "../src/binding-registry.js";
 import {
   cloudJobToolInputSchema,
   configureCloudJobs,
+  extensionCloudJobInputSchema,
   exportCloudAgentProfile,
   loadCloudJobsConfig,
   prepareCloudJob,
 } from "../src/cloud-jobs.js";
+
+test("extension cloud tool schema is a host-compatible object", () => {
+  assert.equal(extensionCloudJobInputSchema.type, "object");
+  assert.deepEqual(extensionCloudJobInputSchema.required, ["action"]);
+  assert.equal(extensionCloudJobInputSchema.additionalProperties, false);
+  assert.equal("oneOf" in extensionCloudJobInputSchema, false);
+  assert.deepEqual(
+    extensionCloudJobInputSchema.properties?.action,
+    {
+      type: "string",
+      enum: [
+        "configure",
+        "bootstrap",
+        "preview",
+        "publish",
+        "list",
+        "drift",
+        "change",
+        "latest",
+      ],
+    },
+  );
+});
 
 function enrolledProfile(body = "Research public release notes and summarize changes.\n") {
   return `---

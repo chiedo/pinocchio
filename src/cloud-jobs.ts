@@ -144,6 +144,39 @@ export const cloudJobToolInputSchema = z.discriminatedUnion("action", [
 
 export type CloudJobToolInput = z.infer<typeof cloudJobToolInputSchema>;
 
+const { $schema: _cloudJobExtensionSchema, ...extensionCloudJobInputSchema } =
+  z.toJSONSchema(z.object({
+    action: z.enum([
+      "configure",
+      "bootstrap",
+      "preview",
+      "publish",
+      "list",
+      "drift",
+      "change",
+      "latest",
+    ]),
+    repository: repositorySchema.optional(),
+    branch: branchSchema.optional(),
+    tokenSecret: secretNameSchema.optional(),
+    confirmed: z.boolean().optional(),
+    id: jobIdSchema.optional(),
+    prompt: z.string().max(PROMPT_LIMIT).optional(),
+    cron: z.string().optional(),
+    timezone: z.literal("UTC").optional(),
+    tools: z.array(cloudToolSchema).max(4).optional(),
+    allowUrls: z.array(allowedUrlSchema).max(20).optional(),
+    maxAiCredits: z.number().positive().max(100).optional(),
+    timeoutMinutes: z.number().int().min(1).max(360).optional(),
+    retentionDays: z.number().int().min(1).max(90).optional(),
+    draftId: z.string().uuid().optional(),
+    approvalToken: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    operation: z.enum(["sync", "pause", "resume", "delete"]).optional(),
+    includeResult: z.boolean().optional(),
+  }).strict(), { io: "input", unrepresentable: "any" });
+
+export { extensionCloudJobInputSchema };
+
 const draftSchema = z.object({
   version: z.literal(1),
   draftId: z.string().uuid(),
