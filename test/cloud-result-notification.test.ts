@@ -69,7 +69,7 @@ timezone: UTC
 enabled: true
 tools: [web_fetch]
 allowed_urls: [https://github.blog/changelog/]
-max_ai_credits: 1
+max_ai_credits: 30
 timeout_minutes: 10
 retention_days: 7
 output: github-actions-summary-and-artifact
@@ -168,7 +168,12 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.equal(user.data.delivery, "idle");
     assert.match(user.data.transformedContent ?? "", /changelog: success/);
     assert.ok(events.some((event) => event.type === "assistant.message"));
-    let state: { jobs: Record<string, { notifiedThrough: number }> } | undefined;
+    let state: {
+      jobs: Record<string, {
+        notifiedThrough: number;
+        claim?: unknown;
+      }>;
+    } | undefined;
     for (let attempt = 0; attempt < 20 && !state; attempt++) {
       try {
         state = JSON.parse(
@@ -180,6 +185,7 @@ if (args[0] === "repo" && args[1] === "view") {
     }
     assert.ok(state);
     assert.equal(state.jobs.changelog?.notifiedThrough, 31);
+    assert.equal(state.jobs.changelog?.claim, undefined);
     const search = await session.rpc.tools.execute({
       name: EXTENSION_SEARCH_TOOL,
       arguments: { query: "Synthetic check complete" },

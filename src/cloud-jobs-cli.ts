@@ -43,6 +43,7 @@ export async function main(args: string[]) {
       tool: { type: "string", multiple: true },
       "allow-url": { type: "string", multiple: true },
       "max-ai-credits": { type: "string" },
+      "unlimited-ai-credits": { type: "boolean" },
       "timeout-minutes": { type: "string" },
       "retention-days": { type: "string" },
       draft: { type: "string" },
@@ -74,6 +75,9 @@ export async function main(args: string[]) {
     if (!values.agent || !values.id || !values["prompt-file"] || !values.cron) {
       throw new CloudJobsError("INVALID_ARGUMENTS");
     }
+    if (values["unlimited-ai-credits"] && values["max-ai-credits"]) {
+      throw new CloudJobsError("INVALID_ARGUMENTS");
+    }
     const reference = await bindingForDefinition(
       configRoot,
       join(configRoot, "agents", `${values.agent}.agent.md`),
@@ -88,7 +92,8 @@ export async function main(args: string[]) {
       timezone: "UTC",
       tools: values.tool ?? ["view", "rg", "glob"],
       allowUrls: values["allow-url"] ?? [],
-      maxAiCredits: Number(values["max-ai-credits"] ?? 5),
+      maxAiCredits: Number(values["max-ai-credits"] ?? 30),
+      unlimitedAiCredits: values["unlimited-ai-credits"] ?? false,
       timeoutMinutes: Number(values["timeout-minutes"] ?? 30),
       retentionDays: Number(values["retention-days"] ?? 30),
     });

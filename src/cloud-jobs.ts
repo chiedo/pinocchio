@@ -34,6 +34,7 @@ const PROMPT_LIMIT = 32 * 1024;
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const RESULT_NOTICE_LIMIT = 20;
 const RESULT_CHECK_TIMEOUT_MS = 5_000;
+const RESULT_NOTICE_CLAIM_TTL_MS = 5 * 60 * 1000;
 const repositorySchema = z.string().regex(
   /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
 );
@@ -85,7 +86,7 @@ const jobManifestSchema = z.object({
   enabled: z.boolean(),
   tools: z.array(cloudToolSchema).min(1).max(4),
   allowed_urls: z.array(allowedUrlSchema).max(20),
-  max_ai_credits: z.number().positive().max(100),
+  max_ai_credits: z.number().positive().max(100).nullable(),
   timeout_minutes: z.number().int().min(1).max(360),
   retention_days: z.number().int().min(1).max(90),
   output: z.literal("github-actions-summary-and-artifact"),
@@ -118,7 +119,8 @@ export const cloudJobToolInputSchema = z.discriminatedUnion("action", [
     timezone: z.literal("UTC").default("UTC"),
     tools: z.array(cloudToolSchema).min(1).max(4).default(["view", "rg", "glob"]),
     allowUrls: z.array(allowedUrlSchema).max(20).default([]),
-    maxAiCredits: z.number().positive().max(100).default(5),
+    maxAiCredits: z.number().int().min(30).max(100).default(30),
+    unlimitedAiCredits: z.boolean().default(false),
     timeoutMinutes: z.number().int().min(1).max(360).default(30),
     retentionDays: z.number().int().min(1).max(90).default(30),
   }).strict(),
@@ -168,7 +170,8 @@ const { $schema: _cloudJobExtensionSchema, ...extensionCloudJobInputSchema } =
     timezone: z.literal("UTC").optional(),
     tools: z.array(cloudToolSchema).max(4).optional(),
     allowUrls: z.array(allowedUrlSchema).max(20).optional(),
-    maxAiCredits: z.number().positive().max(100).optional(),
+    maxAiCredits: z.number().int().min(30).max(100).optional(),
+    unlimitedAiCredits: z.boolean().optional(),
     timeoutMinutes: z.number().int().min(1).max(360).optional(),
     retentionDays: z.number().int().min(1).max(90).optional(),
     draftId: z.string().uuid().optional(),
@@ -583,6 +586,9 @@ function workflowFor(
   const allowedUrls = manifest.allowed_urls
     .map((url) => `            --allow-url='${url}' \\\n`)
     .join("");
+  const creditLimit = manifest.max_ai_credits === null
+    ? ""
+    : `            --max-ai-credits ${manifest.max_ai_credits} \\\n`;
   const tokenExpression = tokenSecret === "GITHUB_TOKEN"
     ? "${{ github.token }}"
     : `\${{ secrets.${tokenSecret} }}`;
@@ -625,6 +631,7 @@ jobs:
         env:
           COPILOT_GITHUB_TOKEN: ${tokenExpression}
         run: |
+          set -o pipefail
           copilot -C ".pinocchio/jobs/${manifest.id}" \\
             -p "$(cat '.pinocchio/jobs/${manifest.id}/prompt.md')" \\
             --agent '${manifest.agent}' \\
@@ -632,10 +639,9 @@ jobs:
             --no-ask-user \\
             --allow-all-tools \\
             --available-tools ${available} \\
-${allowedUrls}\
-            --max-ai-credits ${manifest.max_ai_credits} \\
+${allowedUrls}${creditLimit}\
             --secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN \\
-            | tee result.md
+            2>&1 | tee result.md
           cat result.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Store result
@@ -745,7 +751,7 @@ export async function prepareCloudJob(
     enabled: true,
     tools: input.tools,
     allowed_urls: input.allowUrls,
-    max_ai_credits: input.maxAiCredits,
+    max_ai_credits: input.unlimitedAiCredits ? null : input.maxAiCredits,
     timeout_minutes: input.timeoutMinutes,
     retention_days: input.retentionDays,
     output: "github-actions-summary-and-artifact",
@@ -1126,6 +1132,10 @@ export async function changeCloudJob(
       await rm(jobDirectory(root, id), { recursive: true });
       await rm(workflowPath(root, id), { force: true });
     } else if (operation === "sync") {
+      if (manifest.max_ai_credits !== null &&
+          manifest.max_ai_credits < 30) {
+        throw new CloudJobsError("CLOUD_JOB_AI_CREDIT_LIMIT_TOO_LOW");
+      }
       const publishedPath = join(jobDirectory(root, id), `${manifest.agent}.agent.md`);
       const published = await readFile(publishedPath, "utf8");
       if (hash(published) !== manifest.profile_hash) {
@@ -1158,6 +1168,10 @@ export async function changeCloudJob(
       await writeFile(
         manifestPath(root, id),
         stringify(manifest, { lineWidth: 0 }),
+      );
+      await writeFile(
+        workflowPath(root, id),
+        workflowFor(manifest, config.jobs.token_secret),
       );
     } else {
       manifest = jobManifestSchema.parse({
@@ -1200,6 +1214,11 @@ const runSchema = z.object({
 const resultStateEntrySchema = z.object({
   notifiedThrough: z.number().int().nonnegative(),
   readThrough: z.number().int().nonnegative(),
+  claim: z.object({
+    id: z.string().uuid(),
+    through: z.number().int().nonnegative(),
+    expiresAt: z.string().datetime(),
+  }).strict().optional(),
 }).strict();
 
 const resultStateSchema = z.object({
@@ -1330,9 +1349,19 @@ export async function checkCloudJobResultNotices(
   }
   try {
     const state = await readResultState(root, config.jobs.repository);
+    const now = Date.now();
+    let stateChanged = false;
+    for (const entry of Object.values(state.jobs)) {
+      if (entry.claim && Date.parse(entry.claim.expiresAt) <= now) {
+        delete entry.claim;
+        stateChanged = true;
+      }
+    }
     const fresh = completed.filter(({ id, run }) =>
-      run.databaseId > (state.jobs[id]?.notifiedThrough ?? 0));
+      run.databaseId > (state.jobs[id]?.notifiedThrough ?? 0) &&
+      !state.jobs[id]?.claim);
     if (!fresh.length) {
+      if (stateChanged) await writeResultState(root, state);
       return {
         status: "ready" as const,
         agent,
@@ -1344,12 +1373,35 @@ export async function checkCloudJobResultNotices(
     }
     const ordered = fresh.sort((left, right) =>
       Date.parse(right.run.updatedAt) - Date.parse(left.run.updatedAt));
+    const selected = ordered.slice(0, RESULT_NOTICE_LIMIT);
+    const claimId = randomUUID();
+    const expiresAt = new Date(
+      now + RESULT_NOTICE_CLAIM_TTL_MS,
+    ).toISOString();
+    for (const id of new Set(selected.map((item) => item.id))) {
+      const previous = state.jobs[id] ?? {
+        notifiedThrough: 0,
+        readThrough: 0,
+      };
+      state.jobs[id] = {
+        ...previous,
+        claim: {
+          id: claimId,
+          through: Math.max(...selected
+            .filter((item) => item.id === id)
+            .map((item) => item.run.databaseId)),
+          expiresAt,
+        },
+      };
+    }
+    await writeResultState(root, state);
     return {
       status: "ready" as const,
       agent,
       repository: config.jobs.repository,
       checkedAt: new Date().toISOString(),
-      runs: ordered.slice(0, RESULT_NOTICE_LIMIT),
+      claimId,
+      runs: selected,
       omitted: Math.max(0, ordered.length - RESULT_NOTICE_LIMIT),
     };
   } finally {
@@ -1360,6 +1412,36 @@ export async function checkCloudJobResultNotices(
 
 export type CloudJobResultNoticeResult =
   Awaited<ReturnType<typeof checkCloudJobResultNotices>>;
+
+export async function releaseCloudJobResultNotices(
+  result: CloudJobResultNoticeResult,
+  explicitHome?: string,
+) {
+  if (result.status !== "ready" || !result.runs.length ||
+      !("claimId" in result)) return;
+  const config = await loadCloudJobsConfig(explicitHome);
+  if (config.jobs.repository !== result.repository) {
+    throw new CloudJobsError("CLOUD_RESULT_STATE_REPOSITORY_MISMATCH");
+  }
+  const root = await ensureCloudHome(explicitHome);
+  const lock = await acquireCloudLock(root, "result-state");
+  if (!lock) throw new CloudJobsError("CLOUD_RESULT_STATE_BUSY");
+  try {
+    const state = await readResultState(root, config.jobs.repository);
+    let changed = false;
+    for (const id of new Set(result.runs.map((item) => item.id))) {
+      const entry = state.jobs[id];
+      if (entry?.claim?.id === result.claimId) {
+        delete entry.claim;
+        changed = true;
+      }
+    }
+    if (changed) await writeResultState(root, state);
+  } finally {
+    await lock.handle.close();
+    await unlink(lock.path);
+  }
+}
 
 export async function markCloudJobResultNotices(
   result: CloudJobResultNoticeResult,
@@ -1380,9 +1462,14 @@ export async function markCloudJobResultNotices(
         notifiedThrough: 0,
         readThrough: 0,
       };
+      const claim = "claimId" in result &&
+        previous.claim?.id === result.claimId
+        ? undefined
+        : previous.claim;
       state.jobs[id] = {
-        ...previous,
         notifiedThrough: Math.max(previous.notifiedThrough, run.databaseId),
+        readThrough: previous.readThrough,
+        ...(claim ? { claim } : {}),
       };
     }
     await writeResultState(root, state);
@@ -1422,9 +1509,13 @@ async function markCloudJobRunRead(
       notifiedThrough: 0,
       readThrough: 0,
     };
+    const claim = previous.claim && previous.claim.through > databaseId
+      ? previous.claim
+      : undefined;
     state.jobs[id] = {
       notifiedThrough: Math.max(previous.notifiedThrough, databaseId),
       readThrough: Math.max(previous.readThrough, databaseId),
+      ...(claim ? { claim } : {}),
     };
     await writeResultState(root, state);
   } finally {
