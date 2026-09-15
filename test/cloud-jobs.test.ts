@@ -244,6 +244,7 @@ prompt_hash: ${"c".repeat(64)}
     );
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: failure/);
     assert.match(formatCloudJobResultNotices(first), /daily-release-notes: success/);
+    assert.match(formatCloudJobResultNotices(first), /Do not save notices or cloud results/);
     await markCloudJobResultNotices(first, cloudHome);
     const second = await checkCloudJobResultNotices(reference, cloudHome);
     assert.equal(second.status, "ready");

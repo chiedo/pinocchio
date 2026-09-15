@@ -128,12 +128,14 @@ exact preview remains the security boundary.
 
 ## Results and lifecycle
 
-When an enrolled agent is used, Pinocchio checks for newly completed runs
-belonging to that agent. Successful and failed runs are announced once on the
-next prompt, with their completion time, status and Actions URL. This is
-next-session delivery, not real-time messaging into a closed CLI session.
-Checks fail open when GitHub is unavailable, and result text is never imported
-into memory automatically.
+When an enrolled agent session is open, Pinocchio checks for newly completed
+runs belonging to that agent after startup and every five minutes. Successful
+and failed runs trigger a non-billable agent notification with their completion
+time, status and Actions URL. If the session closes before delivery, the result
+remains unread and is announced in the next matching session. Pinocchio cannot
+notify through a closed CLI session. Checks fail open when GitHub is
+unavailable, and notification/result text is never imported into memory
+automatically.
 
 ```bash
 npm run jobs -- list
