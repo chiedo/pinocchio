@@ -90,7 +90,7 @@ export async function main(args: string[]) {
       prompt,
       cron: values.cron,
       timezone: "UTC",
-      tools: values.tool ?? ["view", "rg", "glob"],
+      tools: values.tool,
       allowUrls: values["allow-url"] ?? [],
       maxAiCredits: Number(values["max-ai-credits"] ?? 30),
       unlimitedAiCredits: values["unlimited-ai-credits"] ?? false,

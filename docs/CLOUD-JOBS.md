@@ -1,6 +1,6 @@
 # Cloud-scheduled agent jobs
 
-Pinocchio can publish an approved, read-only agent job to a private GitHub
+Pinocchio can publish an approved agent job to a private GitHub
 repository. GitHub Actions runs the job even when the local computer is off.
 
 This feature does **not** upload Pinocchio memory or conversation history. It
@@ -96,13 +96,35 @@ npm run jobs -- publish \
 Schedules use five-field cron expressions in **UTC**. GitHub Actions schedules
 are approximate and are not suitable for exact-time or safety-critical work.
 
-The initial tool allowlist is deliberately read-only: `view`, `rg`, `glob` and
-`web_fetch`. Requested tools must already be present in the local agent profile.
-`web_fetch` additionally requires one or more reviewed HTTPS `--allow-url`
-values; unrestricted URL access is not enabled.
+New jobs default to `tools: ["*"]`: all available tools, shell commands,
+runner file paths, and URLs are permitted without interactive confirmation.
+They can install software and execute arbitrary code. This also means a job
+can read credentials supplied to its runner; only publish trusted prompts
+and review the exact upload before approval.
+
+Permissive jobs install Playwright 1.63.0 with Chromium, Firefox, WebKit, and
+their system dependencies. Agents can use the `playwright` command or Node.js
+`require('playwright')` (provided through `NODE_PATH`); ESM scripts can use
+`createRequire` to resolve that installation. Headless browsers need no desktop
+session. Save screenshots, downloads, and other deliverables in
+`PINOCCHIO_OUTPUT_DIR`; they are retained in a separate
+`pinocchio-<job-id>-output` Actions artifact, while the text response remains
+in the result artifact. Local browser logins and cookies are not transferred.
+
+To retain the restricted mode, explicitly select tools from `view`, `rg`,
+`glob`, and `web_fetch`, for example `--tool view --tool rg --tool glob`.
+Restricted tools must already be present in the local agent profile (or its
+tool list must contain `*`). `web_fetch` additionally requires one or more
+reviewed HTTPS `--allow-url` values. Do not combine `*` with other tools or
+URL allowlists: permissive mode allows every URL.
+
+Existing jobs retain their approved tool lists when synced or resumed.
+To upgrade one, preview and publish the same job ID with `tools: ["*"]`
+(CLI: `--tool '*'`), and explicitly approve the new upload.
 The workflow also grants only `contents: read`, disables persisted checkout
 credentials, starts Copilot in that job's directory so sibling job prompts and
-profiles are outside its allowed path, prevents overlapping runs, applies a
+profiles are outside restricted jobs' allowed path (permissive jobs can access
+the whole runner), prevents overlapping runs, applies a
 timeout and an AI-credit limit of at least 30, installs Pinocchio's tested
 Copilot CLI version, and retains the final response or CLI failure as an
 Actions artifact. Copilot failures propagate to the workflow instead of being
@@ -128,7 +150,7 @@ model-provided path. It then:
 - removes the generated Pinocchio memory/integration block;
 - removes memory and cloud-management tools;
 - removes local skills and MCP server definitions;
-- replaces the tool list with the approved read-only tools; and
+- replaces the tool list with the approved tools (`*` by default); and
 - blocks publication when authored instructions still reference likely local
   home paths.
 

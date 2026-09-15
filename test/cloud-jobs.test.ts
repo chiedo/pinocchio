@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import { parse } from "yaml";
 import { registerBinding } from "../src/binding-registry.js";
@@ -50,6 +52,11 @@ test("extension cloud tool schema is a host-compatible object", () => {
   if (defaultPreview.action !== "preview") throw new Error("INVALID_PREVIEW");
   assert.equal(defaultPreview.maxAiCredits, 30);
   assert.equal(defaultPreview.unlimitedAiCredits, false);
+  assert.deepEqual(defaultPreview.tools, ["*"]);
+  assert.throws(() => cloudJobToolInputSchema.parse({
+    ...defaultPreview,
+    tools: ["*", "view"],
+  }));
   assert.throws(() => cloudJobToolInputSchema.parse({
     ...defaultPreview,
     maxAiCredits: 29,
@@ -106,6 +113,20 @@ test("cloud export blocks authored local path dependencies", () => {
   assert.deepEqual(result.blockers, [
     "Local path reference must be removed or generalized: ~/private/source.yml",
   ]);
+});
+
+test("permissive cloud export enables all tools without exporting local integrations", () => {
+  const result = exportCloudAgentProfile(enrolledProfile(), ["*"]);
+  const frontmatter = parse(result.profile.split("---")[1] ?? "") as { tools: string[] };
+  assert.deepEqual(frontmatter.tools, ["*"]);
+  assert.match(result.profile, /require\('playwright'\)/);
+  assert.match(result.profile, /PINOCCHIO_OUTPUT_DIR/);
+  assert.doesNotMatch(result.profile, /pinocchio_memory|pinocchio_cloud_jobs|mcp-servers:|skills:/);
+  assert.match(result.warnings.join("\n"), /Unrestricted cloud execution/);
+  assert.throws(
+    () => exportCloudAgentProfile(enrolledProfile(), ["web_fetch"]),
+    /CLOUD_PROFILE_TOOL_NOT_CONFIGURED/,
+  );
 });
 
 test("local configuration and preview keep agent history local", async () => {
@@ -171,6 +192,79 @@ test("local configuration and preview keep agent history local", async () => {
     assert.equal((await lstat(draft)).mode & 0o077, 0);
     const saved = await readFile(draft, "utf8");
     assert.match(saved, /daily-release-notes/);
+    assert.match(preview.exactUpload.workflow, /--available-tools 'view' 'rg' 'glob'/);
+    assert.doesNotMatch(preview.exactUpload.workflow, /Install Playwright|Store screenshots|--allow-all \\/);
+
+    const permissive = await prepareCloudJob(reference, { ...parsed, tools: ["*"] }, cloudHome);
+    assert.deepEqual(permissive.manifest.tools, ["*"]);
+    assert.match(permissive.exactUpload.workflow, /--allow-all \\/);
+    assert.doesNotMatch(permissive.exactUpload.workflow, /--available-tools|--allow-url=/);
+    assert.match(permissive.exactUpload.workflow, /playwright@1\.63\.0/);
+    assert.match(permissive.exactUpload.workflow, /install --with-deps chromium firefox webkit/);
+    assert.match(permissive.exactUpload.workflow, /NODE_PATH=/);
+    assert.match(permissive.exactUpload.workflow, /PINOCCHIO_OUTPUT_DIR=/);
+    const workflow = parse(permissive.exactUpload.workflow) as {
+      jobs: { run: { steps: { name: string; run?: string; if?: string; with?: { name?: string; path?: string } }[] } };
+    };
+    const steps = workflow.jobs.run.steps;
+    const artifact = steps.find((step) => step.name === "Store screenshots and deliverables");
+    assert.equal(artifact?.if, "always()");
+    assert.equal(artifact?.with?.name, "pinocchio-daily-release-notes-output");
+    assert.equal(artifact?.with?.path, ".pinocchio/jobs/daily-release-notes/output/");
+    assert.equal(
+      steps.find((step) => step.name === "Store result")?.with?.path,
+      "result.md",
+    );
+    await assert.rejects(
+      prepareCloudJob(reference, { ...parsed, tools: ["*"], allowUrls: ["https://example.com"] }, cloudHome),
+      /CLOUD_UNRESTRICTED_URL_ALLOWLIST_CONFLICT/,
+    );
+
+    // Exercise the generated Linux setup in CI, never install browsers on a developer's machine.
+    if (process.env.GITHUB_ACTIONS === "true") {
+      const setup = steps.find((step) => step.name === "Install Playwright and browsers")?.run;
+      assert.ok(setup);
+      const execute = promisify(execFile);
+      const environmentFile = join(root, "browser-env");
+      const pathFile = join(root, "browser-path");
+      await execute("bash", ["-e", "-o", "pipefail", "-c", setup], {
+        cwd: root,
+        env: { ...process.env, RUNNER_TEMP: root, GITHUB_WORKSPACE: root, GITHUB_ENV: environmentFile, GITHUB_PATH: pathFile },
+        timeout: 600_000,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      const browserEnv = Object.fromEntries(
+        (await readFile(environmentFile, "utf8")).trim().split("\n").map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+      );
+      await execute(process.execPath, ["-e", `
+        const { chromium, firefox, webkit } = require('playwright');
+        const { join } = require('node:path');
+        (async () => {
+          for (const browserType of [chromium, firefox, webkit]) {
+            const browser = await browserType.launch();
+            try {
+              const page = await browser.newPage();
+              await page.setContent('<h1>Cloud browser screenshot</h1>');
+              await page.screenshot({ path: join(process.env.PINOCCHIO_OUTPUT_DIR, browserType.name() + '.png') });
+            } finally {
+              await browser.close();
+            }
+          }
+        })().catch(error => { console.error(error); process.exitCode = 1; });
+      `], {
+        cwd: root,
+        env: { ...process.env, ...browserEnv },
+        timeout: 120_000,
+      });
+      for (const browser of ["chromium", "firefox", "webkit"]) {
+        const screenshot = await readFile(join(root, ".pinocchio/jobs/daily-release-notes/output", `${browser}.png`));
+        assert.deepEqual([...screenshot.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+        assert.ok(screenshot.length > 100);
+      }
+    }
   } finally {
     await rm(root, { recursive: true });
   }

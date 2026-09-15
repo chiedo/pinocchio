@@ -49,7 +49,11 @@ const cronSchema = z.string().trim().refine((value) => {
   return fields.length === 5 &&
     fields.every((field) => /^[A-Za-z0-9*,/-]+$/.test(field));
 }, "Expected a five-field GitHub Actions cron expression");
-const cloudToolSchema = z.enum(["view", "rg", "glob", "web_fetch"]);
+const cloudToolSchema = z.enum(["*", "view", "rg", "glob", "web_fetch"]);
+const cloudToolsSchema = z.array(cloudToolSchema).min(1).max(4).refine(
+  (tools) => !tools.includes("*") || tools.length === 1,
+  "Use '*' alone for unrestricted tools",
+);
 const allowedUrlSchema = z.string().max(500).refine((value) => {
   try {
     const url = new URL(value);
@@ -86,7 +90,7 @@ const jobManifestSchema = z.object({
   cron: cronSchema,
   timezone: z.literal("UTC"),
   enabled: z.boolean(),
-  tools: z.array(cloudToolSchema).min(1).max(4),
+  tools: cloudToolsSchema,
   allowed_urls: z.array(allowedUrlSchema).max(20),
   max_ai_credits: z.number().positive().max(100).nullable(),
   timeout_minutes: z.number().int().min(1).max(360),
@@ -119,7 +123,7 @@ export const cloudJobToolInputSchema = z.discriminatedUnion("action", [
     prompt: z.string().trim().min(1).max(PROMPT_LIMIT),
     cron: cronSchema,
     timezone: z.literal("UTC").default("UTC"),
-    tools: z.array(cloudToolSchema).min(1).max(4).default(["view", "rg", "glob"]),
+    tools: cloudToolsSchema.default(["*"]),
     allowUrls: z.array(allowedUrlSchema).max(20).default([]),
     maxAiCredits: z.number().int().min(30).max(100).default(30),
     unlimitedAiCredits: z.boolean().default(false),
@@ -170,7 +174,7 @@ const { $schema: _cloudJobExtensionSchema, ...extensionCloudJobInputSchema } =
     prompt: z.string().max(PROMPT_LIMIT).optional(),
     cron: z.string().optional(),
     timezone: z.literal("UTC").optional(),
-    tools: z.array(cloudToolSchema).max(4).optional(),
+    tools: cloudToolsSchema.optional(),
     allowUrls: z.array(allowedUrlSchema).max(20).optional(),
     maxAiCredits: z.number().int().min(30).max(100).optional(),
     unlimitedAiCredits: z.boolean().optional(),
@@ -535,11 +539,17 @@ export function exportCloudAgentProfile(
       sourceTools.some((tool) => typeof tool !== "string")) {
     throw new CloudJobsError("CLOUD_PROFILE_TOOLS_REQUIRED");
   }
-  const unavailable = requestedTools.filter((tool) => !sourceTools.includes(tool));
+  const permissive = requestedTools.includes("*");
+  const unavailable = permissive || sourceTools.includes("*")
+    ? []
+    : requestedTools.filter((tool) => !sourceTools.includes(tool));
   if (unavailable.length) {
     throw new CloudJobsError("CLOUD_PROFILE_TOOL_NOT_CONFIGURED");
   }
   const warnings: string[] = [];
+  if (permissive) {
+    warnings.push("Unrestricted cloud execution: all tools, shell commands, runner files, and URLs are allowed. Jobs can install software and access credentials provided to the runner.");
+  }
   for (let index = tools.items.length - 1; index >= 0; index--) tools.delete(index);
   for (const tool of requestedTools) tools.add(tool);
   if (parsed.document.has("skills")) {
@@ -567,7 +577,10 @@ export function exportCloudAgentProfile(
     ),
   ].map((match) => `Local path reference must be removed or generalized: ${match[1]}`);
   const newline = parsed.newline;
-  const profile = `---${newline}${String(parsed.document).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${authoredBody}`;
+  const browserInstructions = permissive
+    ? `${newline}## Cloud runtime${newline}${newline}All available tools, shell commands, runner paths, and URLs are permitted. Playwright and Chromium, Firefox, and WebKit are preinstalled. Use the playwright CLI or Node.js require('playwright') for browser automation; prefer headless browsers. Save screenshots, downloads, and other deliverables under process.env.PINOCCHIO_OUTPUT_DIR (or $PINOCCHIO_OUTPUT_DIR in shell) to retain them as the job's output artifact. This runner does not have the user's local browser sessions, credentials, skills, or memory.${newline}`
+    : "";
+  const profile = `---${newline}${String(parsed.document).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${authoredBody}${browserInstructions}`;
   return {
     profile,
     warnings,
@@ -585,6 +598,34 @@ function workflowFor(
     ? `  schedule:\n    - cron: '${manifest.cron}'\n`
     : "";
   const available = manifest.tools.map((tool) => `'${tool}'`).join(" ");
+  const permissive = manifest.tools.includes("*");
+  const toolPermissions = permissive
+    ? "            --allow-all \\\n"
+    : `            --allow-all-tools \\\n            --available-tools ${available} \\\n`;
+  const browserSetup = permissive
+    ? `
+      - name: Install Playwright and browsers
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pinocchio-browser" playwright@1.63.0
+          "$RUNNER_TEMP/pinocchio-browser/node_modules/.bin/playwright" install --with-deps chromium firefox webkit
+          echo "$RUNNER_TEMP/pinocchio-browser/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "NODE_PATH=$RUNNER_TEMP/pinocchio-browser/node_modules" >> "$GITHUB_ENV"
+          echo "PINOCCHIO_OUTPUT_DIR=$GITHUB_WORKSPACE/.pinocchio/jobs/${manifest.id}/output" >> "$GITHUB_ENV"
+          mkdir -p ".pinocchio/jobs/${manifest.id}/output"
+`
+    : "";
+  const outputArtifact = permissive
+    ? `
+      - name: Store screenshots and deliverables
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pinocchio-${manifest.id}-output
+          path: .pinocchio/jobs/${manifest.id}/output/
+          if-no-files-found: ignore
+          retention-days: ${manifest.retention_days}
+`
+    : "";
   const allowedUrls = manifest.allowed_urls
     .map((url) => `            --allow-url='${url}' \\\n`)
     .join("");
@@ -628,7 +669,7 @@ jobs:
 
       - name: Install Copilot CLI
         run: npm install -g @github/copilot@${manifest.copilot_version}
-
+${browserSetup}
       - name: Install approved agent snapshot
         run: |
           mkdir -p "$HOME/.copilot/agents"
@@ -644,9 +685,7 @@ ${tokenEnvironment}
             --agent '${manifest.agent}' \\
             --silent \\
             --no-ask-user \\
-            --allow-all-tools \\
-            --available-tools ${available} \\
-${allowedUrls}${creditLimit}\
+${toolPermissions}${allowedUrls}${creditLimit}\
             --secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN \\
             2>&1 | tee result.md
           cat result.md >> "$GITHUB_STEP_SUMMARY"
@@ -659,6 +698,7 @@ ${allowedUrls}${creditLimit}\
           path: result.md
           if-no-files-found: warn
           retention-days: ${manifest.retention_days}
+${outputArtifact}\
 `;
 }
 
@@ -744,7 +784,11 @@ export async function prepareCloudJob(
   const { agent, binding } = await boundCloudAgent(reference);
   const config = await loadCloudJobsConfig(explicitHome);
   const source = await readFile(binding.definition.path, "utf8");
-  if (input.tools.includes("web_fetch") !== (input.allowUrls.length > 0)) {
+  if (input.tools.includes("*") && input.allowUrls.length > 0) {
+    throw new CloudJobsError("CLOUD_UNRESTRICTED_URL_ALLOWLIST_CONFLICT");
+  }
+  if (!input.tools.includes("*") &&
+      input.tools.includes("web_fetch") !== (input.allowUrls.length > 0)) {
     throw new CloudJobsError("CLOUD_WEB_URL_ALLOWLIST_REQUIRED");
   }
   const exported = exportCloudAgentProfile(source, input.tools);
