@@ -13,6 +13,8 @@ import { EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, Too
 import { isRecord } from "./identity.js";
 import { CLOUD_JOBS_TOOL } from "./cloud-jobs.js";
 
+export const MANAGED_AGENT_TOOLS = [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL] as const;
+
 const BEGIN = "<!-- pinocchio-memory:v1 -->";
 const END = "<!-- /pinocchio-memory:v1 -->";
 // Retain the original block verbatim so existing profiles can be refreshed or removed.
@@ -219,7 +221,7 @@ export async function enroll(reference: BindingReference, explicitShared = false
   if (tools.items.some((item) => String(item).startsWith("pinocchio_"))) throw new ToolError("PROFILE_SERVER_CONFLICT");
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
-  for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL]) tools.add(tool);
+  for (const tool of MANAGED_AGENT_TOOLS) tools.add(tool);
   const block = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", newline);
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body}${newline}${block}${newline}`;
   await loadBinding(reference);
@@ -259,7 +261,7 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
     if (obsoleteTools.includes(String(tools.items[index]))) tools.delete(index);
   }
   let addedExtensionTool = false;
-  for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL]) {
+  for (const tool of MANAGED_AGENT_TOOLS) {
     if (!tools.items.some((item) => String(item) === tool)) {
       tools.add(tool);
       addedExtensionTool = true;

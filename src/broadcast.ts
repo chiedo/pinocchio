@@ -9,6 +9,7 @@ import { fingerprint, hasCode, loadBinding, privateDirectory } from "./binding-r
 import type { BindingReference } from "./binding-registry.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
 import { isRecord } from "./identity.js";
+import { MANAGED_AGENT_TOOLS } from "./enrollment.js";
 
 export const BROADCAST_DISPLAY_PROMPT = "Pinocchio instruction update";
 export const BROADCAST_HEARTBEAT_MS = 5_000;
@@ -35,6 +36,8 @@ const sessionSchema = z.object({
   requestId: z.string().uuid().optional(),
   status: z.enum(["pending", "updated", "restart-required", "failed"]),
   code: z.string().optional(),
+  missingTools: z.array(z.string()).optional(),
+  unmatchedTools: z.array(z.string()).optional(),
 }).strict();
 type SessionRecord = z.infer<typeof sessionSchema>;
 
@@ -118,10 +121,10 @@ export async function broadcastStatus(root: string, now = Date.now()) {
     const record = sessionSchema.parse(value);
     if (record.heartbeat > now || now - record.heartbeat > BROADCAST_LIVE_MS) continue;
     const agent = request?.agents.find((item) => item.bindingId === record.bindingId);
+    const { code: _code, missingTools: _missingTools, unmatchedTools: _unmatchedTools, ...rest } = record;
     if (request && agent?.status === "failed") {
-      sessions.push({ ...record, requestId: request.id, status: "failed", code: agent.code ?? "BROADCAST_REFRESH_FAILED" });
+      sessions.push({ ...rest, requestId: request.id, status: "failed", code: agent.code ?? "BROADCAST_REFRESH_FAILED" });
     } else if (request && request.targets.some((target) => target.bindingId === record.bindingId) && record.requestId !== request.id) {
-      const { code: _code, ...rest } = record;
       sessions.push({ ...rest, requestId: request.id, status: "pending" });
     } else sessions.push(record);
   }
@@ -162,21 +165,35 @@ export class BroadcastListener {
     const request = await latestBroadcast(this.root);
     const target = request?.targets.find((item) => item.bindingId === reference.bindingId);
     if (!request || !target || !this.record) return;
-    if (this.record.requestId === request.id && this.record.status !== "pending") return;
+    if (this.record.requestId === request.id && this.record.status !== "pending" &&
+        this.record.code !== "TOOLS_NOT_AVAILABLE") return;
     this.delivery = undefined;
     this.record.requestId = request.id;
+    delete this.record.code;
+    delete this.record.missingTools;
+    delete this.record.unmatchedTools;
     const reason = request.runtime !== this.runtime ? "RUNTIME_CHANGED"
-      : target.settingsHash !== this.record.settingsHash ? "AGENT_SETTINGS_CHANGED"
-      : target.tools.some((tool) => !offeredTools.includes(tool)) ? "TOOLS_NOT_AVAILABLE" : undefined;
+      : target.settingsHash !== this.record.settingsHash ? "AGENT_SETTINGS_CHANGED" : undefined;
     if (reason) {
       this.record.status = "restart-required"; this.record.code = reason;
+      await this.save();
+      return;
+    }
+    const offered = new Set(offeredTools);
+    const required = new Set<string>(MANAGED_AGENT_TOOLS);
+    const missingTools = MANAGED_AGENT_TOOLS.filter((tool) => !offered.has(tool));
+    // Profile tools are an allowlist, not dependencies: hosts ignore unknown/product-specific names.
+    const unmatchedTools = target.tools.filter((tool) => !required.has(tool) && !offered.has(tool));
+    if (unmatchedTools.length) this.record.unmatchedTools = unmatchedTools;
+    if (missingTools.length) {
+      this.record.status = "failed"; this.record.code = "TOOLS_NOT_AVAILABLE";
+      this.record.missingTools = missingTools;
       await this.save();
       return;
     }
     const snapshot = await broadcastSnapshot(reference);
     if (JSON.stringify(snapshot.target) !== JSON.stringify(target)) fail("BROADCAST_TARGET_CHANGED");
     this.record.status = "pending";
-    delete this.record.code;
     this.delivery = { request, target };
     await this.save();
     return [

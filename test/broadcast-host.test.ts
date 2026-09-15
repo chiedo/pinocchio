@@ -3,7 +3,7 @@ import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { approveAll, CopilotClient, RuntimeConnection, ToolSet } from "@github/copilot-sdk";
+import { approveAll, CopilotClient, RuntimeConnection, ToolSet, type CopilotSession } from "@github/copilot-sdk";
 import { setup } from "../src/setup-cli.js";
 import { broadcastStatus, BROADCAST_DISPLAY_PROMPT } from "../src/broadcast.js";
 import { upgradeBroadcast } from "../src/broadcast-cli.js";
@@ -11,7 +11,7 @@ import { EXTENSION_SEARCH_TOOL } from "../src/memory-protocol.js";
 import { createWorkspace } from "./support/workspace.js";
 import { startSyntheticProvider } from "./support/provider.js";
 
-test("two open host sessions receive one broadcast without a user prompt or memory capture", { timeout: 120_000 }, async () => {
+test("open and restarted host sessions receive broadcasts despite unmatched allowlist entries", { timeout: 120_000 }, async () => {
   const workspace = await createWorkspace();
   const observed: string[] = [];
   const provider = await startSyntheticProvider({
@@ -23,9 +23,9 @@ test("two open host sessions receive one broadcast without a user prompt or memo
   const clients: CopilotClient[] = [];
   try {
     await rm(join(repository, ".github", "extensions", "pinocchio"), { recursive: true });
-    await setup({ configRoot: config, name: "broadcast-agent", global: true, tools: "view" });
-    const sessions = [];
-    for (let index = 0; index < 2; index++) {
+    await setup({ configRoot: config, name: "broadcast-agent", global: true, tools: "view,web_search,exec" });
+    const sessions: CopilotSession[] = [];
+    async function openSession() {
       const client = new CopilotClient({
         connection: RuntimeConnection.forStdio({
           path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
@@ -48,6 +48,8 @@ test("two open host sessions receive one broadcast without a user prompt or memo
       await session.rpc.tools.initializeAndValidate();
       sessions.push(session);
     }
+    await openSession();
+    await openSession();
     async function waitFor(predicate: (status: Awaited<ReturnType<typeof broadcastStatus>>) => boolean) {
       const deadline = Date.now() + 30_000;
       let status = await broadcastStatus(config);
@@ -62,6 +64,11 @@ test("two open host sessions receive one broadcast without a user prompt or memo
     await writeFile(profile, (await readFile(profile, "utf8")) + "\nSynthetic broadcast rule: keep replies short.\n");
     await upgradeBroadcast(config);
     await waitFor((status) => status.sessions.length === 2 && status.sessions.every((item) => item.status === "updated"));
+    await openSession();
+    await waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
+    assert.ok((await broadcastStatus(config)).sessions.every((item) =>
+      item.unmatchedTools?.includes("web_search") && item.unmatchedTools.includes("exec") &&
+      item.missingTools === undefined && item.code === undefined));
     for (const session of sessions) {
       const events = await session.getEvents();
       const notices = events.filter((event) => event.type === "user.message" && event.data.content === BROADCAST_DISPLAY_PROMPT);
@@ -75,7 +82,7 @@ test("two open host sessions receive one broadcast without a user prompt or memo
       await session.disconnect();
     }
     assert.equal(provider.counts().failures, 0);
-    assert.equal(provider.counts().requests, 2);
+    assert.equal(provider.counts().requests, 3);
     assert.ok(observed.every((messages) => messages.includes("Synthetic broadcast rule: keep replies short.")));
   } finally {
     for (const client of clients) await client.stop();
