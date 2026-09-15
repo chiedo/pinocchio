@@ -172,13 +172,25 @@ stored in the broadcast registry.
 
 `status` reports each live listener as `pending`, `updated`, `restart-required`, or
 `failed`. `updated` means the matching instruction snapshot was supplied and the
-queued turn completed, with the target runtime and tools checked. It is not proof
+queued turn completed, with the target runtime and Pinocchio's managed tools checked. It is not proof
 of model compliance or replacement of the host's original system prompt. The
 refresh supplements existing instructions; conflicting higher-priority instructions
 still win. Restart for a clean replacement of the agent's system instructions.
 
-Runtime changes, changed YAML settings, or unavailable tools report
-`restart-required`. The command deliberately does not call the host's extension
+Runtime changes or changed YAML settings report `restart-required`.
+Missing managed memory/cloud-job tools report `failed` with
+`code: TOOLS_NOT_AVAILABLE` and the exact `missingTools`. The listener rechecks
+these automatically every five seconds, so tools finishing initialization
+can recover without another broadcast or restart. If they remain missing,
+inspect the Pinocchio extension's load status rather than repeatedly restarting.
+
+An agent's `tools` list is an allowlist, not a list of required dependencies.
+Unmatched non-Pinocchio entries (including platform-specific names and aliases
+the metadata does not advertise) are reported as `unmatchedTools`, but do not
+block an instruction refresh. This neither enables those tools nor changes
+the profile or its permissions.
+
+The command deliberately does not call the host's extension
 reload API: it would replace the listener mid-delivery and is not yet certified as
 a safe cross-process upgrade. In particular, adding the cloud-job tool to an old
 session still needs a restart. Inspect the per-agent errors for partial failures;

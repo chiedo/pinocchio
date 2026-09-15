@@ -13,10 +13,11 @@ import {
 } from "../src/broadcast.js";
 import type { BroadcastRequest } from "../src/broadcast.js";
 import { main, upgradeBroadcast } from "../src/broadcast-cli.js";
+import { MANAGED_AGENT_TOOLS } from "../src/enrollment.js";
 
-async function fixture() {
+async function fixture(tools?: string) {
   const root = await mkdtemp(join(tmpdir(), "pinocchio-broadcast-"));
-  const options = { configRoot: root, name: "first", global: true };
+  const options = { configRoot: root, name: "first", global: true, ...(tools ? { tools } : {}) };
   try {
     await setup(options);
     const profile = join(root, "agents", "first.agent.md");
@@ -64,8 +65,8 @@ test("broadcast refresh preserves enrollment and requires delivery completion be
   } finally { await rm(f.root, { recursive: true }); }
 });
 
-test("runtime, settings, and unavailable tools report restart required, never updated", async (t) => {
-  for (const reason of ["RUNTIME_CHANGED", "AGENT_SETTINGS_CHANGED", "TOOLS_NOT_AVAILABLE"]) {
+test("runtime and settings changes still require a restart, never updated", async (t) => {
+  for (const reason of ["RUNTIME_CHANGED", "AGENT_SETTINGS_CHANGED"]) {
     await t.test(reason, async () => {
       const f = await fixture();
       try {
@@ -73,7 +74,7 @@ test("runtime, settings, and unavailable tools report restart required, never up
           await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("tools:", "model: changed-model\ntools:"));
         }
         const request = await f.request(reason === "RUNTIME_CHANGED" ? { runtime: "a".repeat(64) } : {});
-        assert.equal(await f.listener.prepare(f.reference, reason === "TOOLS_NOT_AVAILABLE" ? [] : request.targets[0]!.tools), undefined);
+        assert.equal(await f.listener.prepare(f.reference, request.targets[0]!.tools), undefined);
         const record = (await broadcastStatus(f.root)).sessions[0];
         assert.equal(record?.status, "restart-required");
         assert.equal(record?.code, reason);
@@ -81,6 +82,72 @@ test("runtime, settings, and unavailable tools report restart required, never up
       } finally { await rm(f.root, { recursive: true }); }
     });
   }
+});
+
+test("unmatched allowlist entries do not block delivery or modify agent permissions", async () => {
+  const f = await fixture("view,web_search,exec");
+  try {
+    const original = await readFile(f.profile, "utf8");
+    const request = await f.request();
+    assert.deepEqual(request.targets[0]!.tools, ["view", "web_search", "exec", ...MANAGED_AGENT_TOOLS]);
+    const prompt = await f.listener.prepare(f.reference, ["view", ...MANAGED_AGENT_TOOLS]);
+    assert.ok(prompt);
+    const pending = (await broadcastStatus(f.root)).sessions[0];
+    assert.equal(pending?.status, "pending");
+    assert.deepEqual(pending?.unmatchedTools, ["web_search", "exec"]);
+    assert.equal(pending?.missingTools, undefined);
+    await f.listener.acknowledge(f.reference);
+    const updated = (await broadcastStatus(f.root)).sessions[0];
+    assert.equal(updated?.status, "updated");
+    assert.equal(updated?.code, undefined);
+    assert.deepEqual(updated?.unmatchedTools, ["web_search", "exec"]);
+    assert.equal(await readFile(f.profile, "utf8"), original);
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test("missing managed tools fail explicitly and recover on the same broadcast when tools load", async () => {
+  const f = await fixture();
+  try {
+    for (const missing of MANAGED_AGENT_TOOLS) {
+      const request = await f.request();
+      const tools = request.targets[0]!.tools;
+      const incomplete = tools.filter((tool) => tool !== missing);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        assert.equal(await f.listener.prepare(f.reference, incomplete), undefined);
+        const failed = (await broadcastStatus(f.root)).sessions[0];
+        assert.equal(failed?.status, "failed");
+        assert.equal(failed?.code, "TOOLS_NOT_AVAILABLE");
+        assert.deepEqual(failed?.missingTools, [missing]);
+        await assert.rejects(f.listener.acknowledge(f.reference), { code: "BROADCAST_NO_DELIVERY" });
+      }
+      assert.ok(await f.listener.prepare(f.reference, tools));
+      await f.listener.acknowledge(f.reference);
+      const updated = (await broadcastStatus(f.root)).sessions[0];
+      assert.equal(updated?.requestId, request.id);
+      assert.equal(updated?.status, "updated");
+      assert.equal(updated?.code, undefined);
+      assert.equal(updated?.missingTools, undefined);
+      assert.equal(await f.listener.prepare(f.reference, tools), undefined);
+    }
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test("new broadcasts clear previous tool diagnostics while delivery is pending", async () => {
+  const f = await fixture("view,web_search");
+  try {
+    await f.request();
+    assert.equal(await f.listener.prepare(f.reference, []), undefined);
+    const failed = (await broadcastStatus(f.root)).sessions[0];
+    assert.deepEqual(failed?.missingTools, [...MANAGED_AGENT_TOOLS]);
+    assert.deepEqual(failed?.unmatchedTools, ["view", "web_search"]);
+    const request = await f.request();
+    const pending = (await broadcastStatus(f.root)).sessions[0];
+    assert.equal(pending?.requestId, request.id);
+    assert.equal(pending?.status, "pending");
+    assert.equal(pending?.code, undefined);
+    assert.equal(pending?.missingTools, undefined);
+    assert.equal(pending?.unmatchedTools, undefined);
+  } finally { await rm(f.root, { recursive: true }); }
 });
 
 test("independent listeners acknowledge independently and exclude expired heartbeats", async () => {
