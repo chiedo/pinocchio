@@ -90,8 +90,26 @@ const build = await run(process.execPath, [
   join("node_modules", "typescript", "bin", "tsc"),
 ]);
 let tests = { code: null, durationMs: 0, stdout: "" };
+let model = { code: 0, durationMs: 0, stdout: "" };
 let testFiles = [];
 if (build.code === 0) {
+  if (process.env.PINOCCHIO_TEST_MODEL_CACHE) {
+    await mkdir(process.env.PINOCCHIO_TEST_MODEL_CACHE, {
+      recursive: true,
+      mode: 0o700,
+    });
+    model = await run(process.env.PINOCCHIO_TEST_PYTHON, [
+      join("semantic", "engine.py"),
+      "prepare",
+      process.env.PINOCCHIO_TEST_MODEL_CACHE,
+    ]);
+    if (model.code === 0) {
+      process.env.PINOCCHIO_TEST_MODEL_DIRECTORY =
+        process.env.PINOCCHIO_TEST_MODEL_CACHE;
+    }
+  }
+}
+if (build.code === 0 && model.code === 0) {
   testFiles = (await readdir(join("dist", "test")))
     .filter((name) => name.endsWith(".test.js"))
     .sort()
@@ -111,7 +129,9 @@ const scenarios = [
 ].sort();
 const summary = {
   schemaVersion: 1,
-  status: build.code === 0 && tests.code === 0 ? "passed" : "failed",
+  status: build.code === 0 && model.code === 0 && tests.code === 0
+    ? "passed"
+    : "failed",
   commit: process.env.GITHUB_SHA ??
     execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   run: {
@@ -135,6 +155,8 @@ const summary = {
   cache: {
     npm: process.env.PINOCCHIO_NPM_CACHE_HIT ?? "unknown",
     pip: process.env.PINOCCHIO_PIP_CACHE_HIT ?? "unknown",
+    model: process.env.PINOCCHIO_MODEL_CACHE_HIT ?? "unknown",
+    playwright: process.env.PINOCCHIO_PLAYWRIGHT_CACHE_HIT ?? "unknown",
   },
   concurrency,
   testFiles: testFiles.map(basename),
@@ -143,8 +165,9 @@ const summary = {
   counts: tapSummary(tests.stdout),
   phasesMs: {
     build: Math.round(build.durationMs),
+    model: Math.round(model.durationMs),
     tests: Math.round(tests.durationMs),
-    total: Math.round(build.durationMs + tests.durationMs),
+    total: Math.round(build.durationMs + model.durationMs + tests.durationMs),
   },
 };
 await mkdir("test-results", { recursive: true });
@@ -153,4 +176,8 @@ await writeFile(
   `${JSON.stringify(summary, null, 2)}\n`,
 );
 
-process.exitCode = build.code === 0 ? tests.code ?? 1 : build.code ?? 1;
+process.exitCode = build.code !== 0
+  ? build.code ?? 1
+  : model.code !== 0
+    ? model.code ?? 1
+    : tests.code ?? 1;

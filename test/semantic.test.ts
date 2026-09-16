@@ -6,9 +6,8 @@ import test, { after, before } from "node:test";
 import type { TestContext } from "node:test";
 import { loadBinding } from "../src/binding-registry.js";
 import { MemoryStore } from "../src/memory-store.js";
-import { main as semanticMain } from "../src/semantic-cli.js";
 import { main as memoryMain } from "../src/memory-cli.js";
-import { activeIndex, indexDirectory, semanticConfig, sha, writeAtomic } from "../src/semantic-files.js";
+import { activeIndex, indexDirectory, sha, writeAtomic } from "../src/semantic-files.js";
 import { rebuildIndex, indexStatus } from "../src/semantic-index.js";
 import { SemanticRuntime } from "../src/semantic-runtime.js";
 import { SemanticProcess } from "../src/semantic-process.js";
@@ -22,6 +21,7 @@ import { memoryLaunch } from "../src/memory-mcp.js";
 import { SEARCH_TOOL } from "../src/memory-protocol.js";
 import { isRecord } from "../src/identity.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { prepareTestSemanticModel } from "./support/semantic-model.js";
 
 let root: string;
 let configuration: SemanticConfig;
@@ -29,8 +29,7 @@ const report: Record<string, unknown> = { gate: "local-semantic-retrieval", mode
 before(async () => {
   assert.ok(process.env.PINOCCHIO_TEST_PYTHON, "PINOCCHIO_TEST_PYTHON_REQUIRED; install semantic/requirements.txt in an isolated environment");
   root = await mkdtemp(join(tmpdir(), "pinocchio-semantic-model-"));
-  await semanticMain(["prepare", "--config-root", root, "--python", process.env.PINOCCHIO_TEST_PYTHON]);
-  configuration = await semanticConfig(root);
+  configuration = await prepareTestSemanticModel(root);
 });
 after(async () => {
   await mkdir("test-results", { recursive: true });

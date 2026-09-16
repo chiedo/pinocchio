@@ -17,11 +17,11 @@ import { ContextLedger } from "../src/context-ledger.js";
 import { memoryLaunch } from "../src/memory-mcp.js";
 import { SEARCH_TOOL, SAVE_TOOL } from "../src/memory-protocol.js";
 import { isRecord } from "../src/identity.js";
-import { main as prepare } from "../src/semantic-cli.js";
-import { semanticConfig, activeIndex, writeAtomic } from "../src/semantic-files.js";
+import { activeIndex, writeAtomic } from "../src/semantic-files.js";
 import { rebuildIndex } from "../src/semantic-index.js";
 import type { SemanticConfig } from "../src/semantic-types.js";
 import { createProductionFixture } from "./support/production-fixture.js";
+import { prepareTestSemanticModel } from "./support/semantic-model.js";
 
 const contract = await acceptance();
 const required = releaseFaults;
@@ -34,8 +34,7 @@ let config: SemanticConfig;
 before(async () => {
   assert.ok(process.env.PINOCCHIO_TEST_PYTHON);
   root = await mkdtemp(join(tmpdir(), "pinocchio-release-model-"));
-  await prepare(["prepare", "--config-root", root, "--python", process.env.PINOCCHIO_TEST_PYTHON]);
-  config = await semanticConfig(root);
+  config = await prepareTestSemanticModel(root);
 });
 after(async () => {
   report.status = required.every((name) => cases.includes(name)) ? "pass" : "fail";

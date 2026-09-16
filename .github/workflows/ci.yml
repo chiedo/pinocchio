@@ -32,6 +32,16 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: semantic/requirements.txt
+      - id: semantic-model-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pinocchio-semantic-model
+          key: semantic-model-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('semantic/model.json') }}
+      - id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-1.63.0
       - run: npm ci
       - run: npm run typecheck
       - name: Prepare pinned offline semantic test runtime
@@ -43,6 +53,9 @@ jobs:
         env:
           PINOCCHIO_NPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           PINOCCHIO_PIP_CACHE_HIT: ${{ steps.setup-python.outputs.cache-hit }}
+          PINOCCHIO_MODEL_CACHE_HIT: ${{ steps.semantic-model-cache.outputs.cache-hit }}
+          PINOCCHIO_PLAYWRIGHT_CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
+          PINOCCHIO_TEST_MODEL_CACHE: ${{ runner.temp }}/pinocchio-semantic-model
       - name: Package pinned preview only after the complete suite passes
         run: |
           mkdir -p build
