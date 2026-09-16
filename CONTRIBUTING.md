@@ -45,7 +45,11 @@ Use Node.js 22.18.0 (`.node-version`), run `npm ci` and `npm run typecheck`,
 prepare the Python environment from [SEMANTIC.md](docs/SEMANTIC.md), then run
 the complete suite with `PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
 The test runner uses two concurrent test files; each fixture owns its temporary
-home, configuration, repository, database, and report filename.
+home, configuration, repository, database, and report filename. Set
+`PINOCCHIO_TEST_CONCURRENCY=1` to reproduce a serial comparison without changing
+which files or scenarios run. The public-safe `ci-timing.json` artifact records
+the complete file/scenario inventory, runner and dependency versions, cache
+state, concurrency, result counts, and build/test durations.
 CI runs this same full suite for pull requests, pushes to `main`, and manual
 workflow dispatches. Pull-request branches do not also run a duplicate
 push-triggered copy; the `synthetic` job remains the required check and keeps

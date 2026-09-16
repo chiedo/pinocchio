@@ -21,11 +21,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - id: setup-node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - id: setup-python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -38,6 +40,9 @@ jobs:
           .venv/bin/pip install --disable-pip-version-check -r semantic/requirements.txt
           echo "PINOCCHIO_TEST_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
       - run: npm test
+        env:
+          PINOCCHIO_NPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          PINOCCHIO_PIP_CACHE_HIT: ${{ steps.setup-python.outputs.cache-hit }}
       - name: Package pinned preview only after the complete suite passes
         run: |
           mkdir -p build
@@ -67,5 +72,6 @@ jobs:
             test-results/semantic.json
             test-results/reliability.json
             test-results/installation.json
+            test-results/ci-timing.json
           if-no-files-found: error
           retention-days: 7
