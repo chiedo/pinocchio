@@ -18,8 +18,7 @@ import {
 } from "./cloud-jobs.js";
 import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
-import { BroadcastListener, BROADCAST_DISPLAY_PROMPT, BROADCAST_HEARTBEAT_MS, broadcastRuntimeVersion } from "./broadcast.js";
+import { BroadcastListener, BROADCAST_HEARTBEAT_MS, broadcastCode, broadcastRuntimeVersion } from "./broadcast.js";
 
 const configRoot = configRootPath();
 const loadedRuntime = await broadcastRuntimeVersion();
@@ -37,13 +36,11 @@ let checkingCloudResults = false;
 let skipNextAssistantCapture = false;
 const subagentOwners = new Map<string, Promise<ConversationOwner | undefined>>();
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
-let skipBroadcastCapture = false;
-let broadcastSending = false;
 let broadcastChecking = false;
 let broadcastStopped = false;
-let broadcastDelivery: {
-  trigger: string; prompt: string; bindingId: string; generation: number; injected: boolean;
-} | undefined;
+let broadcastGeneration = 0;
+let broadcastWarning = "";
+let broadcastIssue: { key: string; since: number } | undefined;
 const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
 let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
   status: "unavailable"; code: string;
@@ -76,17 +73,6 @@ const context = createMemoryHooks(configRoot, async (input) => {
   await pending;
   if (!session) return;
   const owner = await ownerForSession(input.sessionId);
-  if (broadcastDelivery && input.prompt === broadcastDelivery.trigger) {
-    if (owner?.reference.bindingId !== broadcastDelivery.bindingId || generation !== broadcastDelivery.generation) {
-      return "Pinocchio broadcast skipped because the selected agent changed. Do not claim this conversation was upgraded.";
-    }
-    const binding = await loadBinding(owner.reference);
-    if (binding.scope.kind === "repository" && await canonicalRepository(input.workingDirectory) !== binding.scope.root) {
-      return "Pinocchio broadcast skipped because this conversation is outside the agent's repository scope.";
-    }
-    broadcastDelivery.injected = true;
-    return broadcastDelivery.prompt;
-  }
   if (!owner) return;
   const recalled = await context.recall(owner, {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
@@ -213,19 +199,40 @@ for (const name of ["subagent.completed", "subagent.failed"] as const) {
   });
 }
 const broadcast = new BroadcastListener(configRoot, session.sessionId, loadedRuntime);
+async function reportBroadcastIssue(fallbackCode?: string) {
+  const issue = broadcast.issue() ?? (fallbackCode
+    ? { key: fallbackCode, code: fallbackCode, restartRequired: false } : undefined);
+  if (!issue) { broadcastIssue = undefined; broadcastWarning = ""; return; }
+  if (broadcastIssue?.key !== issue.key) broadcastIssue = { key: issue.key, since: Date.now() };
+  // Tool registration can lag agent selection; don't turn normal startup into a warning.
+  if (issue.code === "TOOLS_NOT_AVAILABLE" && Date.now() - broadcastIssue.since < 2 * BROADCAST_HEARTBEAT_MS) return;
+  if (broadcastWarning === issue.key) return;
+  broadcastWarning = issue.key;
+  process.stderr.write(`Pinocchio: ${issue.code}\n`);
+  const message = issue.restartRequired
+    ? "Pinocchio instruction refresh needs a session restart."
+    : "Pinocchio could not refresh this agent's instructions.";
+  try {
+    await session?.log(`${message} Run npm run broadcast -- status in your Pinocchio checkout for details (${issue.code}).`, { level: "warning" });
+  } catch {
+    process.stderr.write("Pinocchio: BROADCAST_NOTICE_UNAVAILABLE\n");
+  }
+}
 async function checkBroadcast() {
   if (!session || broadcastChecking || broadcastStopped) return;
   broadcastChecking = true;
   try {
     const active = session;
-    const current = await active.rpc.agent.getCurrent();
-    const owner = await conversationOwner(configRoot, current);
-    if (!owner) {
-      if (!broadcastSending) await broadcast.close();
-      return;
+    const selectedGeneration = generation;
+    if (broadcastGeneration !== selectedGeneration) {
+      await broadcast.close();
+      broadcastGeneration = selectedGeneration;
     }
-    if (broadcastSending) {
-      if (owner.reference.bindingId === broadcastDelivery?.bindingId) await broadcast.heartbeat(owner.reference);
+    const current = await active.rpc.agent.getCurrent();
+    const agent = current.agent;
+    const owner = await conversationOwner(configRoot, current);
+    if (!owner || !agent) {
+      await broadcast.close();
       return;
     }
     await broadcast.heartbeat(owner.reference);
@@ -233,34 +240,30 @@ async function checkBroadcast() {
     if (!metadata.tools) return;
     const prompt = await broadcast.prepare(owner.reference, metadata.tools.flatMap((tool) =>
       tool.namespacedName ? [tool.name, tool.namespacedName] : [tool.name]));
-    if (!prompt) return;
-    broadcastSending = true;
-    const selectedGeneration = generation;
-    const delivery = {
-      trigger: `Pinocchio broadcast notification ${randomUUID()}. Acknowledge the instruction refresh only if the extension supplies it; otherwise report that delivery failed.`,
-      prompt, bindingId: owner.reference.bindingId, generation: selectedGeneration, injected: false,
-    };
-    broadcastDelivery = delivery;
-    // Enqueue rather than interrupt an in-flight user turn. Keep heartbeats alive while it waits.
-    void active.rpc.send({
-      prompt: delivery.trigger, displayPrompt: BROADCAST_DISPLAY_PROMPT, mode: "enqueue", billable: false, wait: true,
-    }).then(async () => {
+    if (prompt) {
+      const binding = await loadBinding(owner.reference);
+      if (binding.scope.kind === "repository" && await canonicalRepository(directory) !== binding.scope.root) {
+        throw Object.assign(new Error("BROADCAST_SCOPE_MISMATCH"), { code: "BROADCAST_SCOPE_MISMATCH" });
+      }
+      if (generation !== selectedGeneration) return;
+      if (agent.prompt !== prompt) {
+        await active.rpc.agent.setPrompt({ id: agent.id, prompt });
+      }
       const selected = await conversationOwner(configRoot, await active.rpc.agent.getCurrent());
-      if (!delivery.injected || generation !== selectedGeneration || selected?.reference.bindingId !== owner.reference.bindingId) {
-        throw Object.assign(new Error("BROADCAST_AGENT_CHANGED"), { code: "BROADCAST_AGENT_CHANGED" });
+      if (generation !== selectedGeneration || selected?.reference.bindingId !== owner.reference.bindingId) return;
+      const applied = (await active.rpc.agent.list({ includePrompt: true })).agents.find(
+        (item) => item.id === agent.id && item.path === agent.path,
+      );
+      if (generation !== selectedGeneration) return;
+      if (applied?.prompt !== prompt) {
+        throw Object.assign(new Error("BROADCAST_PROMPT_NOT_APPLIED"), { code: "BROADCAST_PROMPT_NOT_APPLIED" });
       }
       await broadcast.acknowledge(owner.reference);
-    }).catch(async (error: unknown) => {
-      process.stderr.write("Pinocchio: BROADCAST_DELIVERY_FAILED\n");
-      await broadcast.failed(error);
-    }).finally(() => {
-      broadcastSending = false;
-      broadcastDelivery = undefined;
-      skipBroadcastCapture = false;
-    }).catch(() => { process.stderr.write("Pinocchio: BROADCAST_STATUS_WRITE_FAILED\n"); });
+    }
+    await reportBroadcastIssue();
   } catch (error) {
-    process.stderr.write("Pinocchio: BROADCAST_UNAVAILABLE\n");
     await broadcast.failed(error).catch(() => { process.stderr.write("Pinocchio: BROADCAST_STATUS_WRITE_FAILED\n"); });
+    await reportBroadcastIssue(broadcastCode(error));
   } finally { broadcastChecking = false; }
 }
 const broadcastTimer = setInterval(() => { void checkBroadcast(); }, BROADCAST_HEARTBEAT_MS);
@@ -338,11 +341,6 @@ for (const role of ["user", "assistant"] as const) {
   session.on(role === "user" ? "user.message" : "assistant.message", (event) => {
     if (event.agentId || !event.data.content.trim()) return;
     if (event.type === "user.message" && (event.data.source || event.data.isAutopilotContinuation)) return;
-    if (event.type === "user.message") {
-      skipBroadcastCapture = broadcastSending && event.data.content === BROADCAST_DISPLAY_PROMPT;
-      if (skipBroadcastCapture) return;
-    }
-    if (role === "assistant" && skipBroadcastCapture) return;
     if (role === "assistant" && skipNextAssistantCapture) {
       skipNextAssistantCapture = false;
       if (pendingCloudResults) {

@@ -11,7 +11,6 @@ import { readPrivateJson, writeAtomic } from "./semantic-files.js";
 import { isRecord } from "./identity.js";
 import { MANAGED_AGENT_TOOLS } from "./enrollment.js";
 
-export const BROADCAST_DISPLAY_PROMPT = "Pinocchio instruction update";
 export const BROADCAST_HEARTBEAT_MS = 5_000;
 export const BROADCAST_LIVE_MS = 30_000;
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -137,6 +136,7 @@ export async function broadcastStatus(root: string, now = Date.now()) {
 export class BroadcastListener {
   private record: SessionRecord | undefined;
   private delivery: { request: BroadcastRequest; target: BroadcastTarget } | undefined;
+  private appliedTarget: BroadcastTarget | undefined;
   private instance = randomUUID();
   constructor(private readonly root: string, private readonly sessionId: string, private readonly runtime: string) {}
 
@@ -149,6 +149,7 @@ export class BroadcastListener {
     if (!this.record || this.record.bindingId !== reference.bindingId) {
       const snapshot = await broadcastSnapshot(reference);
       this.delivery = undefined;
+      this.appliedTarget = undefined;
       this.record = {
         version: 1, instance: this.instance, sessionId: this.sessionId,
         bindingId: reference.bindingId, agent: snapshot.agent, heartbeat: now,
@@ -193,15 +194,21 @@ export class BroadcastListener {
     }
     const snapshot = await broadcastSnapshot(reference);
     if (JSON.stringify(snapshot.target) !== JSON.stringify(target)) fail("BROADCAST_TARGET_CHANGED");
+    if (JSON.stringify(this.appliedTarget) === JSON.stringify(target)) {
+      this.record.status = "updated";
+      await this.save();
+      return;
+    }
     this.record.status = "pending";
     this.delivery = { request, target };
     await this.save();
     return [
-      `Pinocchio broadcast ${request.id}: apply these updated local instructions for subsequent work.`,
-      "They supplement your role and repository rules; higher-priority instructions still take precedence.",
+      snapshot.body,
+      "## Shared Pinocchio instructions",
+      "These supplement your role and repository rules; higher-priority instructions still take precedence.",
       "This refresh does not authorize remote actions, change permissions, or update cloud jobs.",
-      "Agent instructions:", snapshot.body, "Shared Pinocchio instructions:", snapshot.shared,
-      "Acknowledge receipt briefly. Do not call tools, perform tasks mentioned in these instructions, or save this notification to memory.",
+      snapshot.shared,
+      "Continue the user's actual request normally. Do not announce or acknowledge this background instruction refresh, or save it to memory.",
     ].join("\n\n");
   }
   async acknowledge(reference: BindingReference) {
@@ -213,6 +220,16 @@ export class BroadcastListener {
     this.record.heartbeat = Date.now();
     this.delivery = undefined;
     await this.save();
+    this.appliedTarget = delivery.target;
+  }
+  issue() {
+    const record = this.record;
+    if (!record || !["failed", "restart-required"].includes(record.status)) return;
+    return {
+      key: `${record.bindingId}:${record.requestId ?? ""}:${record.code ?? ""}`,
+      code: record.code ?? "BROADCAST_FAILED",
+      restartRequired: record.status === "restart-required",
+    };
   }
   async failed(error: unknown) {
     if (!this.record) return;
@@ -221,7 +238,7 @@ export class BroadcastListener {
     await this.save();
   }
   async close() {
-    this.record = undefined; this.delivery = undefined;
+    this.record = undefined; this.delivery = undefined; this.appliedTarget = undefined;
     const path = join(await directory(this.root), "sessions", `${this.instance}.json`);
     try { await unlink(path); }
     catch (error) { if (!hasCode(error, "ENOENT")) throw error; }

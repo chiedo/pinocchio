@@ -54,6 +54,8 @@ test("broadcast refresh preserves enrollment and requires delivery completion be
     assert.ok(request);
     const prompt = await f.listener.prepare(f.reference, request.targets[0]!.tools);
     assert.match(prompt ?? "", /Use short answers/);
+    assert.match(prompt ?? "", /Continue the user's actual request normally/);
+    assert.doesNotMatch(prompt ?? "", /Acknowledge receipt|Do not call tools|Pinocchio broadcast [0-9a-f-]{36}/);
     assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
     await f.listener.acknowledge(f.reference);
     assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "updated");
@@ -62,6 +64,51 @@ test("broadcast refresh preserves enrollment and requires delivery completion be
     assert.doesNotMatch(saved, /Use short answers/);
     await f.listener.close();
     assert.deepEqual((await broadcastStatus(f.root)).sessions, []);
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test("identical broadcasts reuse the applied snapshot without another delivery", async () => {
+  const f = await fixture();
+  try {
+    const first = await f.request();
+    const prompt = await f.listener.prepare(f.reference, first.targets[0]!.tools);
+    assert.ok(prompt);
+    await f.listener.acknowledge(f.reference);
+    const second = await f.request();
+    assert.notEqual(first.id, second.id);
+    assert.equal(await f.listener.prepare(f.reference, second.targets[0]!.tools), undefined);
+    const updated = (await broadcastStatus(f.root)).sessions[0];
+    assert.equal(updated?.requestId, second.id);
+    assert.equal(updated?.status, "updated");
+    assert.equal(f.listener.issue(), undefined);
+    await writeFile(join(f.root, "pinocchio", "AGENTS.md"), "A genuinely new shared rule.\n");
+    const third = await f.request();
+    assert.match(await f.listener.prepare(f.reference, third.targets[0]!.tools) ?? "", /A genuinely new shared rule/);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
+    await f.listener.acknowledge(f.reference);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "updated");
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test("failed host delivery never reports updated or repeatedly retries the same request", async () => {
+  const f = await fixture();
+  try {
+    const first = await f.request();
+    assert.ok(await f.listener.prepare(f.reference, first.targets[0]!.tools));
+    await f.listener.failed(Object.assign(new Error("Synthetic host failure"), { code: "BROADCAST_PROMPT_NOT_APPLIED" }));
+    const issue = f.listener.issue();
+    assert.equal(issue?.code, "BROADCAST_PROMPT_NOT_APPLIED");
+    assert.equal(issue?.restartRequired, false);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      assert.equal(await f.listener.prepare(f.reference, first.targets[0]!.tools), undefined);
+      assert.deepEqual(f.listener.issue(), issue);
+      assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "failed");
+    }
+    await assert.rejects(f.listener.acknowledge(f.reference), { code: "BROADCAST_NO_DELIVERY" });
+    const retry = await f.request();
+    assert.ok(await f.listener.prepare(f.reference, retry.targets[0]!.tools));
+    await f.listener.acknowledge(f.reference);
+    assert.equal(f.listener.issue(), undefined);
   } finally { await rm(f.root, { recursive: true }); }
 });
 

@@ -163,25 +163,36 @@ or publish/sync cloud jobs. Repository/plugin profiles that require explicit
 shared-enrollment approval are reported as failures rather than changed implicitly.
 Run their documented enrollment refresh separately.
 
-Each listening foreground conversation checks every five seconds and queues an
-instruction-only turn, without interrupting ongoing work. The extension supplies
-only that selected agent's updated body and shared instructions at the turn boundary.
-It does not copy these notifications into conversation memory. The profile text is
-sent to the session's configured model just like normal instructions; it is not
-stored in the broadcast registry.
+Each listening foreground conversation checks every five seconds and updates the
+selected agent's authored prompt through the host API. **Refreshes are silent:**
+no synthetic user message, acknowledgment, or extra model request, including on
+startup and extension reload. Ongoing work is not interrupted; subsequent work uses
+the refreshed instructions. Repeating an unchanged broadcast does not stack
+instructions. Updates are not copied into conversation memory.
+
+Only the selected agent's body and shared instructions are updated; its identity,
+YAML settings, tools, and permissions are preserved. The profile text goes to the
+session's configured model as part of normal instructions, not a separate refresh
+turn. It is not stored in the broadcast registry.
 
 `status` reports each live listener as `pending`, `updated`, `restart-required`, or
-`failed`. `updated` means the matching instruction snapshot was supplied and the
-queued turn completed, with the target runtime and Pinocchio's managed tools checked. It is not proof
-of model compliance or replacement of the host's original system prompt. The
-refresh supplements existing instructions; conflicting higher-priority instructions
-still win. Restart for a clean replacement of the agent's system instructions.
+`failed`. `updated` means the host accepted the matching authored prompt and the
+extension read it back, with the target runtime and Pinocchio's managed tools
+checked. It is not proof of model compliance or removal of old instructions from
+conversation history. Repository rules and higher-priority instructions still win.
+Restart for a clean conversation without earlier instruction snapshots.
+
+A failed refresh or required restart produces one actionable timeline warning per
+failure, not an agent response. Hosts without the prompt-update API fail explicitly;
+Pinocchio never falls back to sending a chat turn. Inspect `status` for details and
+rerun `upgrade` after resolving the problem.
 
 Runtime changes or changed YAML settings report `restart-required`.
 Missing managed memory/cloud-job tools report `failed` with
 `code: TOOLS_NOT_AVAILABLE` and the exact `missingTools`. The listener rechecks
 these automatically every five seconds, so tools finishing initialization
-can recover without another broadcast or restart. If they remain missing,
+can recover without another broadcast or restart. Startup tool warnings allow two
+polling intervals for registration to finish. If tools remain missing,
 inspect the Pinocchio extension's load status rather than repeatedly restarting.
 
 An agent's `tools` list is an allowlist, not a list of required dependencies.
