@@ -1,18 +1,24 @@
 import type { BindingReference } from "./binding-registry.js";
 import {
   CloudJobsError,
-  checkCloudJobDrift,
-  changeCloudJob,
+  bootstrapCloudJobsRepository,
+  cancelCloudJobRun,
+  changeOwnerCloudJob,
   cloudJobToolInputSchema,
-  configureCloudJobs,
+  configureOwnerCloudJobs,
+  discoverCloudJobs,
   handleCloudJobTool,
-  latestCloudJobResult,
-  listCloudJobs,
+  inspectCloudJob,
+  latestOwnerCloudJobResult,
+  listCloudJobHistory,
   prepareCloudJob,
-  publishCloudJob,
+  publishOwnerCloudJob,
+  registerCloudJobRepository,
+  runCloudJobNow,
+  checkOwnerCloudJobDrift,
 } from "./cloud-jobs.js";
 import type { CloudJobToolInput } from "./cloud-jobs.js";
-import { localJobsUnavailable } from "./jobs-compatibility.js";
+import { LocalJobs } from "./local-jobs.js";
 import { isRecord } from "./identity.js";
 import { z } from "zod";
 
@@ -32,8 +38,9 @@ const jobsInputSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/).optional(),
   prompt: z.string().max(32 * 1024).optional(),
   cron: z.string().optional(),
-  timezone: z.literal("UTC").optional(),
-  tools: z.array(z.enum(["*", "view", "rg", "glob", "web_fetch"])).optional(),
+  timezone: z.string().max(100).optional(),
+  workingDirectory: z.string().optional(),
+  tools: z.array(z.string().min(1).max(200)).max(50).optional(),
   allowUrls: z.array(z.string()).optional(),
   maxAiCredits: z.number().int().min(30).max(100).optional(),
   unlimitedAiCredits: z.boolean().optional(),
@@ -43,6 +50,9 @@ const jobsInputSchema = z.object({
   approvalToken: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   operation: z.enum(["sync", "pause", "resume", "delete"]).optional(),
   includeResult: z.boolean().optional(),
+  runId: z.string().uuid().optional(),
+  databaseId: z.number().int().positive().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
 }).strict();
 
 export const jobsToolInputSchema = jobsInputSchema;
@@ -57,38 +67,105 @@ function requireField<T>(value: T | undefined, code = "INVALID_ARGUMENTS"): T {
   return value;
 }
 
-function localResult(input: z.infer<typeof jobsInputSchema>) {
-  if (input.action === "list" || input.action === "inspect" ||
-      input.action === "history" || input.action === "latest") {
-    return localJobsUnavailable();
-  }
-  return {
-    ...localJobsUnavailable(),
-    action: input.action,
-    blockers: ["LOCAL_BACKGROUND_TASK_API_UNAVAILABLE"],
-  };
+function requireConfirmed(value: boolean | undefined) {
+  if (value !== true) throw new CloudJobsError("EXPLICIT_CONFIRMATION_REQUIRED");
 }
 
 export async function handleJobsTool(
   reference: BindingReference,
   raw: unknown,
   explicitHome?: string,
+  localJobs?: LocalJobs,
 ) {
   const input = jobsInputSchema.parse(raw);
-  if (input.backend === "local") return localResult(input);
+  if (input.backend === "local") {
+    if (!localJobs) throw new CloudJobsError("LOCAL_OWNER_SESSION_UNAVAILABLE");
+    if (input.action === "preview") {
+      return localJobs.preview(reference, {
+        id: requireField(input.id),
+        prompt: requireField(input.prompt),
+        cron: requireField(input.cron),
+        timezone: input.timezone ?? "UTC",
+        workingDirectory: requireField(input.workingDirectory),
+        requiredTools: input.tools ?? [],
+        timeoutMinutes: input.timeoutMinutes ?? 30,
+        ...(input.maxAiCredits === undefined
+          ? {}
+          : { maxAiCredits: input.maxAiCredits }),
+      });
+    }
+    if (input.action === "publish") {
+      requireConfirmed(input.confirmed);
+      return localJobs.publish(
+        reference,
+        requireField(input.draftId),
+        requireField(input.approvalToken),
+      );
+    }
+    if (input.action === "list") {
+      return { status: "ready" as const, backend: "local" as const, jobs: localJobs.list(reference) };
+    }
+    if (input.action === "inspect") {
+      return {
+        status: "ready" as const,
+        backend: "local" as const,
+        job: localJobs.inspect(reference, requireField(input.id)),
+      };
+    }
+    if (input.action === "history") {
+      return {
+        status: "ready" as const,
+        backend: "local" as const,
+        runs: localJobs.history(reference, requireField(input.id), input.limit ?? 20),
+      };
+    }
+    if (input.action === "latest") {
+      return localJobs.latest(
+        reference,
+        requireField(input.id),
+        input.includeResult ?? false,
+      );
+    }
+    if (input.action === "run") {
+      requireConfirmed(input.confirmed);
+      return localJobs.run(reference, requireField(input.id));
+    }
+    if (input.action === "cancel") {
+      requireConfirmed(input.confirmed);
+      return localJobs.cancel(reference, requireField(input.runId));
+    }
+    if (input.action === "change") {
+      requireConfirmed(input.confirmed);
+      if (input.operation === "sync") throw new CloudJobsError("INVALID_ARGUMENTS");
+      return localJobs.change(
+        reference,
+        requireField(input.id),
+        requireField(input.operation),
+      );
+    }
+    throw new CloudJobsError("INVALID_ARGUMENTS");
+  }
   if (input.action === "configure") {
-    return configureCloudJobs({
+    requireConfirmed(input.confirmed);
+    return configureOwnerCloudJobs(reference, {
       repository: requireField(input.repository),
       ...(input.branch ? { branch: input.branch } : {}),
       ...(input.tokenSecret ? { tokenSecret: input.tokenSecret } : {}),
-      ...(explicitHome ? { cloudHome: explicitHome } : {}),
-    });
+    }, explicitHome);
   }
   if (input.action === "bootstrap") {
-    return (await import("./cloud-jobs.js")).bootstrapCloudJobsRepository(
+    requireConfirmed(input.confirmed);
+    const repository = requireField(input.repository);
+    const result = await bootstrapCloudJobsRepository(
       explicitHome,
-      input.repository,
+      repository,
     );
+    await registerCloudJobRepository(reference, {
+      repository,
+      ...(input.branch ? { branch: input.branch } : {}),
+      ...(input.tokenSecret ? { tokenSecret: input.tokenSecret } : {}),
+    }, explicitHome);
+    return result;
   }
   if (input.action === "preview") {
     const cloud = cloudJobToolInputSchema.parse({
@@ -108,26 +185,44 @@ export async function handleJobsTool(
     return prepareCloudJob(reference, cloud, explicitHome);
   }
   if (input.action === "publish") {
-    return publishCloudJob(requireField(input.draftId), requireField(input.approvalToken), explicitHome);
+    requireConfirmed(input.confirmed);
+    return publishOwnerCloudJob(
+      reference,
+      requireField(input.draftId),
+      requireField(input.approvalToken),
+      explicitHome,
+    );
   }
   if (input.action === "list") {
+    const local = localJobs
+      ? { status: "ready" as const, jobs: localJobs.list(reference) }
+      : { status: "unavailable" as const, code: "LOCAL_OWNER_SESSION_UNAVAILABLE" };
     try {
-      const cloud = await listCloudJobs(explicitHome, input.repository);
-      return { status: "ready", local: localJobsUnavailable(), cloud };
+      const cloud = await discoverCloudJobs(reference, explicitHome, input.repository);
+      if (input.backend === "cloud") return cloud;
+      return {
+        status: cloud.status === "ready" && local.status === "ready"
+          ? "ready" as const
+          : "partial" as const,
+        local,
+        cloud,
+      };
     } catch (error) {
       if (!(error instanceof CloudJobsError)) throw error;
+      if (input.backend === "cloud") throw error;
       return {
         status: "partial",
-        local: localJobsUnavailable(),
+        local,
         cloud: { status: "unavailable", code: error.code },
       };
     }
   }
   if (input.action === "drift") {
-    return checkCloudJobDrift(reference.configRoot, explicitHome, input.repository);
+    return checkOwnerCloudJobDrift(reference, 0, explicitHome, input.repository);
   }
   if (input.action === "latest") {
-    return latestCloudJobResult(
+    return latestOwnerCloudJobResult(
+      reference,
       requireField(input.id),
       input.includeResult ?? false,
       explicitHome,
@@ -135,23 +230,46 @@ export async function handleJobsTool(
     );
   }
   if (input.action === "change") {
-    return changeCloudJob(
+    requireConfirmed(input.confirmed);
+    return changeOwnerCloudJob(
+      reference,
       requireField(input.id),
       requireField(input.operation),
-      reference.configRoot,
       explicitHome,
       input.approvalToken,
       input.repository,
     );
   }
-  if (input.action === "inspect" || input.action === "history" ||
-      input.action === "run" || input.action === "cancel") {
-    return {
-      ...localJobsUnavailable(),
-      backend: input.backend ?? "cloud",
-      action: input.action,
-      detail: "This operation is not yet exposed by the current cloud adapter.",
-    };
+  if (input.action === "inspect") {
+    return inspectCloudJob(
+      reference,
+      requireField(input.id),
+      explicitHome,
+      input.repository,
+    );
+  }
+  if (input.action === "history") {
+    return listCloudJobHistory(reference, requireField(input.id), {
+      ...(input.repository ? { repository: input.repository } : {}),
+      limit: input.limit ?? 20,
+      includeResults: input.includeResult ?? false,
+    }, explicitHome);
+  }
+  if (input.action === "run") {
+    requireConfirmed(input.confirmed);
+    return runCloudJobNow(reference, requireField(input.id), {
+      ...(input.repository ? { repository: input.repository } : {}),
+    }, explicitHome);
+  }
+  if (input.action === "cancel") {
+    requireConfirmed(input.confirmed);
+    return cancelCloudJobRun(
+      reference,
+      requireField(input.id),
+      requireField(input.databaseId),
+      { ...(input.repository ? { repository: input.repository } : {}) },
+      explicitHome,
+    );
   }
   return handleCloudJobTool(reference, raw);
 }

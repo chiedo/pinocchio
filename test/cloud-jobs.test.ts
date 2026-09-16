@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,16 +10,25 @@ import { parse } from "yaml";
 import { registerBinding } from "../src/binding-registry.js";
 import {
   checkCloudJobResultNotices,
+  checkOwnerCloudJobDrift,
+  cancelCloudJobRun,
   cloudJobToolInputSchema,
   configureCloudJobs,
+  configureOwnerCloudJobs,
+  discoverCloudJobs,
   extensionCloudJobInputSchema,
   exportCloudAgentProfile,
   formatCloudJobResultNotices,
+  inspectCloudJob,
   latestCloudJobResult,
+  listCloudJobHistory,
   loadCloudJobsConfig,
   markCloudJobResultNotices,
   prepareCloudJob,
+  registerCloudJobRepository,
   releaseCloudJobResultNotices,
+  resolveCloudJobOwner,
+  runCloudJobNow,
 } from "../src/cloud-jobs.js";
 
 test("extension cloud tool schema is a host-compatible object", () => {
@@ -86,6 +96,10 @@ ${body}
 - Search local memory before every request.
 <!-- /pinocchio-memory:v1 -->
 `;
+}
+
+function digest(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 test("cloud export preserves authored instructions without local memory wiring", () => {
@@ -170,6 +184,8 @@ test("local configuration and preview keep agent history local", async () => {
     });
     assert.equal(parsed.action, "preview");
     const preview = await prepareCloudJob(reference, parsed, cloudHome);
+    const remoteId = preview.manifest.remote_id;
+    assert.ok(remoteId);
     assert.equal(preview.status, "approval-required");
     assert.equal(preview.sourceProfile, profile);
     assert.match(
@@ -177,7 +193,9 @@ test("local configuration and preview keep agent history local", async () => {
       /permissions:\n  contents: read\n  copilot-requests: write/,
     );
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
-    assert.match(preview.exactUpload.workflow, /copilot -C "\.pinocchio\/jobs\/daily-release-notes"/);
+    assert.match(preview.exactUpload.workflow, new RegExp(
+      `copilot -C "\\\\.pinocchio/jobs/${remoteId}"`,
+    ));
     assert.match(preview.exactUpload.workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
     assert.doesNotMatch(preview.exactUpload.workflow, /COPILOT_GITHUB_TOKEN: \$\{\{/);
     assert.match(preview.exactUpload.workflow, /--secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN/);
@@ -209,8 +227,8 @@ test("local configuration and preview keep agent history local", async () => {
     const steps = workflow.jobs.run.steps;
     const artifact = steps.find((step) => step.name === "Store screenshots and deliverables");
     assert.equal(artifact?.if, "always()");
-    assert.equal(artifact?.with?.name, "pinocchio-daily-release-notes-output");
-    assert.equal(artifact?.with?.path, ".pinocchio/jobs/daily-release-notes/output/");
+    assert.equal(artifact?.with?.name, `pinocchio-${remoteId}-output`);
+    assert.equal(artifact?.with?.path, `.pinocchio/jobs/${remoteId}/output/`);
     assert.equal(
       steps.find((step) => step.name === "Store result")?.with?.path,
       "result.md",
@@ -260,7 +278,9 @@ test("local configuration and preview keep agent history local", async () => {
         timeout: 120_000,
       });
       for (const browser of ["chromium", "firefox", "webkit"]) {
-        const screenshot = await readFile(join(root, ".pinocchio/jobs/daily-release-notes/output", `${browser}.png`));
+        const screenshot: Buffer = await readFile(
+          join(root, `.pinocchio/jobs/${remoteId}/output`, `${browser}.png`),
+        );
         assert.deepEqual([...screenshot.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
         assert.ok(screenshot.length > 100);
       }
@@ -312,6 +332,7 @@ if (args[0] === "repo" && args[1] === "view") {
   writeFileSync(join(directory, "job.yml"), ${JSON.stringify(`version: 1
 id: daily-release-notes
 agent: synthetic-agent
+repository: example/pinocchio-jobs
 cron: "30 12 * * 1-5"
 timezone: UTC
 enabled: true
@@ -368,8 +389,14 @@ prompt_hash: ${"c".repeat(64)}
     );
     assert.equal(first.runs[0]?.content, "Synthetic cloud result.\n");
     assert.equal("content" in (first.runs[1] ?? {}), false);
-    assert.match(formatCloudJobResultNotices(first), /daily-release-notes: failure/);
-    assert.match(formatCloudJobResultNotices(first), /daily-release-notes: success/);
+    assert.match(
+      formatCloudJobResultNotices(first),
+      /daily-release-notes \[example\/pinocchio-jobs\]: failure/,
+    );
+    assert.match(
+      formatCloudJobResultNotices(first),
+      /daily-release-notes \[example\/pinocchio-jobs\]: success/,
+    );
     assert.match(formatCloudJobResultNotices(first), /Synthetic cloud result/);
     assert.match(formatCloudJobResultNotices(first), /Do not ask whether to retrieve/);
     assert.match(formatCloudJobResultNotices(first), /do not save notices or cloud results to memory automatically/i);
@@ -387,7 +414,10 @@ prompt_hash: ${"c".repeat(64)}
     );
     await markCloudJobResultNotices(retried, cloudHome);
     const deliveredState = JSON.parse(
-      await readFile(join(cloudHome, "result-state.json"), "utf8"),
+      await readFile(
+        join(cloudHome, `result-state-${digest("example/pinocchio-jobs")}.json`),
+        "utf8",
+      ),
     ) as {
       jobs: Record<string, {
         notifiedThrough: number;
@@ -410,7 +440,10 @@ prompt_hash: ${"c".repeat(64)}
     );
     assert.equal(latest.status, "ready");
     assert.equal("result" in latest && latest.result, "Synthetic cloud result.\n");
-    const statePath = join(cloudHome, "result-state.json");
+    const statePath = join(
+      cloudHome,
+      `result-state-${digest("example/pinocchio-jobs")}.json`,
+    );
     assert.equal((await lstat(statePath)).mode & 0o077, 0);
     const state = JSON.parse(await readFile(statePath, "utf8")) as {
       jobs: Record<string, {
@@ -422,6 +455,322 @@ prompt_hash: ${"c".repeat(64)}
       notifiedThrough: 11,
       readThrough: 11,
     });
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(root, { recursive: true });
+  }
+});
+
+test("registered owner repositories aggregate and route management per destination", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pinocchio-cloud-catalog-test-"));
+  const originalPath = process.env.PATH;
+  try {
+    const home = join(root, "home");
+    const configRoot = join(home, ".copilot");
+    const cloudHome = join(home, ".pinocchio");
+    const agents = join(configRoot, "agents");
+    const bin = join(root, "bin");
+    const log = join(root, "gh.log");
+    const failRepositoryB = join(root, "fail-repository-b");
+    await mkdir(agents, { recursive: true, mode: 0o700 });
+    await mkdir(bin, { mode: 0o700 });
+    const profile = join(agents, "synthetic-agent.agent.md");
+    await writeFile(profile, enrolledProfile(), { mode: 0o600 });
+    const reference = await registerBinding({
+      configRoot,
+      definitionPath: profile,
+      origin: "user",
+      originRoot: agents,
+      scope: { kind: "global" },
+    });
+    const owner = await resolveCloudJobOwner(reference);
+    const repositoryA = "example/jobs-a";
+    const repositoryB = "example/jobs-b";
+    const remoteA = "summary--aaaaaaaaaaaaaaaa";
+    const remoteB = "summary--bbbbbbbbbbbbbbbb";
+    const manifest = (repository: string, remoteId: string, uid: string) => `version: 1
+id: summary
+agent: synthetic-agent
+repository: ${repository}
+uid: ${uid}
+owner: ${owner.id}
+owner_label: synthetic-agent
+remote_id: ${remoteId}
+cron: "0 12 * * *"
+timezone: UTC
+enabled: true
+tools: [view]
+allowed_urls: []
+max_ai_credits: 30
+timeout_minutes: 10
+retention_days: 7
+output: github-actions-summary-and-artifact
+copilot_version: 1.0.83
+source_hash: ${"a".repeat(64)}
+profile_hash: ${"b".repeat(64)}
+prompt_hash: ${"c".repeat(64)}
+`;
+    const gh = join(bin, "gh");
+    await writeFile(gh, `#!${process.execPath}
+const { appendFileSync, existsSync, mkdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+const repository = args[args.indexOf("--repo") + 1] || args[2];
+const remote = repository === ${JSON.stringify(repositoryA)}
+  ? ${JSON.stringify(remoteA)}
+  : ${JSON.stringify(remoteB)};
+if (args[0] === "repo" && args[1] === "view") {
+  process.stdout.write(JSON.stringify({
+    isPrivate: true,
+    viewerPermission: "WRITE",
+    defaultBranchRef: { name: "main" },
+  }));
+} else if (args[0] === "repo" && args[1] === "clone") {
+  if (args[2] === ${JSON.stringify(repositoryB)} &&
+      existsSync(${JSON.stringify(failRepositoryB)})) {
+    process.exit(1);
+  }
+  const destination = args[3];
+  const selectedRemote = args[2] === ${JSON.stringify(repositoryA)}
+    ? ${JSON.stringify(remoteA)}
+    : ${JSON.stringify(remoteB)};
+  const directory = join(destination, ".pinocchio", "jobs", selectedRemote);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, "job.yml"),
+    args[2] === ${JSON.stringify(repositoryA)}
+      ? ${JSON.stringify(manifest(repositoryA, remoteA, "1".repeat(64)))}
+      : ${JSON.stringify(manifest(repositoryB, remoteB, "2".repeat(64)))},
+  );
+} else if (args[0] === "run" && args[1] === "list") {
+  process.stdout.write(JSON.stringify([{
+    databaseId: repository === ${JSON.stringify(repositoryA)} ? 101 : 202,
+    status: "completed",
+    conclusion: "success",
+    url: "https://example.test/runs/" +
+      (repository === ${JSON.stringify(repositoryA)} ? "101" : "202"),
+    createdAt: "2026-09-16T12:00:00Z",
+    updatedAt: "2026-09-16T12:02:00Z",
+    displayTitle: "summary",
+    workflowName: "Pinocchio - " + remote,
+  }]));
+} else if (args[0] === "run" && args[1] === "download") {
+  const directory = args[args.indexOf("--dir") + 1];
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, "result.md"),
+    "Result from " + repository + ".\\n",
+  );
+} else if (args[0] === "workflow" && args[1] === "run") {
+  process.exit(0);
+} else if (args[0] === "run" && args[1] === "view") {
+  process.stdout.write(JSON.stringify({
+    databaseId: Number(args[2]),
+    status: "in_progress",
+    conclusion: null,
+    url: "https://example.test/runs/" + args[2],
+    createdAt: "2026-09-16T12:00:00Z",
+    updatedAt: "2026-09-16T12:01:00Z",
+    displayTitle: "summary",
+    workflowName: "Pinocchio - " + remote,
+  }));
+} else if (args[0] === "run" && args[1] === "cancel") {
+  process.exit(0);
+} else {
+  process.stderr.write("unexpected gh arguments: " + JSON.stringify(args));
+  process.exit(1);
+}
+`);
+    await chmod(gh, 0o700);
+    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+
+    await configureOwnerCloudJobs(
+      reference,
+      { repository: repositoryA },
+      cloudHome,
+    );
+    await registerCloudJobRepository(
+      reference,
+      { repository: repositoryB },
+      cloudHome,
+    );
+    const catalogText = await readFile(
+      join(cloudHome, "cloud-repositories.json"),
+      "utf8",
+    );
+    const catalog = JSON.parse(catalogText) as {
+      owners: Record<string, {
+        repositories: Record<string, unknown>;
+      }>;
+    };
+    assert.deepEqual(
+      Object.keys(catalog.owners[owner.id]?.repositories ?? {}).sort(),
+      [repositoryA, repositoryB],
+    );
+    assert.equal(
+      (catalog.owners[owner.id] as { defaultRepository?: string } | undefined)
+        ?.defaultRepository,
+      repositoryA,
+    );
+    assert.doesNotMatch(catalogText, new RegExp(configRoot));
+    assert.doesNotMatch(catalogText, new RegExp(reference.bindingId));
+    assert.doesNotMatch(catalogText, new RegExp(reference.fingerprint));
+    const defaultPreviewInput = cloudJobToolInputSchema.parse({
+      action: "preview",
+      id: "uses-owner-default",
+      prompt: "Use the registered owner default.",
+      cron: "0 9 * * *",
+      tools: ["view"],
+    });
+    assert.equal(defaultPreviewInput.action, "preview");
+    if (defaultPreviewInput.action !== "preview") {
+      throw new Error("INVALID_PREVIEW");
+    }
+    const defaultPreview = await prepareCloudJob(
+      reference,
+      defaultPreviewInput,
+      cloudHome,
+    );
+    assert.equal(defaultPreview.repository, repositoryA);
+
+    const discovered = await discoverCloudJobs(reference, cloudHome);
+    assert.equal(discovered.status, "ready");
+    assert.deepEqual(
+      discovered.jobs.map((job) => [job.repository, job.id, job.remoteId]),
+      [
+        [repositoryA, "summary", remoteA],
+        [repositoryB, "summary", remoteB],
+      ],
+    );
+    await assert.rejects(
+      inspectCloudJob(reference, "summary", cloudHome),
+      /CLOUD_JOB_AMBIGUOUS/,
+    );
+    const inspected = await inspectCloudJob(
+      reference,
+      "summary",
+      cloudHome,
+      repositoryB,
+    );
+    assert.equal(inspected.job.remoteId, remoteB);
+
+    const history = await listCloudJobHistory(
+      reference,
+      "summary",
+      { repository: repositoryB, limit: 5 },
+      cloudHome,
+    );
+    assert.equal(history.repository, repositoryB);
+    assert.equal(history.history[0]?.run.databaseId, 202);
+    const drift = await checkOwnerCloudJobDrift(
+      reference,
+      0,
+      cloudHome,
+    );
+    assert.equal(drift.status, "checked");
+    assert.deepEqual(
+      drift.sources.map((source) => source.repository).sort(),
+      [repositoryA, repositoryB],
+    );
+    for (const repository of [repositoryA, repositoryB]) {
+      assert.equal(
+        (await lstat(
+          join(cloudHome, `drift-state-${digest(repository)}.json`),
+        )).mode & 0o077,
+        0,
+      );
+    }
+    const requested = await runCloudJobNow(
+      reference,
+      "summary",
+      { repository: repositoryA },
+      cloudHome,
+    );
+    assert.equal(requested.status, "requested");
+    assert.equal(requested.remoteId, remoteA);
+    const cancelled = await cancelCloudJobRun(
+      reference,
+      "summary",
+      202,
+      { repository: repositoryB },
+      cloudHome,
+    );
+    assert.equal(cancelled.status, "cancellation-requested");
+    assert.equal(cancelled.remoteId, remoteB);
+
+    const notices = await checkCloudJobResultNotices(reference, cloudHome);
+    assert.equal(notices.status, "ready");
+    if (notices.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
+    assert.deepEqual(
+      notices.runs.map((item) => [item.repository, item.remoteId]).sort(),
+      [[repositoryA, remoteA], [repositoryB, remoteB]],
+    );
+    await releaseCloudJobResultNotices(notices, cloudHome);
+    const retried = await checkCloudJobResultNotices(reference, cloudHome);
+    assert.equal(retried.status, "ready");
+    if (retried.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
+    assert.equal(retried.runs.length, 2);
+    await markCloudJobResultNotices(retried, cloudHome);
+    const acknowledged = await checkCloudJobResultNotices(
+      reference,
+      cloudHome,
+    );
+    assert.equal(acknowledged.status, "ready");
+    if (acknowledged.status !== "ready") {
+      throw new Error("RESULT_NOTICE_BUSY");
+    }
+    assert.deepEqual(acknowledged.runs, []);
+    const resultStates: [string, string][] = [
+      [repositoryA, remoteA],
+      [repositoryB, remoteB],
+    ];
+    for (const [repository, remoteId] of resultStates) {
+      const state = JSON.parse(await readFile(
+        join(cloudHome, `result-state-${digest(repository)}.json`),
+        "utf8",
+      )) as {
+        repository: string;
+        jobs: Record<string, { notifiedThrough: number }>;
+      };
+      assert.equal(state.repository, repository);
+      assert.ok(state.jobs[remoteId]?.notifiedThrough);
+    }
+
+    await writeFile(failRepositoryB, "fail\n");
+    const partial = await discoverCloudJobs(reference, cloudHome);
+    assert.equal(partial.status, "partial");
+    assert.deepEqual(
+      partial.jobs.map((job) => job.repository),
+      [repositoryA],
+    );
+    const failedSource = partial.sources.find(
+      (source) => source.repository === repositoryB,
+    );
+    assert.equal(failedSource?.status, "unavailable");
+    assert.equal(
+      failedSource?.status === "unavailable"
+        ? failedSource.code
+        : undefined,
+      "CLOUD_REPOSITORY_CLONE_FAILED",
+    );
+    assert.ok(
+      failedSource?.status === "unavailable" &&
+      failedSource.successfulAt,
+    );
+
+    const calls = (await readFile(log, "utf8")).trim().split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    assert.ok(calls.some((args) =>
+      args[0] === "workflow" &&
+      args[1] === "run" &&
+      args.includes(`pinocchio-${remoteA}.yml`) &&
+      args.includes(repositoryA)));
+    assert.ok(calls.some((args) =>
+      args[0] === "run" &&
+      args[1] === "cancel" &&
+      args.includes("202") &&
+      args.includes(repositoryB)));
   } finally {
     process.env.PATH = originalPath;
     await rm(root, { recursive: true });

@@ -4,13 +4,46 @@ Pinocchio exposes one `pinocchio_jobs` interface for local and cloud jobs.
 Definitions and run history are authoritative; memory search is never used to
 decide whether an agent has schedules or completed work.
 
-Local jobs are currently fail-closed. The pinned public SDK exposes task
-cancellation and background-task events, but not the native agent-task start
-API needed to run a separate, identity-preserving local worker. Pinocchio
-does not substitute cron, launchd, a detached worker, or a headless CLI.
+Local jobs use the public native background-task API. They run as a separate
+invocation of the exact enrolled agent only while a matching root session is
+live. Pinocchio does not substitute cron, launchd, a detached worker, or a
+headless CLI.
 
 Cloud jobs remain independent of local session lifetime and are published to
 the repository selected for that job.
+
+## Local active-session jobs
+
+Ask an enrolled agent to preview a local job with:
+
+```json
+{
+  "action": "preview",
+  "backend": "local",
+  "id": "feedback-summary",
+  "prompt": "Summarize new feedback from the approved source.",
+  "cron": "0 10 * * 1-5",
+  "timezone": "America/New_York",
+  "workingDirectory": "/absolute/path/to/the/approved/repository",
+  "tools": [
+    "pinocchio_memory_search",
+    "pinocchio_memory_save",
+    "slack-slack_search_public"
+  ]
+}
+```
+
+The preview returns the exact owner, prompt, schedule, working directory,
+required tools, limits, next occurrence, draft ID, and approval token. After
+explicit approval, publish the draft. The definition remains durable, but it
+only runs while that exact enrolled agent and scope has a live root session in
+the approved working directory.
+
+Triggers missed while no matching session is live are skipped. Multiple
+matching windows atomically claim one occurrence. Run-now cannot overlap a
+scheduled run. Changing the selected agent or closing the hosting session
+requests targeted cancellation and records interruption separately from an
+unknown outcome.
 
 Pinocchio can publish an approved agent job to a private GitHub
 repository. GitHub Actions runs the job even when the local computer is off.
@@ -29,37 +62,29 @@ cloud data. Review the preview before publishing.
 
 ## Configure a jobs repository
 
-Create the local configuration:
+Register a private repository for an enrolled agent:
 
 ```bash
 npm run jobs -- configure \
+  --agent example-agent \
   --repository some-owner/pinocchio-jobs \
   --confirm
 ```
 
-This writes `~/.pinocchio/config.yml` with mode `0600`. The repository is an
-optional default for new previews; every cloud job persists its own resolved
-destination. The configuration stores a repository name and the name of an
-Actions secret, never the secret value:
-
-```yaml
-version: 1
-jobs:
-  provider: github-actions
-  repository: some-owner/pinocchio-jobs
-  token_secret: PINOCCHIO_COPILOT_TOKEN
-  require_approval: true
-  agent_sync:
-    check_interval: 24h
-    check_on_startup: true
-    update_policy: require-approval
-```
+This creates a private owner-scoped repository registration under
+`~/.pinocchio` and makes it the enrolled agent's default for new previews.
+Every cloud job persists its own resolved destination. Pinocchio stores the
+repository, default branch, and the name of an Actions secret, never the secret
+value. Existing legacy `~/.pinocchio/config.yml` settings remain supported.
 
 Create the configured repository, or verify that an existing repository is
 private and writable:
 
 ```bash
-npm run jobs -- bootstrap --confirm
+npm run jobs -- bootstrap \
+  --agent example-agent \
+  --repository some-owner/pinocchio-jobs \
+  --confirm
 ```
 
 Repository creation is never implicit. Pinocchio refuses to publish to a
@@ -77,9 +102,10 @@ passes the short-lived token as `GITHUB_TOKEN`. Otherwise Pinocchio verifies
 that the named repository secret exists before publishing and passes it as
 `COPILOT_GITHUB_TOKEN`.
 
-After installing or updating Pinocchio, repeat the normal setup command for
-each enrolled agent and restart Copilot CLI. Refreshing setup adds the cloud
-job tool to the agent profile without changing authored instructions.
+After installing or updating Pinocchio, run `npm run build` and
+`npm run broadcast -- upgrade`. Sessions that predate the broadcast listener
+need one initial restart; later runtime, managed-tool, and instruction updates
+reload through the listener.
 
 ## Preview and publish
 
@@ -92,6 +118,11 @@ may provide a repository different from the configured default. The result conta
 - warnings and blockers;
 - a short-lived draft ID and approval token.
 
+Published destinations are registered to the trusted owner. `list`, `inspect`,
+`history`, unread-result polling, and drift checks aggregate only those
+registered repositories. If one repository is unavailable, other cloud
+repositories and local jobs still return with a source-level partial error.
+
 Publishing requires a separate tool call after explicit approval. CLI users
 can perform the same two-phase flow:
 
@@ -103,6 +134,7 @@ npm run jobs -- preview \
   --cron "30 12 * * 1-5"
 
 npm run jobs -- publish \
+  --agent example-agent \
   --draft <draft-id> \
   --approval-token <approval-token> \
   --confirm
@@ -191,13 +223,13 @@ failed deliveries release the claim immediately and interrupted deliveries
 become retryable after five minutes.
 
 ```bash
-npm run jobs -- list
-npm run jobs -- latest --id daily-release-notes
-npm run jobs -- latest --id daily-release-notes --include-result
+npm run jobs -- list --agent example-agent
+npm run jobs -- latest --agent example-agent --id daily-release-notes
+npm run jobs -- latest --agent example-agent --id daily-release-notes --include-result
 
-npm run jobs -- change --id daily-release-notes --operation pause --confirm
-npm run jobs -- change --id daily-release-notes --operation resume --confirm
-npm run jobs -- change --id daily-release-notes --operation delete --confirm
+npm run jobs -- change --agent example-agent --id daily-release-notes --operation pause --confirm
+npm run jobs -- change --agent example-agent --id daily-release-notes --operation resume --confirm
+npm run jobs -- change --agent example-agent --id daily-release-notes --operation delete --confirm
 ```
 
 Retrieving a completed run with `--include-result` marks it read locally and
@@ -215,8 +247,9 @@ configured interval while it remains active. A cloud job continues using its
 last approved snapshot while the computer is off.
 
 ```bash
-npm run jobs -- drift
+npm run jobs -- drift --agent example-agent
 npm run jobs -- change \
+  --agent example-agent \
   --id daily-release-notes \
   --operation sync \
   --approval-token <token-from-drift-report> \

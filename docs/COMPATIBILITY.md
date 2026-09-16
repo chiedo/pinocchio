@@ -2,20 +2,18 @@
 
 ## Unified jobs background gate
 
-Issue #43's local backend is **blocked**, not passed. The pinned public
-`@github/copilot-sdk` 1.0.13 declarations expose `tasks.cancel` for
-client-owned task cancellation and `session.background_tasks_changed` events,
-but no public native agent-task start method. Pinocchio therefore does not
-queue local work in the foreground, launch a headless CLI, or install cron or
-launchd.
+The pinned public `@github/copilot-sdk` runtime exposes
+`session.rpc.tasks.startAgent`, task listing, result retrieval, and targeted
+cancellation. Pinocchio uses those APIs directly for local jobs; it does not
+queue the task as a foreground prompt, launch a headless CLI, or install cron
+or launchd.
 
-The exposed `pinocchio_jobs` tool reports
-`LOCAL_BACKGROUND_TASK_API_UNAVAILABLE` for local execution and keeps the
-cloud backend separate. A future gate must prove a separate invocation of the
-exact enrolled binding, foreground responsiveness while blocked, scoped
-memory read/write and MCP access, targeted cancellation, and session teardown.
-This is evidence from the installed public declarations, not desktop support
-or live-model certification.
+The local runner binds each definition and run to the trusted enrolled profile,
+scope, approved working directory, initialized tool requirements, hosting root
+session, and runtime task ID. Durable occurrence claims prevent duplicate
+starts across multiple windows. Closing or retargeting the hosting session
+requests cancellation and records confirmed interruption separately from an
+unknown outcome.
 
 **CLI preview installation:** [INSTALL.md](INSTALL.md) provides the separate pinned
 runtime and blank-session agent setup. The full suite publishes

@@ -1,82 +1,105 @@
 # Local scheduled tasks (active owning session)
 
-The unified `pinocchio_jobs` contract reserves local schedules for genuine
-native background-agent execution while the owning agent has a live root
-session. The current pinned public SDK does not expose the required start API,
-so local execution is blocked rather than emulated.
+Pinocchio runs local schedules through the public native background-task API.
+Each run is a separate invocation of the exact enrolled agent and is hosted by
+a matching live root session. Pinocchio does not install cron or launchd, start
+a detached worker, or fall back to a headless CLI process.
 
-## Compatibility gate
+## Runtime contract
 
-The supported public `@github/copilot-sdk` 1.0.13 declarations expose
-client-side task cancellation and background-task events, but not a public
-`session.rpc.tasks.startAgent(...)` method. Until a supported runtime proves
-foreground responsiveness, immutable agent identity, scoped memory/MCP access,
-targeted cancellation, and teardown, Pinocchio reports
-`LOCAL_BACKGROUND_TASK_API_UNAVAILABLE`.
+A local definition records:
 
-## The core problem
+- the trusted enrolled owner and scope;
+- the approved absolute working directory;
+- the prompt, five-field cron expression, and IANA timezone;
+- the required initialized tools and runtime limits; and
+- a fingerprint of the exact approved definition.
 
-`copilot -s -p "<prompt>"` run non-interactively (no TTY, as launchd/cron do)
-does **not** get the same tool permissions as an interactive session, even
-with `--enable-memory`. MCP tools (Slack, GitHub, Pinocchio memory, etc.) are
-silently unavailable unless explicitly granted. Left unhandled, the agent
-degrades quietly, keeps working with whatever tools it *does* have, and can
-still exit `0` — a "success" that did nothing useful.
+Definitions and run history are durable in Pinocchio's SQLite jobs store.
+Missed occurrences are skipped while no eligible session is live. Multiple
+matching windows atomically claim one occurrence, and run-now cannot overlap an
+active scheduled run.
 
-## Rules
+Changing the selected agent or closing the hosting session requests targeted
+cancellation. Pinocchio distinguishes a confirmed interruption from a task
+whose final outcome could not be recovered. A successful run must return
+non-empty output.
 
-1. **Do not install an OS scheduler for Pinocchio local jobs.** A schedule is
-   durable data, not a cron or launchd registration. Missed triggers are
-   skipped when no owning session is live.
+## Preview and publish
 
-2. **Never use `--allow-all` for a legacy headless job.** It works, but it's
-   blanket trust for an unattended process. Use scoped `--allow-tool` flags
-   for exactly the tools the task needs, and `--available-tools` to keep the
-   model's tool list minimal:
+An enrolled agent uses the unified `pinocchio_jobs` tool with
+`backend: "local"`. Preview returns the exact capability envelope, next
+occurrence, draft ID, and approval token. Publishing requires a separate,
+explicitly confirmed call.
 
-   ```bash
-   copilot --agent my-agent -s -p "$PROMPT" \
-     --allow-tool='slack-slack_search_public' \
-     --allow-tool='slack-slack_read_channel' \
-     --available-tools='slack-slack_search_public,slack-slack_read_channel'
-   ```
+CLI users can perform the same flow:
 
-3. **Don't rely on the Pinocchio memory extension in headless/no-TTY runs.**
-   As of CLI 1.0.84-8, `--experimental --enable-memory` combined with scoped
-   `--allow-tool` for `pinocchio_memory_*` can hang indefinitely in
-   non-interactive mode (confirmed via repeated reproduction — the extension
-   process logs `resolver hook loaded` and never spawns its MCP server).
-   Until that's fixed upstream, persist checkpoint/state to a plain local
-   file from your wrapper script instead of asking the agent to call memory
-   tools mid-run.
+```bash
+npm run jobs -- preview \
+  --backend local \
+  --agent example-agent \
+  --id feedback-summary \
+  --prompt-file ./prompt.md \
+  --cron "0 10 * * 1-5" \
+  --timezone America/New_York \
+  --working-directory /absolute/path/to/repository \
+  --tool pinocchio_memory_search \
+  --tool slack-slack_search_public
 
-4. **Do not wrap Pinocchio local jobs in a detached CLI script.** The worker
-   must be a native background invocation owned by the live session.
+npm run jobs -- publish \
+  --backend local \
+  --agent example-agent \
+  --draft <draft-id> \
+  --approval-token <approval-token> \
+  --confirm
+```
 
-5. **For unrelated legacy CLI calls, wrap the command in a small script, not a raw command in the plist.**
-   The wrapper should:
-   - take an overlap lock (e.g. `mkdir` as a lock — atomic, no extra deps) so
-     retries/awake-from-sleep don't double-run;
-   - read the last checkpoint from a file, defaulting sensibly if absent;
-   - have the agent emit a single well-defined last line (e.g.
-     `CHECKPOINT: <ISO8601>`) that the script parses;
-   - **only persist the new checkpoint if the CLI exit code is 0 AND the
-     checkpoint line is present and well-formed** — never persist on a
-     failed or ambiguous run;
-   - log a `START`/`SUCCESS`/`FAILED` line with a run ID, plus a full
-     per-run log file, so failures are visible without re-running.
+The selected root session must be in the approved working directory and have
+all required tools initialized before a scheduled or manual run can start.
+Background job agents cannot create, change, or recursively run other jobs.
 
-6. **Verify success, don't trust exit code alone at first.** `last exit code`
-   from `launchctl print` can be `0` even when the agent quietly couldn't use
-   a tool it needed. Test by inspecting real output, not just the exit code,
-   the first few times a new scheduled job runs.
+## Inspect and manage
 
-7. **Test through the real scheduler**, not just by running the command in a
-   terminal — `launchctl kickstart -k gui/<uid>/<label>` triggers an
-   immediate real run. Confirm two consecutive runs: the first persists a
-   checkpoint, the second resumes from it without gaps or duplicates.
+All administrative commands name the enrolled agent because local definitions
+and history are owner-scoped:
 
-## Example
+```bash
+npm run jobs -- list --backend local --agent example-agent
+npm run jobs -- inspect --backend local --agent example-agent --id feedback-summary
+npm run jobs -- history --backend local --agent example-agent --id feedback-summary
+npm run jobs -- latest --backend local --agent example-agent --id feedback-summary
 
-See `~/.copilot/agents/state/competitor-feedback-check.sh` (local machine,
-not in this repo) for a working reference implementation of the above.
+npm run jobs -- run \
+  --backend local \
+  --agent example-agent \
+  --id feedback-summary \
+  --confirm
+
+npm run jobs -- change \
+  --backend local \
+  --agent example-agent \
+  --id feedback-summary \
+  --operation pause \
+  --confirm
+
+npm run jobs -- cancel \
+  --backend local \
+  --agent example-agent \
+  --id feedback-summary \
+  --run-id <run-id> \
+  --confirm
+```
+
+Supported changes are `pause`, `resume`, and `delete`. Deletion tombstones the
+definition so existing run history remains inspectable.
+
+## Scheduling behavior
+
+Local jobs accept five-field cron expressions and IANA timezones such as
+`America/New_York`. Scheduling is evaluated minute by minute with timezone and
+daylight-saving transitions applied by the runtime. Cloud GitHub Actions jobs
+remain UTC-only.
+
+The last successful output is supplied to the next run as bounded, explicitly
+untrusted checkpoint data. It is context for continuity, not an instruction
+source and not a substitute for durable job history.

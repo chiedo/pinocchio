@@ -39,6 +39,13 @@ const sessionSchema = z.object({
   unmatchedTools: z.array(z.string()).optional(),
 }).strict();
 type SessionRecord = z.infer<typeof sessionSchema>;
+const runtimeReloadSchema = z.object({
+  version: z.literal(1),
+  sessionId: z.string().min(1).max(256),
+  requestId: z.string().uuid(),
+  runtime: hash,
+  attemptedAt: z.number(),
+}).strict();
 
 export function broadcastCode(error: unknown) {
   return isRecord(error) && typeof error.code === "string" ? error.code : "BROADCAST_FAILED";
@@ -49,6 +56,7 @@ async function directory(root: string) {
   const path = join(root, "pinocchio", "broadcast");
   await privateDirectory(path, true);
   await privateDirectory(join(path, "sessions"), true);
+  await privateDirectory(join(path, "runtime-reloads"), true);
   return path;
 }
 async function optionalJson(path: string) {
@@ -143,6 +151,17 @@ export class BroadcastListener {
     if (!this.record) return;
     await writeAtomic(join(await directory(this.root), "sessions", `${this.instance}.json`), sessionSchema.parse(this.record));
   }
+  private async runtimeReloadPath() {
+    return join(
+      await directory(this.root),
+      "runtime-reloads",
+      `${fingerprint(this.sessionId)}.json`,
+    );
+  }
+  private async clearRuntimeReload() {
+    try { await unlink(await this.runtimeReloadPath()); }
+    catch (error) { if (!hasCode(error, "ENOENT")) throw error; }
+  }
   async heartbeat(reference: BindingReference, now = Date.now()) {
     if (reference.configRoot !== this.root) fail("BROADCAST_SCOPE_MISMATCH");
     if (!this.record || this.record.bindingId !== reference.bindingId) {
@@ -178,6 +197,7 @@ export class BroadcastListener {
       await this.save();
       return;
     }
+    await this.clearRuntimeReload();
     const offered = new Set(offeredTools);
     const required = new Set<string>(MANAGED_AGENT_TOOLS);
     const missingTools = MANAGED_AGENT_TOOLS.filter((tool) => !offered.has(tool));
@@ -204,6 +224,46 @@ export class BroadcastListener {
     this.delivery = { request, target };
     await this.save();
     return prompt;
+  }
+  async claimRuntimeReload() {
+    if (!this.record?.requestId || this.record.code !== "RUNTIME_CHANGED") {
+      fail("BROADCAST_RUNTIME_RELOAD_NOT_REQUIRED");
+    }
+    const request = await latestBroadcast(this.root);
+    if (!request || request.id !== this.record.requestId) {
+      fail("BROADCAST_REQUEST_CHANGED");
+    }
+    const path = await this.runtimeReloadPath();
+    const existing = await optionalJson(path);
+    if (existing !== undefined) {
+      const attempted = runtimeReloadSchema.parse(existing);
+      if (attempted.sessionId === this.sessionId &&
+          attempted.requestId === request.id &&
+          attempted.runtime === request.runtime) {
+        this.record.code = "RUNTIME_RELOAD_FAILED";
+        await this.save();
+        return false;
+      }
+    }
+    await writeAtomic(path, runtimeReloadSchema.parse({
+      version: 1,
+      sessionId: this.sessionId,
+      requestId: request.id,
+      runtime: request.runtime,
+      attemptedAt: Date.now(),
+    }));
+    return true;
+  }
+  async agentReloaded(reference: BindingReference) {
+    if (!this.record || this.record.bindingId !== reference.bindingId) {
+      fail("BROADCAST_SCOPE_MISMATCH");
+    }
+    const snapshot = await broadcastSnapshot(reference);
+    this.record.settingsHash = snapshot.target.settingsHash;
+    this.record.status = "pending";
+    delete this.record.code;
+    delete this.record.missingTools;
+    await this.save();
   }
   async acknowledge(reference: BindingReference) {
     const delivery = this.delivery;

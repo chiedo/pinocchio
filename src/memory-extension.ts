@@ -1,5 +1,6 @@
 import { joinSession } from "@github/copilot-sdk/extension";
-import { canonicalRepository, configRootPath, loadBinding } from "./binding-registry.js";
+import { basename } from "node:path";
+import { canonicalRepository, configRootPath, fingerprint, loadBinding } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
@@ -8,19 +9,24 @@ import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, S
 import {
   CloudJobsError,
   checkCloudJobResultNotices,
+  discoverCloudJobs,
   formatCloudJobResultNotices,
   markCloudJobResultNotices,
   releaseCloudJobResultNotices,
-  startCloudJobDriftMonitor,
+  startOwnerCloudJobDriftMonitor,
 } from "./cloud-jobs.js";
 import { JOBS_TOOL, extensionJobsToolInputSchema, handleJobsTool } from "./jobs.js";
 import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
 import { z } from "zod";
 import { BroadcastListener, BROADCAST_HEARTBEAT_MS, broadcastCode, broadcastRuntimeVersion } from "./broadcast.js";
+import { JobsStore } from "./jobs-store.js";
+import { LocalJobs } from "./local-jobs.js";
 
 const configRoot = configRootPath();
 const loadedRuntime = await broadcastRuntimeVersion();
+const jobsStore = await JobsStore.open(configRoot);
 let session: Awaited<ReturnType<typeof joinSession>> | undefined;
+let localJobs: LocalJobs | undefined;
 let pending = Promise.resolve();
 let queued = 0;
 let generation = 0;
@@ -34,14 +40,88 @@ let checkingCloudResults = false;
 let skipNextAssistantCapture = false;
 const subagentOwners = new Map<string, Promise<ConversationOwner | undefined>>();
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
+const subagentToolCalls = new Set<string>();
 let broadcastChecking = false;
 let broadcastStopped = false;
 let broadcastWarning = "";
 let broadcastIssue: { key: string; since: number } | undefined;
+let broadcastRecoveryKey = "";
+let jobsInventoryVersion = "";
+let cloudMonitorOwner = "";
+let stopCloudMonitor = () => {};
+let cloudInventoryOwner = "";
+let cloudInventoryVersion = "";
+let deliveredCloudInventoryVersion = "";
+let cloudInventoryText = "";
+let cloudInventoryRefresh: Promise<void> | undefined;
+let cloudInventoryRefreshOwner = "";
+let cloudInventoryRefreshGeneration = 0;
 const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
-let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkCloudJobDrift>> | {
+let cloudStatus: Awaited<ReturnType<typeof import("./cloud-jobs.js").checkOwnerCloudJobDrift>> | {
   status: "unavailable"; code: string;
 } | undefined;
+function refreshCloudInventory(owner: ConversationOwner, force = false) {
+  const ownerId = owner.reference.bindingId;
+  if (!force && cloudInventoryRefresh &&
+      cloudInventoryRefreshOwner === ownerId) {
+    return cloudInventoryRefresh;
+  }
+  const refreshGeneration = ++cloudInventoryRefreshGeneration;
+  const refresh = discoverCloudJobs(owner.reference).then((result) => {
+    if (cloudMonitorOwner !== ownerId ||
+        refreshGeneration !== cloudInventoryRefreshGeneration) return;
+    cloudInventoryOwner = ownerId;
+    cloudInventoryText = [
+      "Pinocchio cloud jobs inventory (authoritative remote records):",
+      ...result.jobs.map((job) =>
+        `- cloud ${job.id} [${job.repository}]: ${job.enabled ? "enabled" : "paused"}, ${job.cron} ${job.timezone}`),
+      ...result.sources
+        .filter((source) => source.status === "unavailable")
+        .map((source) =>
+          `- unavailable source ${source.repository}: ${source.code}`),
+      "Use pinocchio_jobs for current inspection, history, results, changes, run-now, or cancellation.",
+      "",
+    ].join("\n");
+    cloudInventoryVersion = fingerprint(JSON.stringify({
+      owner: ownerId,
+      inventory: cloudInventoryText,
+    }));
+  }, (error: unknown) => {
+    if (cloudMonitorOwner !== ownerId ||
+        refreshGeneration !== cloudInventoryRefreshGeneration) return;
+    cloudInventoryOwner = ownerId;
+    const code = error instanceof CloudJobsError
+      ? error.code
+      : "CLOUD_JOB_DISCOVERY_FAILED";
+    cloudInventoryText =
+      `Pinocchio cloud jobs inventory is unavailable (${code}); do not report an empty inventory.\n`;
+    cloudInventoryVersion = fingerprint(cloudInventoryText);
+  }).finally(() => {
+    if (cloudInventoryRefresh === refresh) {
+      cloudInventoryRefresh = undefined;
+      cloudInventoryRefreshOwner = "";
+    }
+  });
+  cloudInventoryRefresh = refresh;
+  cloudInventoryRefreshOwner = ownerId;
+  return refresh;
+}
+function activateJobsOwner(
+  owner: ConversationOwner,
+  agentName: string,
+  workingDirectory: string,
+) {
+  localJobs?.setActiveOwner(owner.reference, agentName, workingDirectory);
+  if (cloudMonitorOwner === owner.reference.bindingId) return;
+  stopCloudMonitor();
+  cloudMonitorOwner = owner.reference.bindingId;
+  cloudStatus = undefined;
+  void refreshCloudInventory(owner, true);
+  stopCloudMonitor = startOwnerCloudJobDriftMonitor(
+    owner.reference,
+    (result) => { cloudStatus = result; },
+  );
+}
 async function selectedOwner() {
   if (!session) return;
   return conversationOwner(configRoot, await session.rpc.agent.getCurrent());
@@ -71,18 +151,38 @@ const context = createMemoryHooks(configRoot, async (input) => {
   if (!session) return;
   const owner = await ownerForSession(input.sessionId);
   if (!owner) return;
+  const current = await session.rpc.agent.getCurrent();
+  const agentName = current.agent?.path
+    ? basename(current.agent.path, ".agent.md")
+    : current.agent?.name ?? "";
+  activateJobsOwner(owner, agentName, input.workingDirectory);
   const recalled = await context.recall(owner, {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
   });
-  const cloudNotice = cloudStatus?.status === "checked" && cloudStatus.drifted
+  const inventoryVersion = jobsStore.inventoryVersion(owner.reference.bindingId);
+  const inventory = inventoryVersion !== jobsInventoryVersion
+    ? localJobs?.inventoryContext(owner.reference) ?? ""
+    : "";
+  jobsInventoryVersion = inventoryVersion;
+  const cloudInventory = cloudInventoryOwner === owner.reference.bindingId &&
+      cloudInventoryVersion &&
+      cloudInventoryVersion !== deliveredCloudInventoryVersion
+    ? cloudInventoryText
+    : "";
+  if (cloudInventory) deliveredCloudInventoryVersion = cloudInventoryVersion;
+  const cloudNotice = cloudStatus && "drifted" in cloudStatus && cloudStatus.drifted
     ? `Pinocchio jobs: ${cloudStatus.drifted} published cloud snapshot(s) differ from local profiles or need attention. Tell the user and use ${JOBS_TOOL} with action=drift before proposing a sync.\n`
     : cloudStatus?.status === "unavailable"
-      ? `Pinocchio cloud job drift checking is unavailable (${cloudStatus.code}). Tell the user if cloud jobs are relevant to this request.\n`
+      ? `Pinocchio cloud job drift checking is unavailable (${
+          "code" in cloudStatus
+            ? cloudStatus.code
+            : cloudStatus.sources
+                .map((source) => source.status === "unavailable" ? source.code : undefined)
+                .filter(Boolean)
+                .join(",") || "CLOUD_DRIFT_CHECK_FAILED"
+        }). Tell the user if cloud jobs are relevant to this request.\n`
       : "";
-  return `${captureFailure ? "Pinocchio automatic capture failed for an earlier message. Tell the user; do not claim it was saved.\n" : ""}${cloudNotice}${recalled}`;
-});
-const stopCloudMonitor = startCloudJobDriftMonitor(configRoot, (result) => {
-  cloudStatus = result;
+  return `${captureFailure ? "Pinocchio automatic capture failed for an earlier message. Tell the user; do not claim it was saved.\n" : ""}${cloudNotice}${inventory}${cloudInventory}${recalled}`;
 });
 session = await joinSession({
   hooks: context.hooks,
@@ -146,17 +246,21 @@ session = await joinSession({
   })), {
     name: JOBS_TOOL,
     description:
-      "Manage approved GitHub Actions cloud jobs for the selected Pinocchio agent. Preview returns the exact upload and approval token. Never configure, bootstrap, publish, sync, pause, resume, or delete without the user's explicit approval.",
+      "Manage the selected Pinocchio agent's local active-session and GitHub Actions cloud jobs. Consult definitions and run history for scheduling questions. Preview before publishing, and require explicit approval for mutations, run-now, and cancellation.",
     parameters: extensionJobsToolInputSchema,
     defer: "never",
     async handler(args: unknown, invocation) {
       try {
         if (!session) throw new CloudJobsError("CONVERSATION_CONTEXT_UNAVAILABLE");
+        if (subagentToolCalls.has(invocation.toolCallId)) {
+          throw new CloudJobsError("RECURSIVE_JOB_MANAGEMENT_DENIED");
+        }
         const owner = await ownerForTool(invocation.toolCallId);
         if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
-        const result = await handleJobsTool(owner.reference, args);
+        const result = await handleJobsTool(owner.reference, args, undefined, localJobs);
+        void refreshCloudInventory(owner);
         if (isRecord(args) && args.action === "latest" &&
-            args.includeResult === true && "result" in result &&
+            args.includeResult === true && isRecord(result) && "result" in result &&
             typeof result.result === "string") {
           skipNextAssistantCapture = true;
         }
@@ -166,6 +270,8 @@ session = await joinSession({
           ? error.code
           : error instanceof z.ZodError
             ? "INVALID_ARGUMENTS"
+            : isRecord(error) && typeof error.code === "string"
+              ? error.code
             : "CLOUD_JOBS_UNAVAILABLE";
         return {
           resultType: "failure" as const,
@@ -174,10 +280,12 @@ session = await joinSession({
         };
       } finally {
         toolOwners.delete(invocation.toolCallId);
+        subagentToolCalls.delete(invocation.toolCallId);
       }
     },
   }],
 });
+localJobs = new LocalJobs(jobsStore, session);
 for (const name of ["subagent.started", "subagent.selected"] as const) {
   session.on(name, (event) => {
     if (event.agentId) subagentOwners.set(event.agentId, ownerForAgent(event.data.agentName));
@@ -185,6 +293,7 @@ for (const name of ["subagent.started", "subagent.selected"] as const) {
 }
 session.on("tool.execution_start", (event) => {
   if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
+    if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
     toolOwners.set(event.data.toolCallId, event.agentId
       ? subagentOwners.get(event.agentId) ?? Promise.resolve(undefined)
       : selectedOwner());
@@ -192,7 +301,12 @@ session.on("tool.execution_start", (event) => {
 });
 for (const name of ["subagent.completed", "subagent.failed"] as const) {
   session.on(name, (event) => {
-    if (event.agentId) subagentOwners.delete(event.agentId);
+    if (event.agentId) {
+      void localJobs?.reconcile(event.agentId).catch(() => {
+        process.stderr.write("Pinocchio: LOCAL_JOB_RECONCILE_FAILED\n");
+      });
+      subagentOwners.delete(event.agentId);
+    }
   });
 }
 const broadcast = new BroadcastListener(configRoot, session.sessionId, loadedRuntime);
@@ -215,6 +329,39 @@ async function reportBroadcastIssue(fallbackCode?: string) {
     process.stderr.write("Pinocchio: BROADCAST_NOTICE_UNAVAILABLE\n");
   }
 }
+async function recoverBroadcastIssue(
+  active: NonNullable<typeof session>,
+  agent: NonNullable<Awaited<ReturnType<typeof active.rpc.agent.getCurrent>>["agent"]>,
+  owner: ConversationOwner,
+) {
+  const issue = broadcast.issue();
+  if (!issue) {
+    broadcastRecoveryKey = "";
+    return false;
+  }
+  if (broadcastIssue?.key !== issue.key) {
+    broadcastIssue = { key: issue.key, since: Date.now() };
+  }
+  if (broadcastRecoveryKey === issue.key) return false;
+  if (issue.code === "RUNTIME_CHANGED") {
+    if (!await broadcast.claimRuntimeReload()) return false;
+    broadcastRecoveryKey = issue.key;
+    await active.rpc.extensions.reload();
+    return true;
+  }
+  const toolsSettled = issue.code !== "TOOLS_NOT_AVAILABLE" ||
+    Date.now() - broadcastIssue.since >= 2 * BROADCAST_HEARTBEAT_MS;
+  if ((issue.code === "AGENT_SETTINGS_CHANGED" ||
+      issue.code === "TOOLS_NOT_AVAILABLE") && toolsSettled) {
+    broadcastRecoveryKey = issue.key;
+    await active.rpc.agent.reload();
+    await active.rpc.agent.select({ name: agent.name });
+    await active.rpc.tools.initializeAndValidate();
+    await broadcast.agentReloaded(owner.reference);
+    return true;
+  }
+  return false;
+}
 async function checkBroadcast() {
   if (!session || broadcastChecking || broadcastStopped) return;
   broadcastChecking = true;
@@ -225,14 +372,34 @@ async function checkBroadcast() {
     const agent = current.agent;
     const owner = await conversationOwner(configRoot, current);
     if (!owner || !agent) {
+      localJobs?.setActiveOwner(undefined, "", directory);
+      stopCloudMonitor();
+      stopCloudMonitor = () => {};
+      cloudMonitorOwner = "";
+      cloudStatus = undefined;
+      cloudInventoryOwner = "";
+      cloudInventoryVersion = "";
+      cloudInventoryText = "";
+      cloudInventoryRefreshGeneration++;
       await broadcast.close();
       return;
     }
+    activateJobsOwner(
+      owner,
+      agent.path ? basename(agent.path, ".agent.md") : agent.name,
+      directory,
+    );
     await broadcast.heartbeat(owner.reference);
-    const metadata = await active.rpc.tools.getCurrentMetadata();
+    let metadata = await active.rpc.tools.getCurrentMetadata();
     if (!metadata.tools) return;
-    const prompt = await broadcast.prepare(owner.reference, metadata.tools.flatMap((tool) =>
+    let prompt = await broadcast.prepare(owner.reference, metadata.tools.flatMap((tool) =>
       tool.namespacedName ? [tool.name, tool.namespacedName] : [tool.name]));
+    if (!prompt && await recoverBroadcastIssue(active, agent, owner)) {
+      metadata = await active.rpc.tools.getCurrentMetadata();
+      if (!metadata.tools) return;
+      prompt = await broadcast.prepare(owner.reference, metadata.tools.flatMap((tool) =>
+        tool.namespacedName ? [tool.name, tool.namespacedName] : [tool.name]));
+    }
     if (prompt) {
       const binding = await loadBinding(owner.reference);
       if (binding.scope.kind === "repository" && await canonicalRepository(directory) !== binding.scope.root) {
@@ -388,7 +555,13 @@ process.once("SIGTERM", () => {
     process.stderr.write("Pinocchio: CONTEXT_DETACH_DEADLINE\n");
     process.exit(1);
   }, 4_000);
-  void pending.then(async () => { await broadcast.close(); context.close(); await session?.disconnect(); }).then(() => {
+  void pending.then(async () => {
+    await localJobs?.close();
+    await broadcast.close();
+    context.close();
+    await session?.disconnect();
+    jobsStore.close();
+  }).then(() => {
     clearTimeout(deadline); process.exit(0);
   }, () => {
     clearTimeout(deadline);

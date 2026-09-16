@@ -187,7 +187,7 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
   }
 });
 
-test("restart failures show one actionable warning without model turns and recover after upgrade", { timeout: 90_000 }, async () => {
+test("unrecoverable runtime reloads show one actionable warning without model turns", { timeout: 90_000 }, async () => {
   const f = await fixture();
   try {
     const session = await f.openSession();
@@ -198,7 +198,8 @@ test("restart failures show one actionable warning without model turns and recov
     const request = await latestBroadcast(f.config);
     assert.ok(request);
     await publishBroadcast(f.config, { ...request, id: randomUUID(), runtime: "a".repeat(64) });
-    await f.waitFor((status) => status.sessions[0]?.status === "restart-required");
+    await f.waitFor((status) => status.sessions.some((item) =>
+      item.status === "restart-required" && item.code === "RUNTIME_RELOAD_FAILED"));
     await new Promise((resolve) => setTimeout(resolve, 2 * BROADCAST_HEARTBEAT_MS + 500));
     const notices = await warnings(session);
     assert.equal(notices.length, 1);
@@ -207,9 +208,6 @@ test("restart failures show one actionable warning without model turns and recov
     assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
     assert.deepEqual(await chat(session), []);
     assert.equal(f.provider.counts().requests, 0);
-    await upgradeBroadcast(f.config);
-    await f.waitFor((status) => status.sessions[0]?.status === "updated");
-    assert.equal((await warnings(session)).length, 1, "Recovery must not add a routine success notification");
     assert.equal(f.provider.counts().requests, 0);
   } finally { await f.close(); }
 });
