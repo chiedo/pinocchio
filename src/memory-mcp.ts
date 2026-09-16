@@ -33,7 +33,7 @@ export async function createMemoryMcpServer(reference: BindingReference, serverN
     // Initialize before accepting requests, not inside the first signed tool deadline.
     await worker.initialize(reference.configRoot);
   } catch (error) {
-    worker.close();
+    await worker.shutdown();
     throw error;
   }
   const identity = new BoundIdentityAdapter(reference);
@@ -110,7 +110,16 @@ export async function createMemoryMcpServer(reference: BindingReference, serverN
       content: [{ type: "text", text: JSON.stringify(result) }],
     };
   });
-  server.onclose = () => { worker.close(); identity.dispose(); };
+  const close = server.close.bind(server);
+  let cleanup: Promise<void> | undefined;
+  const cleanupWorker = () => cleanup ??= worker.shutdown().finally(() => {
+    identity.dispose();
+  });
+  server.onclose = () => { void cleanupWorker(); };
+  server.close = async () => {
+    await close();
+    await cleanupWorker();
+  };
   return server;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -125,6 +134,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const server = await createMemoryMcpServer({
       configRoot: values["config-root"], bindingId: values.binding, fingerprint: values.fingerprint,
     }, values["server-name"]);
+    process.once("SIGTERM", () => {
+      const deadline = setTimeout(() => process.exit(1), 4_000);
+      void server.close().then(() => {
+        clearTimeout(deadline);
+        process.exit(0);
+      }, () => {
+        clearTimeout(deadline);
+        process.exit(1);
+      });
+    });
     try { await server.connect(new StdioServerTransport()); }
     catch (error) { await server.close(); throw error; }
   } catch {

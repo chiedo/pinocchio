@@ -93,4 +93,41 @@ export class MemoryWorker {
     for (const entry of this.#queue.splice(0)) { this.#cleanup(entry); entry.reject(new ToolError("WORKER_CLOSED")); }
     this.#reset("WORKER_CLOSED");
   }
+  async shutdown() {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const entry of this.#queue.splice(0)) {
+      this.#cleanup(entry);
+      entry.reject(new ToolError("WORKER_CLOSED"));
+    }
+    const active = this.#active;
+    this.#active = undefined;
+    if (active) {
+      this.#cleanup(active);
+      active.reject(new ToolError("WORKER_CLOSED"));
+    }
+    const worker = this.#worker;
+    this.#worker = undefined;
+    if (!worker) return;
+    worker.removeAllListeners();
+    const id = ++this.#sequence;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2_000);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      worker.once("message", (message: unknown) => {
+        if (isRecord(message) && message.id === id) done();
+      });
+      worker.once("error", done);
+      worker.once("exit", done);
+      try {
+        worker.postMessage({ id, payload: { action: "shutdown" } });
+      } catch {
+        done();
+      }
+    });
+    await worker.terminate().catch(() => {});
+  }
 }

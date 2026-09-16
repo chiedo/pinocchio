@@ -70,12 +70,24 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     for (const session of broadcastSessions) {
       assert.deepEqual(await warnings(session), []);
       await session.sendAndWait({ prompt: "Continue the ordinary task, without changing any files." }, 20_000);
-      const search = await session.rpc.tools.execute({
+      let search = await session.rpc.tools.execute({
         name: EXTENSION_SEARCH_TOOL, arguments: { query: "Synthetic shared refresh marker" },
       });
+      const deadline = Date.now() + 2_000;
+      while (typeof search !== "string" && search.resultType !== "success" &&
+          Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        search = await session.rpc.tools.execute({
+          name: EXTENSION_SEARCH_TOOL,
+          arguments: { query: "Synthetic shared refresh marker" },
+        });
+      }
       assert.notEqual(typeof search, "string");
       if (typeof search === "string") throw new Error("UNSTRUCTURED_SEARCH");
-      assert.equal(search.resultType, "success");
+      assert.equal(search.resultType, "success", JSON.stringify({
+        sessionId: session.sessionId,
+        search,
+      }));
       assert.deepEqual(JSON.parse(search.textResultForLlm).snippets, [], "Instructions must not be captured as memories");
     }
     const refreshedRequests = observed.slice(beforeRefreshChecks);
