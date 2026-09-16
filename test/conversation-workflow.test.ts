@@ -85,6 +85,8 @@ test("native automatic capture survives cold sessions without model memory calls
       assert.match(recalled, /Pinocchio conversation memory/);
       assert.match(recalled, /Indigo Heron/);
       await setConversationEnabled(reference, false);
+      await session.disconnect();
+      session = await open(client, "automatic-alpha");
       const paused = await turn(
         session,
         "What was the mascot? Also: paused sentinel.",

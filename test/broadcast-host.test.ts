@@ -55,6 +55,10 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       f.openSession(),
       f.openSession(undefined, "other-agent"),
     ]);
+    await Promise.all([
+      restarted.rpc.tools.initializeAndValidate(),
+      other.rpc.tools.initializeAndValidate(),
+    ]);
     await f.waitFor((status) => status.sessions.length === 4 &&
       status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await chat(restarted), [], "Opening a new agent must not replay a saved broadcast into chat");

@@ -194,7 +194,7 @@ test("local configuration and preview keep agent history local", async () => {
     );
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
     assert.match(preview.exactUpload.workflow, new RegExp(
-      `copilot -C "\\\\.pinocchio/jobs/${remoteId}"`,
+      `copilot -C "\\.pinocchio/jobs/${remoteId}"`,
     ));
     assert.match(preview.exactUpload.workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
     assert.doesNotMatch(preview.exactUpload.workflow, /COPILOT_GITHUB_TOKEN: \$\{\{/);
@@ -492,7 +492,7 @@ test("registered owner repositories aggregate and route management per destinati
 id: summary
 agent: synthetic-agent
 repository: ${repository}
-uid: ${uid}
+uid: "${uid}"
 owner: ${owner.id}
 owner_label: synthetic-agent
 remote_id: ${remoteId}

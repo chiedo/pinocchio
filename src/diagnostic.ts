@@ -165,7 +165,7 @@ export async function diagnose(previewPlatform = false) {
         await session.rpc.tools.initializeAndValidate();
         await run(session);
       } finally {
-        await session.disconnect();
+        await client!.deleteSession(session.sessionId);
       }
     }
     async function turn(
