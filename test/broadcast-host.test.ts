@@ -152,6 +152,12 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       assert.deepEqual(JSON.parse(search.textResultForLlm).snippets, [], "Instructions must not be captured as memories");
     }
     const chatCounts = await Promise.all(f.sessions.map(async (session) => (await chat(session)).length));
+    const selected = (await restarted.rpc.agent.getCurrent()).agent;
+    assert.ok(selected);
+    await restarted.rpc.agent.setPrompt({ id: selected.id, prompt: "Synthetic host-side prompt replacement." });
+    await new Promise((resolve) => setTimeout(resolve, BROADCAST_HEARTBEAT_MS + 500));
+    await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
+    assert.equal(await authoredPrompt(restarted), prompt, "Host prompt drift must not leave an incorrect updated status");
     await upgradeBroadcast(f.config);
     await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
     for (const session of f.sessions) assert.equal(await authoredPrompt(session), prompt, "Identical broadcasts must not stack instructions");

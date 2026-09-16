@@ -38,7 +38,6 @@ const subagentOwners = new Map<string, Promise<ConversationOwner | undefined>>()
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
 let broadcastChecking = false;
 let broadcastStopped = false;
-let broadcastGeneration = 0;
 let broadcastWarning = "";
 let broadcastIssue: { key: string; since: number } | undefined;
 const CLOUD_RESULT_DISPLAY_PROMPT = "Pinocchio found new cloud job results";
@@ -224,10 +223,6 @@ async function checkBroadcast() {
   try {
     const active = session;
     const selectedGeneration = generation;
-    if (broadcastGeneration !== selectedGeneration) {
-      await broadcast.close();
-      broadcastGeneration = selectedGeneration;
-    }
     const current = await active.rpc.agent.getCurrent();
     const agent = current.agent;
     const owner = await conversationOwner(configRoot, current);
@@ -239,13 +234,13 @@ async function checkBroadcast() {
     const metadata = await active.rpc.tools.getCurrentMetadata();
     if (!metadata.tools) return;
     const prompt = await broadcast.prepare(owner.reference, metadata.tools.flatMap((tool) =>
-      tool.namespacedName ? [tool.name, tool.namespacedName] : [tool.name]));
+      tool.namespacedName ? [tool.name, tool.namespacedName] : [tool.name]), agent.prompt);
     if (prompt) {
       const binding = await loadBinding(owner.reference);
       if (binding.scope.kind === "repository" && await canonicalRepository(directory) !== binding.scope.root) {
         throw Object.assign(new Error("BROADCAST_SCOPE_MISMATCH"), { code: "BROADCAST_SCOPE_MISMATCH" });
       }
-      if (generation !== selectedGeneration) return;
+      if (broadcastStopped || generation !== selectedGeneration) return;
       if (agent.prompt !== prompt) {
         await active.rpc.agent.setPrompt({ id: agent.id, prompt });
       }
@@ -254,7 +249,7 @@ async function checkBroadcast() {
       const applied = (await active.rpc.agent.list({ includePrompt: true })).agents.find(
         (item) => item.id === agent.id && item.path === agent.path,
       );
-      if (generation !== selectedGeneration) return;
+      if (broadcastStopped || generation !== selectedGeneration) return;
       if (applied?.prompt !== prompt) {
         throw Object.assign(new Error("BROADCAST_PROMPT_NOT_APPLIED"), { code: "BROADCAST_PROMPT_NOT_APPLIED" });
       }
@@ -262,6 +257,7 @@ async function checkBroadcast() {
     }
     await reportBroadcastIssue();
   } catch (error) {
+    if (broadcastStopped) return;
     await broadcast.failed(error).catch(() => { process.stderr.write("Pinocchio: BROADCAST_STATUS_WRITE_FAILED\n"); });
     await reportBroadcastIssue(broadcastCode(error));
   } finally { broadcastChecking = false; }

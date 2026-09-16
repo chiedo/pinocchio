@@ -109,6 +109,32 @@ test("failed host delivery never reports updated or repeatedly retries the same 
     assert.ok(await f.listener.prepare(f.reference, retry.targets[0]!.tools));
     await f.listener.acknowledge(f.reference);
     assert.equal(f.listener.issue(), undefined);
+    await f.listener.failed(Object.assign(new Error("Synthetic host reset"), { code: "BROADCAST_FAILED" }));
+    const recovery = await f.request();
+    assert.ok(await f.listener.prepare(f.reference, recovery.targets[0]!.tools, "Synthetic reset prompt"));
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending", "A cached snapshot must not hide host prompt drift after a failure");
+    await f.listener.acknowledge(f.reference);
+    assert.equal(f.listener.issue(), undefined);
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test("host prompt drift is repaired without resetting the session's settings baseline", async () => {
+  const f = await fixture();
+  try {
+    const first = await f.request();
+    const tools = first.targets[0]!.tools;
+    const prompt = await f.listener.prepare(f.reference, tools);
+    assert.ok(prompt);
+    await f.listener.acknowledge(f.reference);
+    assert.equal(await f.listener.prepare(f.reference, tools, prompt), undefined);
+    assert.equal(await f.listener.prepare(f.reference, tools, "Synthetic replaced host prompt"), prompt);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
+    await f.listener.acknowledge(f.reference);
+    await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("tools:", "model: changed-model\ntools:"));
+    await f.request();
+    assert.equal(await f.listener.prepare(f.reference, tools, "Another host prompt"), undefined);
+    assert.equal(f.listener.issue()?.code, "AGENT_SETTINGS_CHANGED");
+    assert.equal(f.listener.issue()?.restartRequired, true);
   } finally { await rm(f.root, { recursive: true }); }
 });
 
