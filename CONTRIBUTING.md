@@ -51,7 +51,8 @@ home, configuration, repository, database, and report filename. Set
 `PINOCCHIO_TEST_CONCURRENCY=1` to reproduce a serial comparison without changing
 which files or scenarios run. The public-safe `ci-timing.json` artifact records
 the complete file/scenario inventory, runner and dependency versions, cache
-state, concurrency, result counts, and build/test durations.
+state, concurrency, result counts, build/test durations, and required workflow
+elapsed time through release packaging.
 CI runs this same full suite for pull requests, pushes to `main`, and manual
 workflow dispatches. Pull-request branches do not also run a duplicate
 push-triggered copy; the `synthetic` job remains the required check and keeps
