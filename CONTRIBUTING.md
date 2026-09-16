@@ -47,7 +47,9 @@ the complete suite with `PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`
 CI runs this same full suite for pull requests, pushes to `main`, and manual
 workflow dispatches. Pull-request branches do not also run a duplicate
 push-triggered copy; the `synthetic` job remains the required check and keeps
-packaging and compatibility artifacts behind a passing suite.
+packaging and compatibility artifacts behind a passing suite. CI provisions
+Python 3.12 and caches only pip's downloads; each run still creates a fresh
+`.venv` from the pinned requirements.
 The full suite includes a pinned public runtime, real local embeddings and a scripted
 loopback provider. No authentication or paid inference is required; the embedding
 gate explicitly downloads pinned public model artifacts.
