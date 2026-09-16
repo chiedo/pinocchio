@@ -178,21 +178,18 @@ export async function diagnose(previewPlatform = false) {
       observed.length = 0;
       const delegated = prompt.includes("DELEGATE");
       const save = prompt.includes("SAVE");
-      const result = await measured(
-        timingsMs,
-        prompt.toLowerCase().replaceAll(" ", "-"),
-        () => delegated
-          ? session.rpc.tools.execute({
-              name: "task",
-              arguments: {
-                agent_type: "check-helper",
-                name: "independent-helper",
-                description: "Synthetic helper check",
-                prompt: `HELPER ${save ? "SAVE" : "SEARCH"} synthetic`,
-                mode: "sync",
-              },
-            })
-          : session.rpc.tools.execute({
+      let direct = "";
+      if (delegated) {
+        await measured(
+          timingsMs,
+          prompt.toLowerCase().replaceAll(" ", "-"),
+          () => session.sendAndWait({ prompt }, 45_000),
+        );
+      } else {
+        const result = await measured(
+          timingsMs,
+          prompt.toLowerCase().replaceAll(" ", "-"),
+          () => session.rpc.tools.execute({
               name: save ? EXTENSION_SAVE_TOOL : EXTENSION_SEARCH_TOOL,
               arguments: save
                 ? {
@@ -212,10 +209,11 @@ export async function diagnose(previewPlatform = false) {
                   }
                 : { query: "synthetic memory" },
             }),
-      );
-      const direct = typeof result === "string"
-        ? result
-        : result.textResultForLlm;
+        );
+        direct = typeof result === "string"
+          ? result
+          : result.textResultForLlm;
+      }
       const results = `${observed.join("\n")}\n${direct}`;
       assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
       if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");

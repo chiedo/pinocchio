@@ -193,10 +193,9 @@ test("local configuration and preview keep agent history local", async () => {
       /permissions:\n  contents: read\n  copilot-requests: write/,
     );
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
-    assert.match(
-      preview.exactUpload.workflow,
-      /copilot -C "\.pinocchio\/jobs\/daily-release-notes"/,
-    );
+    assert.match(preview.exactUpload.workflow, new RegExp(
+      `copilot -C "\\\\.pinocchio/jobs/${remoteId}"`,
+    ));
     assert.match(preview.exactUpload.workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
     assert.doesNotMatch(preview.exactUpload.workflow, /COPILOT_GITHUB_TOKEN: \$\{\{/);
     assert.match(preview.exactUpload.workflow, /--secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN/);
@@ -637,7 +636,7 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.equal(defaultPreview.repository, repositoryA);
 
     const discovered = await discoverCloudJobs(reference, cloudHome);
-    assert.equal(discovered.status, "ready");
+    assert.equal(discovered.status, "ready", JSON.stringify(discovered));
     assert.deepEqual(
       discovered.jobs.map((job) => [job.repository, job.id, job.remoteId]),
       [

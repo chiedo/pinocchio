@@ -63,11 +63,12 @@ export async function main(args: string[]) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const result = await main(process.argv.slice(2));
-    if (result !== undefined) process.stdout.write(`${JSON.stringify(result)}\n`);
+    const output = result === undefined ? "" : `${JSON.stringify(result)}\n`;
+    process.stdout.write(output, () => process.exit(0));
   } catch (error) {
     const code = isRecord(error) && typeof error.code === "string" ? error.code : "INSTALL_COMMAND_FAILED";
     process.stderr.write(`${JSON.stringify({ status: "error", code,
-      ...(error instanceof ToolError ? error.details : {}) })}\n`);
-    process.exitCode = 1;
+      ...(error instanceof ToolError ? error.details : {}) })}\n`, () =>
+      process.exit(1));
   }
 }
