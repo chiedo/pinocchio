@@ -38,10 +38,8 @@ test("refreshed startup, extension reload, and agent selection stay silent and s
     );
     await upgradeBroadcast(f.config);
 
-    const [session, other] = await Promise.all([
-      f.openSession(),
-      f.openSession(undefined, "other-agent"),
-    ]);
+    const session = await f.openSession();
+    const other = await f.openSession(undefined, "other-agent");
     await f.waitFor((status) => status.sessions.length === 2 &&
       status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await sessionChat(session), []);

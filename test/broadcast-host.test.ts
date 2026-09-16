@@ -23,10 +23,8 @@ test("native refresh is silent across startup and ongoing work", {
   });
   let working: Promise<unknown> | undefined;
   try {
-    const [first, second] = await Promise.all([
-      f.openSession(),
-      f.openSession(),
-    ]);
+    const first = await f.openSession();
+    const second = await f.openSession();
     await f.waitFor((status) => status.sessions.length === 2);
     const before = (await first.rpc.agent.getCurrent()).agent;
     working = first.sendAndWait({ prompt: "Keep working on this ordinary task." }, 45_000);
