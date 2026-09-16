@@ -127,10 +127,11 @@ authored text or memory bindings. For profiles enrolled through the lower-level
 CLI, use `npm run enroll -- refresh` with the original binding and fingerprint
 (and `--allow-shared` for repository/plugin profiles).
 
-**Already-running sessions do not automatically reload profile changes.** Start
-a fresh session with the same named agent after setup. To update an ongoing
-conversation immediately, send this to each live agent, substituting the exact
-paths printed by setup:
+Sessions that predate the broadcast listener need one restart. After that
+bootstrap, `npm run broadcast -- upgrade` reloads profile instructions, agent
+definitions, managed tool allowlists, and changed extension runtime code in live
+listening sessions. To update a session without the listener, send this message,
+substituting the exact paths printed by setup:
 
 ```text
 Read your agent profile at <profile> and the shared Pinocchio instructions at
@@ -187,8 +188,11 @@ failure, not an agent response. Hosts without the prompt-update API fail explici
 Pinocchio never falls back to sending a chat turn. Inspect `status` for details and
 rerun `upgrade` after resolving the problem.
 
-Runtime changes or changed YAML settings report `restart-required`.
-Missing managed memory/cloud-job tools report `failed` with
+Runtime changes trigger one guarded extension reload in each live session.
+Changed YAML settings and stale managed-tool allowlists trigger an agent
+definition reload. If the runtime still does not match after reloading, status
+reports `restart-required` with `RUNTIME_RELOAD_FAILED` rather than looping.
+Missing managed memory/job tools report `failed` with
 `code: TOOLS_NOT_AVAILABLE` and the exact `missingTools`. The listener rechecks
 these automatically every five seconds, so tools finishing initialization
 can recover without another broadcast or restart. Startup tool warnings allow two
@@ -201,15 +205,16 @@ the metadata does not advertise) are reported as `unmatchedTools`, but do not
 block an instruction refresh. This neither enables those tools nor changes
 the profile or its permissions.
 
-The command deliberately does not call the host's extension
-reload API: it would replace the listener mid-delivery and is not yet certified as
-a safe cross-process upgrade. In particular, adding the cloud-job tool to an old
-session still needs a restart. Inspect the per-agent errors for partial failures;
+The listener invokes the host's extension reload API at most once for each
+session and broadcast runtime. The replacement listener completes the same
+broadcast after it starts. Inspect the per-agent errors for partial failures;
 `status` exits nonzero for failures or required restarts, not merely pending work.
 Rerun `upgrade` after resolving failures. A newer broadcast supersedes the prior target.
 
 **First installation needs a one-time restart of existing sessions.** Older
 processes have no listener and cannot be discovered or upgraded by this command.
+After that bootstrap, future runtime, managed-tool, and instruction upgrades do
+not require manually restarting each open process.
 Coverage is limited to listening foreground sessions sharing this configuration
 root, not other machines, existing delegated helpers, or GitHub Actions jobs.
 Empty results do not mean every open conversation was upgraded. Heartbeats older

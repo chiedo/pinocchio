@@ -5,6 +5,8 @@ import { bindingForDefinition, configRootPath } from "./binding-registry.js";
 import { handleJobsTool } from "./jobs.js";
 import { CloudJobsError } from "./cloud-jobs.js";
 import { isRecord } from "./identity.js";
+import { JobsStore } from "./jobs-store.js";
+import { LocalJobs } from "./local-jobs.js";
 
 export async function main(args: string[]) {
   const { positionals, values } = parseArgs({
@@ -15,11 +17,14 @@ export async function main(args: string[]) {
       "token-secret": { type: "string" }, agent: { type: "string" },
       id: { type: "string" }, "prompt-file": { type: "string" },
       cron: { type: "string" }, backend: { type: "string" },
+      timezone: { type: "string" }, "working-directory": { type: "string" },
       tool: { type: "string", multiple: true }, "allow-url": { type: "string", multiple: true },
       "max-ai-credits": { type: "string" }, "unlimited-ai-credits": { type: "boolean" },
       "timeout-minutes": { type: "string" }, "retention-days": { type: "string" },
       draft: { type: "string" }, "approval-token": { type: "string" },
       operation: { type: "string" }, "include-result": { type: "boolean" },
+      "run-id": { type: "string" }, "database-id": { type: "string" },
+      limit: { type: "string" },
       confirm: { type: "boolean" },
     },
   });
@@ -34,21 +39,17 @@ export async function main(args: string[]) {
   const reference = definition
     ? await bindingForDefinition(configRoot, definition)
     : undefined;
-  if (!reference && command !== "configure") throw new CloudJobsError("AGENT_NOT_INSTALLED");
-  if (command === "configure") {
-    return handleJobsTool(reference ?? {
-      configRoot, bindingId: "00000000-0000-0000-0000-000000000000",
-      fingerprint: "0".repeat(64),
-    }, {
-      action: "configure", backend: "cloud", repository: values.repository,
-      branch: values.branch, tokenSecret: values["token-secret"], confirmed: values.confirm,
-    }, home);
-  }
+  if (!reference) throw new CloudJobsError("AGENT_NOT_INSTALLED");
   const input: Record<string, unknown> = {
     action: command, backend: values.backend,
     repository: values.repository, id: values.id, cron: values.cron,
+    timezone: values.timezone,
+    workingDirectory: values["working-directory"] ?? process.cwd(),
     draftId: values.draft, approvalToken: values["approval-token"],
     operation: values.operation, includeResult: values["include-result"],
+    runId: values["run-id"],
+    databaseId: values["database-id"] ? Number(values["database-id"]) : undefined,
+    limit: values.limit ? Number(values.limit) : undefined,
     confirmed: values.confirm, tools: values.tool, allowUrls: values["allow-url"],
     unlimitedAiCredits: values["unlimited-ai-credits"],
     maxAiCredits: values["max-ai-credits"] ? Number(values["max-ai-credits"]) : undefined,
@@ -61,7 +62,14 @@ export async function main(args: string[]) {
     input.prompt = await readFile(values["prompt-file"], "utf8");
   }
   void agent;
-  return handleJobsTool(reference!, input, home);
+  const store = await JobsStore.open(configRoot);
+  const localJobs = new LocalJobs(store);
+  try {
+    return await handleJobsTool(reference, input, home, localJobs);
+  } finally {
+    await localJobs.close();
+    store.close();
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
