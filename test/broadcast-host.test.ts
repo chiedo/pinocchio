@@ -67,7 +67,7 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       item.missingTools === undefined && item.code === undefined));
     const broadcastSessions = [first, second, restarted];
     const beforeRefreshChecks = observed.length;
-    await Promise.all(broadcastSessions.map(async (session) => {
+    for (const session of broadcastSessions) {
       assert.deepEqual(await warnings(session), []);
       await session.sendAndWait({ prompt: "Continue the ordinary task, without changing any files." }, 20_000);
       const search = await session.rpc.tools.execute({
@@ -77,7 +77,7 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       if (typeof search === "string") throw new Error("UNSTRUCTURED_SEARCH");
       assert.equal(search.resultType, "success");
       assert.deepEqual(JSON.parse(search.textResultForLlm).snippets, [], "Instructions must not be captured as memories");
-    }));
+    }
     const refreshedRequests = observed.slice(beforeRefreshChecks);
     assert.equal(refreshedRequests.length, broadcastSessions.length);
     for (const request of refreshedRequests) {

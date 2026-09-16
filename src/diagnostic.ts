@@ -188,7 +188,15 @@ export async function diagnose(previewPlatform = false) {
         await measured(
           timingsMs,
           `${prompt.toLowerCase().replaceAll(" ", "-")}-cleanup`,
-          () => session.rpc.cancelAllBackgroundAgents(),
+          async () => {
+            for (const task of (await session.rpc.tasks.list()).tasks) {
+              if (task.type !== "agent") continue;
+              if (task.status === "running" || task.status === "idle") {
+                await session.rpc.tasks.cancel({ id: task.id });
+              }
+              await session.rpc.tasks.remove({ id: task.id });
+            }
+          },
         );
       } else {
         const result = await measured(
