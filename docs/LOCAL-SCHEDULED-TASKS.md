@@ -1,7 +1,18 @@
-# Local scheduled tasks (launchd/cron)
+# Local scheduled tasks (active owning session)
 
-Best practices for running a Pinocchio agent unattended on your own machine,
-based on real failures found while debugging a daily launchd job.
+The unified `pinocchio_jobs` contract reserves local schedules for genuine
+native background-agent execution while the owning agent has a live root
+session. The current pinned public SDK does not expose the required start API,
+so local execution is blocked rather than emulated.
+
+## Compatibility gate
+
+The supported public `@github/copilot-sdk` 1.0.13 declarations expose
+client-side task cancellation and background-task events, but not a public
+`session.rpc.tasks.startAgent(...)` method. Until a supported runtime proves
+foreground responsiveness, immutable agent identity, scoped memory/MCP access,
+targeted cancellation, and teardown, Pinocchio reports
+`LOCAL_BACKGROUND_TASK_API_UNAVAILABLE`.
 
 ## The core problem
 
@@ -14,7 +25,11 @@ still exit `0` — a "success" that did nothing useful.
 
 ## Rules
 
-1. **Never use `--allow-all` for a scheduled job.** It works, but it's
+1. **Do not install an OS scheduler for Pinocchio local jobs.** A schedule is
+   durable data, not a cron or launchd registration. Missed triggers are
+   skipped when no owning session is live.
+
+2. **Never use `--allow-all` for a legacy headless job.** It works, but it's
    blanket trust for an unattended process. Use scoped `--allow-tool` flags
    for exactly the tools the task needs, and `--available-tools` to keep the
    model's tool list minimal:
@@ -26,7 +41,7 @@ still exit `0` — a "success" that did nothing useful.
      --available-tools='slack-slack_search_public,slack-slack_read_channel'
    ```
 
-2. **Don't rely on the Pinocchio memory extension in headless/no-TTY runs.**
+3. **Don't rely on the Pinocchio memory extension in headless/no-TTY runs.**
    As of CLI 1.0.84-8, `--experimental --enable-memory` combined with scoped
    `--allow-tool` for `pinocchio_memory_*` can hang indefinitely in
    non-interactive mode (confirmed via repeated reproduction — the extension
@@ -35,7 +50,10 @@ still exit `0` — a "success" that did nothing useful.
    file from your wrapper script instead of asking the agent to call memory
    tools mid-run.
 
-3. **Wrap the CLI call in a small script, not a raw command in the plist.**
+4. **Do not wrap Pinocchio local jobs in a detached CLI script.** The worker
+   must be a native background invocation owned by the live session.
+
+5. **For unrelated legacy CLI calls, wrap the command in a small script, not a raw command in the plist.**
    The wrapper should:
    - take an overlap lock (e.g. `mkdir` as a lock — atomic, no extra deps) so
      retries/awake-from-sleep don't double-run;
@@ -48,12 +66,12 @@ still exit `0` — a "success" that did nothing useful.
    - log a `START`/`SUCCESS`/`FAILED` line with a run ID, plus a full
      per-run log file, so failures are visible without re-running.
 
-4. **Verify success, don't trust exit code alone at first.** `last exit code`
+6. **Verify success, don't trust exit code alone at first.** `last exit code`
    from `launchctl print` can be `0` even when the agent quietly couldn't use
    a tool it needed. Test by inspecting real output, not just the exit code,
    the first few times a new scheduled job runs.
 
-5. **Test through the real scheduler**, not just by running the command in a
+7. **Test through the real scheduler**, not just by running the command in a
    terminal — `launchctl kickstart -k gui/<uid>/<label>` triggers an
    immediate real run. Confirm two consecutive runs: the first persists a
    checkpoint, the second resumes from it without gaps or duplicates.

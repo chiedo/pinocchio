@@ -8,7 +8,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { parse } from "yaml";
 import { main } from "../src/install-cli.js";
-import { CLOUD_JOBS_TOOL } from "../src/cloud-jobs.js";
+import { JOBS_TOOL } from "../src/jobs.js";
 import { packageRelease, releaseRoot, verifyRelease } from "../src/release.js";
 import { MemoryStore } from "../src/memory-store.js";
 import {
@@ -62,7 +62,7 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
       tools?: unknown[];
       "mcp-servers"?: Record<string, { args?: string[] }>;
     };
-    for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL]) {
+    for (const tool of [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL]) {
       assert.ok(installedProfile.tools?.includes(tool));
     }
     assert.equal(installedProfile["mcp-servers"], undefined);

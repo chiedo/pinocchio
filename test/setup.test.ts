@@ -18,7 +18,7 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
     assert.ok(original.includes('- Agent ID: "synthetic-agent"'));
     assert.ok(original.includes(`- Agent profile: ${JSON.stringify(profile)}`));
     assert.ok(original.includes(`- Copilot configuration root: ${JSON.stringify(root)}`));
-    assert.ok(original.includes("pinocchio_cloud_jobs"));
+    assert.ok(original.includes("pinocchio_jobs"));
     assert.ok(original.includes(`Scheduled cloud jobs use this exact local profile as their source: ${JSON.stringify(profile)}`));
     assert.match(original, /Memory scope: global, available across repositories/);
     assert.match(original, /YAML frontmatter configures model preference, tools, and skills/);
@@ -31,7 +31,7 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
     await writeFile(profile, original + "\nPreserve this user instruction.\n");
     assert.equal((await setup({ ...options, remove: true })).status, "removed");
     const removed = await readFile(profile, "utf8");
-    assert.doesNotMatch(removed, /pinocchio-memory:v1|pinocchio_cloud_jobs/);
+    assert.doesNotMatch(removed, /pinocchio-memory:v1|pinocchio_jobs/);
     assert.match(removed, /Preserve this user instruction/);
     assert.equal((await setup(options)).status, "ready");
     assert.match(await readFile(profile, "utf8"), /pinocchio-memory:v1/);
