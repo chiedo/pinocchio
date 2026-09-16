@@ -4,7 +4,7 @@ import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
 
 const concurrency = Number.parseInt(
-  process.env.PINOCCHIO_TEST_CONCURRENCY ?? "2",
+  process.env.PINOCCHIO_TEST_CONCURRENCY ?? "4",
   10,
 );
 if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
