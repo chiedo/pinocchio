@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -64,6 +65,7 @@ test("an open agent session announces unread cloud results without a user prompt
   const manifest = `version: 1
 id: changelog
 agent: notice-agent
+repository: example/pinocchio-jobs
 cron: "*/15 * * * *"
 timezone: UTC
 enabled: true
@@ -190,7 +192,12 @@ if (args[0] === "repo" && args[1] === "view") {
     for (let attempt = 0; attempt < 20 && !state; attempt++) {
       try {
         state = JSON.parse(
-          await readFile(join(cloudHome, "result-state.json"), "utf8"),
+          await readFile(join(
+            cloudHome,
+            `result-state-${createHash("sha256")
+              .update("example/pinocchio-jobs")
+              .digest("hex")}.json`,
+          ), "utf8"),
         ) as {
           jobs: Record<string, {
             notifiedThrough: number;

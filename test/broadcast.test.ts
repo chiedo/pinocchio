@@ -120,7 +120,7 @@ test("failed host delivery never reports updated or repeatedly retries the same 
   } finally { await rm(f.root, { recursive: true }); }
 });
 
-test("runtime and settings changes still require a restart, never updated", async (t) => {
+test("runtime and settings changes expose guarded recovery actions", async (t) => {
   for (const reason of ["RUNTIME_CHANGED", "AGENT_SETTINGS_CHANGED"]) {
     await t.test(reason, async () => {
       const f = await fixture();
@@ -133,6 +133,14 @@ test("runtime and settings changes still require a restart, never updated", asyn
         const record = (await broadcastStatus(f.root)).sessions[0];
         assert.equal(record?.status, "restart-required");
         assert.equal(record?.code, reason);
+        if (reason === "RUNTIME_CHANGED") {
+          assert.equal(await f.listener.claimRuntimeReload(), true);
+          assert.equal(await f.listener.claimRuntimeReload(), false);
+          assert.equal((await broadcastStatus(f.root)).sessions[0]?.code, "RUNTIME_RELOAD_FAILED");
+        } else {
+          await f.listener.agentReloaded(f.reference);
+          assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
+        }
         await assert.rejects(f.listener.acknowledge(f.reference), { code: "BROADCAST_NO_DELIVERY" });
       } finally { await rm(f.root, { recursive: true }); }
     });

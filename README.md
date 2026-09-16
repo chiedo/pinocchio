@@ -28,10 +28,10 @@ their own history instead of sharing one pool.
 - **Automatic capture** — no need to say "remember this"; conversations are
   captured as you go.
 - **Unified agent-owned jobs** — inspect local and cloud schedules through one
-  `pinocchio_jobs` tool. Cloud jobs can each use a different private GitHub
-  Actions repository; local active-session execution is currently blocked by
-  the native-background compatibility gate rather than falling back to a
-  detached scheduler.
+  `pinocchio_jobs` tool. Local jobs run as native background agents only while
+  their owning agent has a live session. Cloud jobs can each use a different
+  private GitHub Actions repository and continue while the local computer is
+  offline.
 
 ## Requirements
 
