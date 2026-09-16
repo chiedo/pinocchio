@@ -135,9 +135,7 @@ export async function broadcastStatus(root: string, now = Date.now()) {
 
 export class BroadcastListener {
   private record: SessionRecord | undefined;
-  private delivery: { request: BroadcastRequest; target: BroadcastTarget; prompt: string } | undefined;
-  private appliedTarget: BroadcastTarget | undefined;
-  private appliedPrompt: string | undefined;
+  private delivery: { request: BroadcastRequest; target: BroadcastTarget } | undefined;
   private instance = randomUUID();
   constructor(private readonly root: string, private readonly sessionId: string, private readonly runtime: string) {}
 
@@ -150,8 +148,6 @@ export class BroadcastListener {
     if (!this.record || this.record.bindingId !== reference.bindingId) {
       const snapshot = await broadcastSnapshot(reference);
       this.delivery = undefined;
-      this.appliedTarget = undefined;
-      this.appliedPrompt = undefined;
       this.record = {
         version: 1, instance: this.instance, sessionId: this.sessionId,
         bindingId: reference.bindingId, agent: snapshot.agent, heartbeat: now,
@@ -163,15 +159,11 @@ export class BroadcastListener {
     }
     await this.save();
   }
-  async prepare(reference: BindingReference, offeredTools: string[], currentPrompt?: string) {
+  async prepare(reference: BindingReference, offeredTools: string[]) {
     await this.heartbeat(reference);
     const request = await latestBroadcast(this.root);
     const target = request?.targets.find((item) => item.bindingId === reference.bindingId);
     if (!request || !target || !this.record) return;
-    if (currentPrompt !== undefined && currentPrompt !== this.appliedPrompt) {
-      if (this.record.status === "updated") this.record.status = "pending";
-      this.appliedTarget = undefined;
-    }
     if (this.record.requestId === request.id && this.record.status !== "pending" &&
         this.record.code !== "TOOLS_NOT_AVAILABLE") return;
     this.delivery = undefined;
@@ -200,11 +192,6 @@ export class BroadcastListener {
     }
     const snapshot = await broadcastSnapshot(reference);
     if (JSON.stringify(snapshot.target) !== JSON.stringify(target)) fail("BROADCAST_TARGET_CHANGED");
-    if (JSON.stringify(this.appliedTarget) === JSON.stringify(target)) {
-      this.record.status = "updated";
-      await this.save();
-      return;
-    }
     const prompt = [
       snapshot.body,
       "## Shared Pinocchio instructions",
@@ -214,7 +201,7 @@ export class BroadcastListener {
       "Continue the user's actual request normally. Do not announce or acknowledge this background instruction refresh, or save it to memory.",
     ].join("\n\n");
     this.record.status = "pending";
-    this.delivery = { request, target, prompt };
+    this.delivery = { request, target };
     await this.save();
     return prompt;
   }
@@ -227,8 +214,6 @@ export class BroadcastListener {
     this.record.heartbeat = Date.now();
     this.delivery = undefined;
     await this.save();
-    this.appliedTarget = delivery.target;
-    this.appliedPrompt = delivery.prompt;
   }
   issue() {
     const record = this.record;
@@ -246,7 +231,7 @@ export class BroadcastListener {
     await this.save();
   }
   async close() {
-    this.record = undefined; this.delivery = undefined; this.appliedTarget = undefined; this.appliedPrompt = undefined;
+    this.record = undefined; this.delivery = undefined;
     const path = join(await directory(this.root), "sessions", `${this.instance}.json`);
     try { await unlink(path); }
     catch (error) { if (!hasCode(error, "ENOENT")) throw error; }

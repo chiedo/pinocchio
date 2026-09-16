@@ -20,6 +20,7 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
   const clients: CopilotClient[] = [];
   const sessions: CopilotSession[] = [];
   async function close() {
+    for (const session of sessions) await session.disconnect();
     for (const client of clients) await client.stop();
     await provider.close();
     await workspace.close();
@@ -32,10 +33,12 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
       ...(scoped ? { repository } : { global: true }),
     });
     await setup({ configRoot: config, name: "other-agent", global: true });
+    const otherProfile = join(config, "agents", "other-agent.agent.md");
+    await writeFile(otherProfile, (await readFile(otherProfile, "utf8")) + "\nSynthetic other role marker.\n");
     const profile = join(config, "agents", "broadcast-agent.agent.md");
     const shared = join(config, "pinocchio", "AGENTS.md");
     await writeFile(profile, (await readFile(profile, "utf8")) + "\nSynthetic original role marker.\n");
-    async function openSession(workingDirectory = repository) {
+    async function openSession(workingDirectory = repository, agent = "broadcast-agent") {
       const client = new CopilotClient({
         connection: RuntimeConnection.forStdio({
           path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
@@ -53,7 +56,7 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
         model: "synthetic-model",
         provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
         availableTools: new ToolSet().addCustom("*").addBuiltIn("view"),
-        agent: "broadcast-agent", onPermissionRequest: approveAll, infiniteSessions: { enabled: false },
+        agent, onPermissionRequest: approveAll, infiniteSessions: { enabled: false },
       });
       await session.rpc.tools.initializeAndValidate();
       sessions.push(session);
@@ -72,12 +75,6 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
   } catch (error) { await close(); throw error; }
 }
 
-async function authoredPrompt(session: CopilotSession, name = "broadcast-agent") {
-  const agent = (await session.rpc.agent.list({ includePrompt: true })).agents.find((item) => item.name === name);
-  assert.ok(agent?.prompt);
-  return agent.prompt;
-}
-
 async function chat(session: CopilotSession) {
   return (await session.getEvents()).filter((event) => event.type === "user.message" || event.type === "assistant.message");
 }
@@ -87,15 +84,15 @@ async function warnings(session: CopilotSession) {
     event.type === "session.warning" && event.data.message.startsWith("Pinocchio"));
 }
 
-test("native refresh is silent across startup, ongoing work, reload, and agent selection", { timeout: 150_000 }, async () => {
-  const observed: string[] = [];
+test("native refresh is silent across startup, ongoing work, reload, and agent selection", { timeout: 240_000 }, async () => {
+  const observed: { all: string; latest: string }[] = [];
   let release: () => void = () => {};
   let started: () => void = () => {};
   const waiting = new Promise<void>((resolve) => { started = resolve; });
   const blocked = new Promise<void>((resolve) => { release = resolve; });
   const f = await fixture({
     async observeRequest(messages) {
-      observed.push(JSON.stringify(messages));
+      observed.push({ all: JSON.stringify(messages), latest: JSON.stringify(messages.findLast((message) => message.role === "user") ?? {}) });
       if (observed.length === 1) { started(); await blocked; }
     },
   });
@@ -105,13 +102,12 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     const second = await f.openSession();
     await f.waitFor((status) => status.sessions.length === 2);
     const before = (await first.rpc.agent.getCurrent()).agent;
-    const otherPrompt = await authoredPrompt(first, "other-agent");
     working = first.sendAndWait({ prompt: "Keep working on this ordinary task." }, 45_000);
     await Promise.race([waiting, working.then(() => { throw new Error("REQUEST_NOT_OBSERVED"); })]);
     await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("Synthetic original role marker.", "Synthetic refreshed role marker."));
     await writeFile(f.shared, (await readFile(f.shared, "utf8")) + "\nSynthetic shared refresh marker.\n");
     await upgradeBroadcast(f.config);
-    await f.waitFor((status) => status.sessions.length === 2 && status.sessions.every((item) => item.status === "updated"));
+    await new Promise((resolve) => setTimeout(resolve, BROADCAST_HEARTBEAT_MS + 500));
     assert.equal(f.provider.counts().requests, 1, "Refreshing must not call the model or interrupt active work");
     assert.equal((await chat(first)).length, 1, "The blocked user turn must remain the only chat event");
     assert.deepEqual(await chat(second), []);
@@ -120,10 +116,10 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     const { prompt: _beforePrompt, ...beforeSettings } = before;
     const { prompt: _afterPrompt, ...afterSettings } = after;
     assert.deepEqual(afterSettings, beforeSettings, "Refresh must not change agent settings or permissions");
-    assert.equal(await authoredPrompt(first, "other-agent"), otherPrompt);
     release();
     await working;
     working = undefined;
+    await f.waitFor((status) => status.sessions.length === 2 && status.sessions.every((item) => item.status === "updated"));
     assert.equal((await chat(first)).length, 2, "The original user task must finish normally");
 
     const restarted = await f.openSession();
@@ -133,16 +129,12 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     assert.ok((await broadcastStatus(f.config)).sessions.every((item) =>
       item.unmatchedTools?.includes("web_search") && item.unmatchedTools.includes("exec") &&
       item.missingTools === undefined && item.code === undefined));
-    const prompt = await authoredPrompt(first);
-    assert.match(prompt, /Synthetic refreshed role marker/);
-    assert.match(prompt, /Synthetic shared refresh marker/);
-    assert.doesNotMatch(prompt, /Synthetic original role marker/);
     for (const session of f.sessions) {
-      assert.equal(await authoredPrompt(session), prompt);
       assert.deepEqual(await warnings(session), []);
       await session.sendAndWait({ prompt: "Continue the ordinary task, without changing any files." }, 20_000);
-      assert.match(observed.at(-1) ?? "", /Synthetic refreshed role marker/);
-      assert.match(observed.at(-1) ?? "", /Synthetic shared refresh marker/);
+      assert.match(observed.at(-1)?.latest ?? "", /Synthetic refreshed role marker/);
+      assert.match(observed.at(-1)?.latest ?? "", /Synthetic shared refresh marker/);
+      assert.doesNotMatch(observed.at(-1)?.latest ?? "", /Synthetic original role marker/);
       const search = await session.rpc.tools.execute({
         name: EXTENSION_SEARCH_TOOL, arguments: { query: "Synthetic shared refresh marker" },
       });
@@ -152,29 +144,31 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       assert.deepEqual(JSON.parse(search.textResultForLlm).snippets, [], "Instructions must not be captured as memories");
     }
     const chatCounts = await Promise.all(f.sessions.map(async (session) => (await chat(session)).length));
-    const selected = (await restarted.rpc.agent.getCurrent()).agent;
-    assert.ok(selected);
-    await restarted.rpc.agent.setPrompt({ id: selected.id, prompt: "Synthetic host-side prompt replacement." });
-    await new Promise((resolve) => setTimeout(resolve, BROADCAST_HEARTBEAT_MS + 500));
-    await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
-    assert.equal(await authoredPrompt(restarted), prompt, "Host prompt drift must not leave an incorrect updated status");
     await upgradeBroadcast(f.config);
     await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
-    for (const session of f.sessions) assert.equal(await authoredPrompt(session), prompt, "Identical broadcasts must not stack instructions");
     await restarted.rpc.extensions.reload();
     await restarted.rpc.agent.select({ name: "broadcast-agent" });
     await restarted.rpc.tools.initializeAndValidate();
     await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
     await restarted.rpc.agent.select({ name: "other-agent" });
     await f.waitFor((status) => status.sessions.some((item) => item.sessionId === restarted.sessionId && item.agent === "other-agent" && item.status === "updated"));
-    assert.match(await authoredPrompt(restarted, "other-agent"), /Synthetic shared refresh marker/);
-    assert.doesNotMatch(await authoredPrompt(restarted, "other-agent"), /Synthetic refreshed role marker/);
     await restarted.rpc.agent.deselect();
     await f.waitFor((status) => status.sessions.length === 2);
     await restarted.rpc.agent.select({ name: "broadcast-agent" });
     await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await Promise.all(f.sessions.map(async (session) => (await chat(session)).length)), chatCounts);
     assert.equal(f.provider.counts().requests, 4);
+    await restarted.sendAndWait({ prompt: "Continue ordinary work after reloading." }, 20_000);
+    assert.equal((observed.at(-1)?.latest.match(/Synthetic refreshed role marker/g) ?? []).length, 1);
+    assert.equal((observed.at(-1)?.latest.match(/Synthetic shared refresh marker/g) ?? []).length, 1);
+    const other = await f.openSession(undefined, "other-agent");
+    await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
+    assert.deepEqual(await chat(other), []);
+    await other.sendAndWait({ prompt: "Handle this ordinary task in your own role." }, 20_000);
+    assert.match(observed.at(-1)?.latest ?? "", /Synthetic other role marker/);
+    assert.match(observed.at(-1)?.latest ?? "", /Synthetic shared refresh marker/);
+    assert.doesNotMatch(observed.at(-1)?.all ?? "", /Synthetic refreshed role marker/);
+    assert.equal(f.provider.counts().requests, 6);
     assert.equal(f.provider.counts().failures, 0);
   } finally {
     release();
@@ -190,7 +184,7 @@ test("restart failures show one actionable warning without model turns and recov
     await f.waitFor((status) => status.sessions.length === 1);
     await upgradeBroadcast(f.config);
     await f.waitFor((status) => status.sessions[0]?.status === "updated");
-    const original = await authoredPrompt(session);
+    const original = (await session.rpc.agent.getCurrent()).agent;
     const request = await latestBroadcast(f.config);
     assert.ok(request);
     await publishBroadcast(f.config, { ...request, id: randomUUID(), runtime: "a".repeat(64) });
@@ -200,7 +194,7 @@ test("restart failures show one actionable warning without model turns and recov
     assert.equal(notices.length, 1);
     assert.match(JSON.stringify(notices), /needs a session restart/);
     assert.match(JSON.stringify(notices), /npm run broadcast -- status/);
-    assert.equal(await authoredPrompt(session), original);
+    assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
     assert.deepEqual(await chat(session), []);
     assert.equal(f.provider.counts().requests, 0);
     await upgradeBroadcast(f.config);
@@ -211,17 +205,20 @@ test("restart failures show one actionable warning without model turns and recov
 });
 
 test("a repository-scoped refresh cannot change instructions outside its bound repository", { timeout: 60_000 }, async () => {
-  const f = await fixture({}, true);
+  let observed = "";
+  const f = await fixture({ observeRequest(messages) { observed = JSON.stringify(messages); } }, true);
   try {
     const session = await f.openSession(await realpath(f.workspace.otherRepository));
     await f.waitFor((status) => status.sessions.length === 1);
-    const original = await authoredPrompt(session);
+    const original = (await session.rpc.agent.getCurrent()).agent;
     await writeFile(f.shared, "Synthetic repository-only refresh marker.\n");
     await upgradeBroadcast(f.config);
     await f.waitFor((status) => status.sessions[0]?.status === "failed");
     assert.equal((await broadcastStatus(f.config)).sessions[0]?.code, "BROADCAST_SCOPE_MISMATCH");
-    assert.equal(await authoredPrompt(session), original);
+    assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
     assert.deepEqual(await chat(session), []);
     assert.equal(f.provider.counts().requests, 0);
+    await session.sendAndWait({ prompt: "Continue ordinary work here." }, 20_000);
+    assert.doesNotMatch(observed, /Synthetic repository-only refresh marker/);
   } finally { await f.close(); }
 });

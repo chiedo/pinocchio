@@ -67,7 +67,7 @@ test("broadcast refresh preserves enrollment and requires delivery completion be
   } finally { await rm(f.root, { recursive: true }); }
 });
 
-test("identical broadcasts reuse the applied snapshot without another delivery", async () => {
+test("identical broadcasts replace the prompt with identical instructions rather than stacking them", async () => {
   const f = await fixture();
   try {
     const first = await f.request();
@@ -76,7 +76,9 @@ test("identical broadcasts reuse the applied snapshot without another delivery",
     await f.listener.acknowledge(f.reference);
     const second = await f.request();
     assert.notEqual(first.id, second.id);
-    assert.equal(await f.listener.prepare(f.reference, second.targets[0]!.tools), undefined);
+    assert.equal(await f.listener.prepare(f.reference, second.targets[0]!.tools), prompt);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
+    await f.listener.acknowledge(f.reference);
     const updated = (await broadcastStatus(f.root)).sessions[0];
     assert.equal(updated?.requestId, second.id);
     assert.equal(updated?.status, "updated");
@@ -95,9 +97,9 @@ test("failed host delivery never reports updated or repeatedly retries the same 
   try {
     const first = await f.request();
     assert.ok(await f.listener.prepare(f.reference, first.targets[0]!.tools));
-    await f.listener.failed(Object.assign(new Error("Synthetic host failure"), { code: "BROADCAST_PROMPT_NOT_APPLIED" }));
+    await f.listener.failed(new Error("Synthetic host failure"));
     const issue = f.listener.issue();
-    assert.equal(issue?.code, "BROADCAST_PROMPT_NOT_APPLIED");
+    assert.equal(issue?.code, "BROADCAST_FAILED");
     assert.equal(issue?.restartRequired, false);
     for (let attempt = 0; attempt < 3; attempt++) {
       assert.equal(await f.listener.prepare(f.reference, first.targets[0]!.tools), undefined);
@@ -111,30 +113,10 @@ test("failed host delivery never reports updated or repeatedly retries the same 
     assert.equal(f.listener.issue(), undefined);
     await f.listener.failed(Object.assign(new Error("Synthetic host reset"), { code: "BROADCAST_FAILED" }));
     const recovery = await f.request();
-    assert.ok(await f.listener.prepare(f.reference, recovery.targets[0]!.tools, "Synthetic reset prompt"));
-    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending", "A cached snapshot must not hide host prompt drift after a failure");
+    assert.ok(await f.listener.prepare(f.reference, recovery.targets[0]!.tools));
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending", "A retry must wait for host acknowledgment");
     await f.listener.acknowledge(f.reference);
     assert.equal(f.listener.issue(), undefined);
-  } finally { await rm(f.root, { recursive: true }); }
-});
-
-test("host prompt drift is repaired without resetting the session's settings baseline", async () => {
-  const f = await fixture();
-  try {
-    const first = await f.request();
-    const tools = first.targets[0]!.tools;
-    const prompt = await f.listener.prepare(f.reference, tools);
-    assert.ok(prompt);
-    await f.listener.acknowledge(f.reference);
-    assert.equal(await f.listener.prepare(f.reference, tools, prompt), undefined);
-    assert.equal(await f.listener.prepare(f.reference, tools, "Synthetic replaced host prompt"), prompt);
-    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
-    await f.listener.acknowledge(f.reference);
-    await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("tools:", "model: changed-model\ntools:"));
-    await f.request();
-    assert.equal(await f.listener.prepare(f.reference, tools, "Another host prompt"), undefined);
-    assert.equal(f.listener.issue()?.code, "AGENT_SETTINGS_CHANGED");
-    assert.equal(f.listener.issue()?.restartRequired, true);
   } finally { await rm(f.root, { recursive: true }); }
 });
 

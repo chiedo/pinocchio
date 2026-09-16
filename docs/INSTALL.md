@@ -176,8 +176,8 @@ session's configured model as part of normal instructions, not a separate refres
 turn. It is not stored in the broadcast registry.
 
 `status` reports each live listener as `pending`, `updated`, `restart-required`, or
-`failed`. `updated` means the host accepted the matching authored prompt and the
-extension read it back, with the target runtime and Pinocchio's managed tools
+`failed`. `updated` means the host accepted the matching authored prompt, with the
+selected agent, instruction snapshot, runtime, and Pinocchio's managed tools
 checked. It is not proof of model compliance or removal of old instructions from
 conversation history. Repository rules and higher-priority instructions still win.
 Restart for a clean conversation without earlier instruction snapshots.
