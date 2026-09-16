@@ -192,7 +192,7 @@ if (args[0] === "repo" && args[1] === "view") {
         claim?: unknown;
       }>;
     } | undefined;
-    for (let attempt = 0; attempt < 20 && !state; attempt++) {
+    for (let attempt = 0; attempt < 100; attempt++) {
       try {
         state = JSON.parse(
           await readFile(join(
@@ -208,9 +208,17 @@ if (args[0] === "repo" && args[1] === "view") {
             claim?: unknown;
           }>;
         };
+        if (
+          state.jobs.changelog?.notifiedThrough === 31 &&
+          state.jobs.changelog?.readThrough === 31 &&
+          state.jobs.changelog?.claim === undefined
+        ) {
+          break;
+        }
       } catch {
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        state = undefined;
       }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
     }
     assert.ok(state);
     assert.equal(state.jobs.changelog?.notifiedThrough, 31);

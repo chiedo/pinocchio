@@ -54,6 +54,60 @@ async function exists(path: string) {
   try { await lstat(path); return true; }
   catch (error) { if (hasCode(error, "ENOENT")) return false; throw error; }
 }
+async function executeDiagnostic(path: string, args: string[]) {
+  return new Promise<{ stdout: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, [path, ...args], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const terminateGroup = (signal: NodeJS.Signals) => {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, signal); }
+      catch (error) { if (!hasCode(error, "ESRCH")) throw error; }
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { terminateGroup(error ? "SIGKILL" : "SIGTERM"); }
+      catch (cleanupError) {
+        error ??= cleanupError instanceof Error
+          ? cleanupError
+          : new Error(String(cleanupError));
+      }
+      child.stdout.destroy();
+      child.stderr.destroy();
+      if (error) {
+        Object.assign(error, { stderr });
+        reject(error);
+      } else resolve({ stdout });
+    };
+    const append = (current: string, chunk: Buffer) => {
+      const next = current + chunk.toString();
+      if (Buffer.byteLength(next) > 16_384) {
+        finish(new ToolError("INSTALL_DIAGNOSTIC_OUTPUT_OVERSIZED"));
+      }
+      return next;
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (!settled) stdout = append(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (!settled) stderr = append(stderr, chunk);
+    });
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code, signal) => {
+      if (code === 0) finish();
+      else finish(new Error(`INSTALL_DIAGNOSTIC_EXIT_${code ?? signal ?? "UNKNOWN"}`));
+    });
+    const timer = setTimeout(() => {
+      finish(new ToolError("INSTALL_DIAGNOSTIC_TIMEOUT"));
+    }, 300_000);
+  });
+}
 async function ownedApp(path: string, release: State["release"]) {
   await privateDirectory(path, false);
   const actual = releaseSchema.parse(JSON.parse(await readFile(join(path, "release.json"), "utf8")));
@@ -117,10 +171,13 @@ export async function install(paths: Locations, upgrade: boolean, stopped: boole
     // The candidate runs against isolated synthetic state, never enrolled user profiles.
     try {
       const result = await measured("doctor", () =>
-        execute(process.execPath, [join(stage, "dist/src/install-cli.js"), "doctor",
-          ...(previewPlatform ? ["--preview-platform"] : [])], { timeout: 300_000, maxBuffer: 16_384 }));
+        executeDiagnostic(join(stage, "dist/src/install-cli.js"), [
+          "doctor",
+          ...(previewPlatform ? ["--preview-platform"] : []),
+        ]));
       diagnostic = JSON.parse(result.stdout);
     } catch (error) {
+      if (error instanceof ToolError) throw error;
       if (typeof error === "object" && error && "stderr" in error && typeof error.stderr === "string") {
         const code = /"code":"([A-Z0-9_]+)"/.exec(error.stderr)?.[1];
         if (code) throw new ToolError(code);
