@@ -20,12 +20,23 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
   const clients: CopilotClient[] = [];
   const sessions: CopilotSession[] = [];
   async function close() {
-    for (const session of sessions) await session.disconnect();
-    for (const client of clients) {
-      assert.equal((await client.stop()).length, 0, "CLEANUP_FAILED");
-    }
+    const disconnected = await Promise.allSettled(
+      sessions.map((session) => session.disconnect()),
+    );
+    const stopped = await Promise.allSettled(
+      clients.map((client) => client.stop()),
+    );
     await provider.close();
     await workspace.close();
+    assert.ok(
+      disconnected.every((result) => result.status === "fulfilled"),
+      "SESSION_CLEANUP_FAILED",
+    );
+    assert.ok(
+      stopped.every((result) =>
+        result.status === "fulfilled" && result.value.length === 0),
+      "CLIENT_CLEANUP_FAILED",
+    );
   }
   try {
     await rm(join(repository, ".github", "extensions", "pinocchio"), { recursive: true });
@@ -100,8 +111,10 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
   });
   let working: Promise<unknown> | undefined;
   try {
-    const first = await f.openSession();
-    const second = await f.openSession();
+    const [first, second] = await Promise.all([
+      f.openSession(),
+      f.openSession(),
+    ]);
     await f.waitFor((status) => status.sessions.length === 2);
     const before = (await first.rpc.agent.getCurrent()).agent;
     working = first.sendAndWait({ prompt: "Keep working on this ordinary task." }, 45_000);
@@ -125,19 +138,25 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     await f.waitFor((status) => status.sessions.length === 2 && status.sessions.every((item) => item.status === "updated"));
     assert.equal((await chat(first)).length, 2, "The original user task must finish normally");
 
-    const restarted = await f.openSession();
-    await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
+    const [restarted, other] = await Promise.all([
+      f.openSession(),
+      f.openSession(undefined, "other-agent"),
+    ]);
+    await f.waitFor((status) => status.sessions.length === 4 &&
+      status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await chat(restarted), [], "Opening a new agent must not replay a saved broadcast into chat");
+    assert.deepEqual(await chat(other), []);
     assert.equal(f.provider.counts().requests, 1);
-    assert.ok((await broadcastStatus(f.config)).sessions.every((item) =>
+    assert.ok((await broadcastStatus(f.config)).sessions
+      .filter((item) => item.agent === "broadcast-agent")
+      .every((item) =>
       item.unmatchedTools?.includes("web_search") && item.unmatchedTools.includes("exec") &&
       item.missingTools === undefined && item.code === undefined));
-    for (const session of f.sessions) {
+    const broadcastSessions = [first, second, restarted];
+    const beforeRefreshChecks = observed.length;
+    await Promise.all(broadcastSessions.map(async (session) => {
       assert.deepEqual(await warnings(session), []);
       await session.sendAndWait({ prompt: "Continue the ordinary task, without changing any files." }, 20_000);
-      assert.match(observed.at(-1)?.all ?? "", /Synthetic refreshed role marker/);
-      assert.match(observed.at(-1)?.all ?? "", /Synthetic shared refresh marker/);
-      assert.doesNotMatch(observed.at(-1)?.all ?? "", /Synthetic original role marker/);
       const search = await session.rpc.tools.execute({
         name: EXTENSION_SEARCH_TOOL, arguments: { query: "Synthetic shared refresh marker" },
       });
@@ -145,28 +164,32 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       if (typeof search === "string") throw new Error("UNSTRUCTURED_SEARCH");
       assert.equal(search.resultType, "success");
       assert.deepEqual(JSON.parse(search.textResultForLlm).snippets, [], "Instructions must not be captured as memories");
+    }));
+    const refreshedRequests = observed.slice(beforeRefreshChecks);
+    assert.equal(refreshedRequests.length, broadcastSessions.length);
+    for (const request of refreshedRequests) {
+      assert.match(request.all, /Synthetic refreshed role marker/);
+      assert.match(request.all, /Synthetic shared refresh marker/);
+      assert.doesNotMatch(request.all, /Synthetic original role marker/);
     }
     const chatCounts = await Promise.all(f.sessions.map(async (session) => (await chat(session)).length));
     await upgradeBroadcast(f.config);
-    await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
+    await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
     await restarted.rpc.extensions.reload();
     await restarted.rpc.agent.select({ name: "broadcast-agent" });
     await restarted.rpc.tools.initializeAndValidate();
-    await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
+    await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
     await restarted.rpc.agent.select({ name: "other-agent" });
     await f.waitFor((status) => status.sessions.some((item) => item.sessionId === restarted.sessionId && item.agent === "other-agent" && item.status === "updated"));
     await restarted.rpc.agent.deselect();
-    await f.waitFor((status) => status.sessions.length === 2);
+    await f.waitFor((status) => status.sessions.length === 3);
     await restarted.rpc.agent.select({ name: "broadcast-agent" });
-    await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
+    await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await Promise.all(f.sessions.map(async (session) => (await chat(session)).length)), chatCounts);
     assert.equal(f.provider.counts().requests, 4);
     await restarted.sendAndWait({ prompt: "Continue ordinary work after reloading." }, 20_000);
     assert.equal((observed.at(-1)?.all.match(/Synthetic refreshed role marker/g) ?? []).length, 1);
     assert.equal((observed.at(-1)?.all.match(/Synthetic shared refresh marker/g) ?? []).length, 1);
-    const other = await f.openSession(undefined, "other-agent");
-    await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
-    assert.deepEqual(await chat(other), []);
     await other.sendAndWait({ prompt: "Handle this ordinary task in your own role." }, 20_000);
     assert.match(observed.at(-1)?.latest ?? "", /Synthetic other role marker/);
     assert.match(observed.at(-1)?.latest ?? "", /Synthetic shared refresh marker/);
