@@ -132,9 +132,9 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     for (const session of f.sessions) {
       assert.deepEqual(await warnings(session), []);
       await session.sendAndWait({ prompt: "Continue the ordinary task, without changing any files." }, 20_000);
-      assert.match(observed.at(-1)?.latest ?? "", /Synthetic refreshed role marker/);
-      assert.match(observed.at(-1)?.latest ?? "", /Synthetic shared refresh marker/);
-      assert.doesNotMatch(observed.at(-1)?.latest ?? "", /Synthetic original role marker/);
+      assert.match(observed.at(-1)?.all ?? "", /Synthetic refreshed role marker/);
+      assert.match(observed.at(-1)?.all ?? "", /Synthetic shared refresh marker/);
+      assert.doesNotMatch(observed.at(-1)?.all ?? "", /Synthetic original role marker/);
       const search = await session.rpc.tools.execute({
         name: EXTENSION_SEARCH_TOOL, arguments: { query: "Synthetic shared refresh marker" },
       });
@@ -159,8 +159,8 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     assert.deepEqual(await Promise.all(f.sessions.map(async (session) => (await chat(session)).length)), chatCounts);
     assert.equal(f.provider.counts().requests, 4);
     await restarted.sendAndWait({ prompt: "Continue ordinary work after reloading." }, 20_000);
-    assert.equal((observed.at(-1)?.latest.match(/Synthetic refreshed role marker/g) ?? []).length, 1);
-    assert.equal((observed.at(-1)?.latest.match(/Synthetic shared refresh marker/g) ?? []).length, 1);
+    assert.equal((observed.at(-1)?.all.match(/Synthetic refreshed role marker/g) ?? []).length, 1);
+    assert.equal((observed.at(-1)?.all.match(/Synthetic shared refresh marker/g) ?? []).length, 1);
     const other = await f.openSession(undefined, "other-agent");
     await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await chat(other), []);
