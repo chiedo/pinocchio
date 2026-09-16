@@ -44,7 +44,14 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     await mkdir(config, { mode: 0o700 });
     const nativeConfig = '{"model":"synthetic-native-default","memory":{"enabled":false}}\n';
     await writeFile(join(config, "config.json"), nativeConfig);
-    timings.install = await main(["install", "--config-root", config]);
+    const installedResult = await main(["install", "--config-root", config]) as {
+      timingsMs?: unknown;
+      diagnostic?: { timingsMs?: unknown };
+    };
+    timings.install = {
+      phasesMs: installedResult.timingsMs,
+      diagnosticMs: installedResult.diagnostic?.timingsMs,
+    };
     cases.push("clean-install-with-custom-root", "native-cli-save-new-session-helper-recall-delete");
     const app = join(config, "pinocchio-runtime", "app");
     const cli = join(app, "dist/src/install-cli.js");
@@ -91,7 +98,14 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     await assert.rejects(installed("create", "--name", "../bad", "--global"));
     await assert.rejects(installed("uninstall"));
     await assert.rejects(main(["upgrade", "--config-root", config]), /UPGRADE_REQUIRES/);
-    timings.upgrade = await main(["upgrade", "--config-root", config, "--host-stopped"]);
+    const upgradeResult = await main(["upgrade", "--config-root", config, "--host-stopped"]) as {
+      timingsMs?: unknown;
+      diagnostic?: { timingsMs?: unknown };
+    };
+    timings.upgrade = {
+      phasesMs: upgradeResult.timingsMs,
+      diagnosticMs: upgradeResult.diagnostic?.timingsMs,
+    };
     assert.equal((await installed("status")).rollbackAvailable, true);
     await installed("rollback", "--host-stopped");
     assert.equal(await readFile(profile, "utf8"), text);
