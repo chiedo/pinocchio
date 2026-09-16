@@ -159,7 +159,7 @@ const summary = {
     playwright: process.env.PINOCCHIO_PLAYWRIGHT_CACHE_HIT ?? "unknown",
   },
   concurrency,
-  testFiles: testFiles.map(basename),
+  testFiles: testFiles.map((name) => basename(name)),
   scenarios,
   testDurations: tapDurations(tests.stdout),
   counts: tapSummary(tests.stdout),

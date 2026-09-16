@@ -193,9 +193,10 @@ test("local configuration and preview keep agent history local", async () => {
       /permissions:\n  contents: read\n  copilot-requests: write/,
     );
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
-    assert.match(preview.exactUpload.workflow, new RegExp(
-      `copilot -C "\\\\.pinocchio/jobs/${remoteId}"`,
-    ));
+    assert.match(
+      preview.exactUpload.workflow,
+      /copilot -C "\.pinocchio\/jobs\/daily-release-notes"/,
+    );
     assert.match(preview.exactUpload.workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
     assert.doesNotMatch(preview.exactUpload.workflow, /COPILOT_GITHUB_TOKEN: \$\{\{/);
     assert.match(preview.exactUpload.workflow, /--secret-env-vars=COPILOT_GITHUB_TOKEN,GITHUB_TOKEN/);
@@ -516,7 +517,8 @@ const { appendFileSync, existsSync, mkdirSync, writeFileSync } = require("node:f
 const { join } = require("node:path");
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
-const repository = args[args.indexOf("--repo") + 1] || args[2];
+const repositoryFlag = args.indexOf("--repo");
+const repository = repositoryFlag >= 0 ? args[repositoryFlag + 1] : args[2];
 const remote = repository === ${JSON.stringify(repositoryA)}
   ? ${JSON.stringify(remoteA)}
   : ${JSON.stringify(remoteB)};
@@ -700,7 +702,7 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.equal(cancelled.remoteId, remoteB);
 
     const notices = await checkCloudJobResultNotices(reference, cloudHome);
-    assert.equal(notices.status, "ready");
+    assert.equal(notices.status, "ready", JSON.stringify(notices));
     if (notices.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
     assert.deepEqual(
       notices.runs.map((item) => [item.repository, item.remoteId]).sort(),

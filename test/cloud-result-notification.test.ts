@@ -172,7 +172,10 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.ok(user && user.type === "user.message");
     assert.equal(user.data.content, "Pinocchio found new cloud job results");
     assert.equal(user.data.delivery, "idle");
-    assert.match(user.data.transformedContent ?? "", /changelog: success/);
+    assert.match(
+      user.data.transformedContent ?? "",
+      /changelog \[example\/pinocchio-jobs\]: success/,
+    );
     assert.match(
       user.data.transformedContent ?? "",
       /Automatic changelog summary/,

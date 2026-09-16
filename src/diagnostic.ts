@@ -176,9 +176,47 @@ export async function diagnose(previewPlatform = false) {
     ) {
       stage = prompt;
       observed.length = 0;
-      await measured(timingsMs, prompt.toLowerCase().replaceAll(" ", "-"), () =>
-        session.sendAndWait({ prompt }, 45_000));
-      const results = observed.join("\n");
+      const delegated = prompt.includes("DELEGATE");
+      const save = prompt.includes("SAVE");
+      const result = await measured(
+        timingsMs,
+        prompt.toLowerCase().replaceAll(" ", "-"),
+        () => delegated
+          ? session.rpc.tools.execute({
+              name: "task",
+              arguments: {
+                agent_type: "check-helper",
+                name: "independent-helper",
+                description: "Synthetic helper check",
+                prompt: `HELPER ${save ? "SAVE" : "SEARCH"} synthetic`,
+                mode: "sync",
+              },
+            })
+          : session.rpc.tools.execute({
+              name: save ? EXTENSION_SAVE_TOOL : EXTENSION_SEARCH_TOOL,
+              arguments: save
+                ? {
+                    action: "remember",
+                    operationId: "save-check-main",
+                    note: {
+                      content: "synthetic memory marker check-main",
+                      kind: "fact",
+                      evidence: [{
+                        kind: "manual_entry",
+                        reference: {
+                          type: "text",
+                          value: "invented installation check",
+                        },
+                      }],
+                    },
+                  }
+                : { query: "synthetic memory" },
+            }),
+      );
+      const direct = typeof result === "string"
+        ? result
+        : result.textResultForLlm;
+      const results = `${observed.join("\n")}\n${direct}`;
       assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
       if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
       cases.push(prompt.toLowerCase().replaceAll(" ", "-"));

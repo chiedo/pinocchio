@@ -40,23 +40,16 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
     const profile = join(config, "agents", "broadcast-agent.agent.md");
     const shared = join(config, "pinocchio", "AGENTS.md");
     await writeFile(profile, (await readFile(profile, "utf8")) + "\nSynthetic original role marker.\n");
-    async function openSession(
-      workingDirectory = repository,
-      agent = "broadcast-agent",
-      freshHost = false,
-    ) {
-      let client = freshHost ? undefined : clients.at(-1);
-      if (!client) {
-        client = new CopilotClient({
-          connection: RuntimeConnection.forStdio({
-            path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
-          }),
-          mode: "empty", workingDirectory, baseDirectory: config,
-          env: workspace.env, useLoggedInUser: false, logLevel: "none",
-        });
-        clients.push(client);
-        await client.start();
-      }
+    async function openSession(workingDirectory = repository, agent = "broadcast-agent") {
+      const client = new CopilotClient({
+        connection: RuntimeConnection.forStdio({
+          path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
+        }),
+        mode: "empty", workingDirectory, baseDirectory: config,
+        env: workspace.env, useLoggedInUser: false, logLevel: "none",
+      });
+      clients.push(client);
+      await client.start();
       const session = await client.createSession({
         workingDirectory, configDirectory: config,
         enableConfigDiscovery: true, requestExtensions: true,
@@ -132,7 +125,7 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     await f.waitFor((status) => status.sessions.length === 2 && status.sessions.every((item) => item.status === "updated"));
     assert.equal((await chat(first)).length, 2, "The original user task must finish normally");
 
-    const restarted = await f.openSession(undefined, "broadcast-agent", true);
+    const restarted = await f.openSession();
     await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await chat(restarted), [], "Opening a new agent must not replay a saved broadcast into chat");
     assert.equal(f.provider.counts().requests, 1);
