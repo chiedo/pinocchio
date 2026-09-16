@@ -144,12 +144,16 @@ export async function diagnose(previewPlatform = false) {
       stage = prompt;
       observed.length = 0;
       const session = await client!.createSession(sessionConfig);
-      await session.rpc.tools.initializeAndValidate();
-      await session.sendAndWait({ prompt }, 45_000);
-      const results = observed.join("\n");
-      assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
-      if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
-      cases.push(prompt.toLowerCase().replaceAll(" ", "-"));
+      try {
+        await session.rpc.tools.initializeAndValidate();
+        await session.sendAndWait({ prompt }, 45_000);
+        const results = observed.join("\n");
+        assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
+        if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
+        cases.push(prompt.toLowerCase().replaceAll(" ", "-"));
+      } finally {
+        await session.disconnect();
+      }
     }
     await turn("FOREGROUND SAVE", "committed");
     await turn("DELEGATE SAVE", "committed");
