@@ -83,28 +83,43 @@ export async function install(paths: Locations, upgrade: boolean, stopped: boole
     if (state.previous || await exists(paths.previous)) throw new ToolError("REMOVE_PREVIOUS_BEFORE_NEXT_UPGRADE");
   } else if (await exists(paths.app)) throw new ToolError("INSTALL_DIRECTORY_CONFLICT");
   const stage = join(paths.runtime, `stage-${randomUUID()}`);
-  let promoted = false;
-  try {
-    if (await exists(join(releaseRoot, "release.json"))) {
-      const release = await verifyRelease(releaseRoot);
-      await mkdir(stage, { mode: 0o700 });
-      for (const path of [...Object.keys(release.files), "release.json"]) {
-        await mkdir(dirname(join(stage, path)), { recursive: true, mode: 0o700 });
-        await cp(join(releaseRoot, path), join(stage, path), { errorOnExist: true, force: false });
-      }
-    } else {
-      const commit = await execute("git", ["rev-parse", "HEAD"], { cwd: releaseRoot, timeout: 5_000 });
-      await packageRelease(stage, commit.stdout.trim());
+  const timingsMs: Record<string, number> = {};
+  const measured = async <T>(name: string, action: () => Promise<T>) => {
+    const started = performance.now();
+    try {
+      return await action();
+    } finally {
+      timingsMs[name] = Math.round(performance.now() - started);
     }
-    const release = await verifyRelease(stage);
-    if (state?.installed && state.release.storageSchema !== release.storageSchema) throw new ToolError("SCHEMA_UPGRADE_UNSUPPORTED");
-    await execute("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
-      cwd: stage, timeout: 180_000, maxBuffer: 1024 * 1024,
+  };
+  let promoted = false;
+  let diagnostic: unknown;
+  try {
+    await measured("stage-release", async () => {
+      if (await exists(join(releaseRoot, "release.json"))) {
+        const release = await verifyRelease(releaseRoot);
+        await mkdir(stage, { mode: 0o700 });
+        for (const path of [...Object.keys(release.files), "release.json"]) {
+          await mkdir(dirname(join(stage, path)), { recursive: true, mode: 0o700 });
+          await cp(join(releaseRoot, path), join(stage, path), { errorOnExist: true, force: false });
+        }
+      } else {
+        const commit = await execute("git", ["rev-parse", "HEAD"], { cwd: releaseRoot, timeout: 5_000 });
+        await packageRelease(stage, commit.stdout.trim());
+      }
     });
+    const release = await measured("verify-release", () => verifyRelease(stage));
+    if (state?.installed && state.release.storageSchema !== release.storageSchema) throw new ToolError("SCHEMA_UPGRADE_UNSUPPORTED");
+    await measured("install-dependencies", () =>
+      execute("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
+        cwd: stage, timeout: 180_000, maxBuffer: 1024 * 1024,
+      }));
     // The candidate runs against isolated synthetic state, never enrolled user profiles.
     try {
-      await execute(process.execPath, [join(stage, "dist/src/install-cli.js"), "doctor",
-        ...(previewPlatform ? ["--preview-platform"] : [])], { timeout: 300_000, maxBuffer: 16_384 });
+      const result = await measured("doctor", () =>
+        execute(process.execPath, [join(stage, "dist/src/install-cli.js"), "doctor",
+          ...(previewPlatform ? ["--preview-platform"] : [])], { timeout: 300_000, maxBuffer: 16_384 }));
+      diagnostic = JSON.parse(result.stdout);
     } catch (error) {
       if (typeof error === "object" && error && "stderr" in error && typeof error.stderr === "string") {
         const code = /"code":"([A-Z0-9_]+)"/.exec(error.stderr)?.[1];
@@ -126,7 +141,8 @@ export async function install(paths: Locations, upgrade: boolean, stopped: boole
     } satisfies State);
     return { status: "installed", version: release.version, launcher: paths.launcher,
       configRoot: paths.root, liveCertification: "unvalidated", desktop: "unvalidated",
-      platform: previewPlatform ? "unvalidated-preview" : "linux-x64", restartRequired: true };
+      platform: previewPlatform ? "unvalidated-preview" : "linux-x64", restartRequired: true,
+      timingsMs, diagnostic };
   } finally {
     if (!promoted && await exists(stage)) await rm(stage, { recursive: true });
   }

@@ -55,6 +55,37 @@ function tapSummary(output) {
   return summary;
 }
 
+function tapDurations(output) {
+  const results = [];
+  let pending;
+  let current;
+  for (const line of output.split("\n")) {
+    const subtest = /^# Subtest: (.+)$/.exec(line);
+    if (subtest) {
+      pending = subtest[1];
+      continue;
+    }
+    const result = /^(ok|not ok) \d+ - (.+)$/.exec(line);
+    if (result) {
+      current = {
+        name: pending ?? result[2],
+        status: result[1] === "ok" ? "passed" : "failed",
+      };
+      pending = undefined;
+      continue;
+    }
+    const duration = /^\s+duration_ms: ([\d.]+)$/.exec(line);
+    if (duration && current) {
+      results.push({
+        ...current,
+        durationMs: Math.round(Number(duration[1])),
+      });
+      current = undefined;
+    }
+  }
+  return results.sort((left, right) => right.durationMs - left.durationMs);
+}
+
 const build = await run(process.execPath, [
   join("node_modules", "typescript", "bin", "tsc"),
 ]);
@@ -108,6 +139,7 @@ const summary = {
   concurrency,
   testFiles: testFiles.map(basename),
   scenarios,
+  testDurations: tapDurations(tests.stdout),
   counts: tapSummary(tests.stdout),
   phasesMs: {
     build: Math.round(build.durationMs),
