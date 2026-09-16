@@ -43,7 +43,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-1.63.0
       - run: npm ci
-      - run: npm run typecheck
       - name: Prepare pinned offline semantic test runtime
         run: |
           python3 -m venv .venv

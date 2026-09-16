@@ -44,6 +44,8 @@ work on the advertised platform.
 Use Node.js 22.18.0 (`.node-version`), run `npm ci` and `npm run typecheck`,
 prepare the Python environment from [SEMANTIC.md](docs/SEMANTIC.md), then run
 the complete suite with `PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
+The complete-suite command compiles and type-checks the project before starting
+the Node test runner.
 The test runner uses two concurrent test files; each fixture owns its temporary
 home, configuration, repository, database, and report filename. Set
 `PINOCCHIO_TEST_CONCURRENCY=1` to reproduce a serial comparison without changing
