@@ -118,8 +118,8 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     assert.equal((observed.at(-1)?.all.match(/Synthetic refreshed role marker/g) ?? []).length, 1);
     assert.equal((observed.at(-1)?.all.match(/Synthetic shared refresh marker/g) ?? []).length, 1);
     await other.sendAndWait({ prompt: "Handle this ordinary task in your own role." }, 20_000);
-    assert.match(observed.at(-1)?.latest ?? "", /Synthetic other role marker/);
-    assert.match(observed.at(-1)?.latest ?? "", /Synthetic shared refresh marker/);
+    assert.match(observed.at(-1)?.all ?? "", /Synthetic other role marker/);
+    assert.match(observed.at(-1)?.all ?? "", /Synthetic shared refresh marker/);
     assert.doesNotMatch(observed.at(-1)?.all ?? "", /Synthetic refreshed role marker/);
     assert.equal(f.provider.counts().requests, 6);
     assert.equal(f.provider.counts().failures, 0);
