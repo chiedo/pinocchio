@@ -11,7 +11,6 @@ import { readPrivateJson, writeAtomic } from "./semantic-files.js";
 import { isRecord } from "./identity.js";
 import { MANAGED_AGENT_TOOLS } from "./enrollment.js";
 
-export const BROADCAST_DISPLAY_PROMPT = "Pinocchio instruction update";
 export const BROADCAST_HEARTBEAT_MS = 5_000;
 export const BROADCAST_LIVE_MS = 30_000;
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -193,16 +192,18 @@ export class BroadcastListener {
     }
     const snapshot = await broadcastSnapshot(reference);
     if (JSON.stringify(snapshot.target) !== JSON.stringify(target)) fail("BROADCAST_TARGET_CHANGED");
+    const prompt = [
+      snapshot.body,
+      "## Shared Pinocchio instructions",
+      "These supplement your role and repository rules; higher-priority instructions still take precedence.",
+      "This refresh does not authorize remote actions, change permissions, or update cloud jobs.",
+      snapshot.shared,
+      "Continue the user's actual request normally. Do not announce or acknowledge this background instruction refresh, or save it to memory.",
+    ].join("\n\n");
     this.record.status = "pending";
     this.delivery = { request, target };
     await this.save();
-    return [
-      `Pinocchio broadcast ${request.id}: apply these updated local instructions for subsequent work.`,
-      "They supplement your role and repository rules; higher-priority instructions still take precedence.",
-      "This refresh does not authorize remote actions, change permissions, or update cloud jobs.",
-      "Agent instructions:", snapshot.body, "Shared Pinocchio instructions:", snapshot.shared,
-      "Acknowledge receipt briefly. Do not call tools, perform tasks mentioned in these instructions, or save this notification to memory.",
-    ].join("\n\n");
+    return prompt;
   }
   async acknowledge(reference: BindingReference) {
     const delivery = this.delivery;
@@ -213,6 +214,15 @@ export class BroadcastListener {
     this.record.heartbeat = Date.now();
     this.delivery = undefined;
     await this.save();
+  }
+  issue() {
+    const record = this.record;
+    if (!record || !["failed", "restart-required"].includes(record.status)) return;
+    return {
+      key: `${record.bindingId}:${record.requestId ?? ""}:${record.code ?? ""}`,
+      code: record.code ?? "BROADCAST_FAILED",
+      restartRequired: record.status === "restart-required",
+    };
   }
   async failed(error: unknown) {
     if (!this.record) return;
