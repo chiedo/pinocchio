@@ -44,6 +44,8 @@ work on the advertised platform.
 Use Node.js 22.18.0 (`.node-version`), run `npm ci` and `npm run typecheck`,
 prepare the Python environment from [SEMANTIC.md](docs/SEMANTIC.md), then run
 the complete suite with `PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
+The test runner uses two concurrent test files; each fixture owns its temporary
+home, configuration, repository, database, and report filename.
 CI runs this same full suite for pull requests, pushes to `main`, and manual
 workflow dispatches. Pull-request branches do not also run a duplicate
 push-triggered copy; the `synthetic` job remains the required check and keeps
