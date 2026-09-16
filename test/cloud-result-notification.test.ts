@@ -23,6 +23,10 @@ import { enroll } from "../src/enrollment.js";
 import { EXTENSION_SEARCH_TOOL } from "../src/memory-protocol.js";
 import { startSyntheticProvider } from "./support/provider.js";
 import { createWorkspace } from "./support/workspace.js";
+import {
+  deferExtension,
+  enableExtension,
+} from "./support/extensions.js";
 
 test("an open agent session announces unread cloud results without a user prompt", {
   timeout: 120_000,
@@ -137,6 +141,7 @@ if (args[0] === "repo" && args[1] === "view") {
   });
   try {
     await client.start();
+    const extensionId = await deferExtension(client);
     const session = await client.createSession({
       workingDirectory: repository,
       configDirectory: config,
@@ -158,6 +163,7 @@ if (args[0] === "repo" && args[1] === "view") {
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
     });
+    await enableExtension(session, extensionId);
     await session.rpc.tools.initializeAndValidate();
     const deadline = Date.now() + 15_000;
     let events = await session.getEvents();

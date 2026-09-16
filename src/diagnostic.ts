@@ -159,14 +159,56 @@ export async function diagnose(previewPlatform = false) {
       infiniteSessions: { enabled: false },
     };
     await measured(timingsMs, "client-start", () => client!.start());
+    const discovered = await measured(
+      timingsMs,
+      "extension-discovery",
+      () => client!.rpc.extensions.discover(),
+    );
+    const extension = discovered.extensions.find((item) =>
+      item.name === "pinocchio-memory");
+    if (!extension) throw new ToolError("INSTALL_DIAGNOSTIC_EXTENSION_MISSING");
+    const extensionId = extension.id;
+    await measured(
+      timingsMs,
+      "extension-defer",
+      () => client!.rpc.extensions.disable({ ids: [extensionId] }),
+    );
+    let sessionNumber = 0;
     async function withSession(run: (session: Awaited<ReturnType<CopilotClient["createSession"]>>) => Promise<void>) {
-      const session = await client!.createSession(sessionConfig);
+      const number = ++sessionNumber;
+      const session = await measured(
+        timingsMs,
+        `session-${number}-create`,
+        () => client!.createSession(sessionConfig),
+      );
       try {
-        await session.rpc.tools.initializeAndValidate();
+        await measured(
+          timingsMs,
+          `session-${number}-extensions`,
+          () => session.rpc.extensions.enable({ id: extensionId }),
+        );
+        await measured(
+          timingsMs,
+          `session-${number}-tools`,
+          () => session.rpc.tools.initializeAndValidate(),
+        );
         await run(session);
       } finally {
-        await session.rpc.shutdown({ type: "routine" });
-        await session.disconnect();
+        await measured(
+          timingsMs,
+          `session-${number}-extensions-stop`,
+          () => session.rpc.extensions.disable({ id: extensionId }),
+        );
+        await measured(
+          timingsMs,
+          `session-${number}-shutdown`,
+          () => session.rpc.shutdown({ type: "routine" }),
+        );
+        await measured(
+          timingsMs,
+          `session-${number}-disconnect`,
+          () => session.disconnect(),
+        );
       }
     }
     async function turn(

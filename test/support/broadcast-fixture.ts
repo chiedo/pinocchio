@@ -16,6 +16,7 @@ import {
   startSyntheticProvider,
   type SyntheticProviderOptions,
 } from "./provider.js";
+import { deferExtension, enableExtension } from "./extensions.js";
 
 export async function createBroadcastFixture(
   options: SyntheticProviderOptions = {},
@@ -98,6 +99,7 @@ export async function createBroadcastFixture(
       });
       clients.push(client);
       await client.start();
+      const extensionId = await deferExtension(client);
       const session = await client.createSession({
         workingDirectory,
         configDirectory: config,
@@ -119,6 +121,7 @@ export async function createBroadcastFixture(
         onPermissionRequest: approveAll,
         infiniteSessions: { enabled: false },
       });
+      await enableExtension(session, extensionId);
       await session.rpc.tools.initializeAndValidate();
       sessions.push(session);
       return session;

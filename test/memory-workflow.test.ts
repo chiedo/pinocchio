@@ -22,6 +22,11 @@ import {
   startSyntheticProvider,
 } from "./support/provider.js";
 import { acceptance } from "../src/evaluation.js";
+import {
+  deferExtension,
+  disableExtension,
+  enableExtension,
+} from "./support/extensions.js";
 
 test("enrolled native profiles recall independently through the production context extension", { timeout: 180_000 }, async (t) => {
   const contract = await acceptance();
@@ -131,10 +136,12 @@ test("enrolled native profiles recall independently through the production conte
       hooks: { onSessionStart(input) { lifecycle.push(input.source); } },
     };
     await client.start();
+    let extensionId = await deferExtension(client);
     assert.equal((await client.getStatus()).version, "1.0.83");
     stage = "create-session";
     session = await client.createSession(config);
     let stop = observe(session);
+    await enableExtension(session, extensionId);
     await session.rpc.tools.initializeAndValidate();
     await own(session, "FOREGROUND SAVE synthetic work.", "committed");
     cases.push("foreground-save");
@@ -189,14 +196,16 @@ test("enrolled native profiles recall independently through the production conte
     cases.push("extension-reload");
     const sessionId = session.sessionId;
     stop();
+    await disableExtension(session, extensionId);
     await session.disconnect();
     await client.stop();
     client = createClient();
     await client.start();
+    extensionId = await deferExtension(client);
     stage = "cold-resume";
     session = await client.resumeSession(sessionId, config);
     stop = observe(session);
-    await session.rpc.extensions.reload();
+    await enableExtension(session, extensionId);
     const resumed = await session.rpc.extensions.list();
     assert.ok(resumed.extensions.some((extension) => extension.name === "pinocchio-memory" && extension.status === "running"));
     await session.rpc.agent.select({ name: "memory-foreground" });
@@ -206,14 +215,18 @@ test("enrolled native profiles recall independently through the production conte
     cases.push("cold-resume");
     assert.ok(lifecycle.includes("resume"));
     stop();
+    await disableExtension(session, extensionId);
+    await session.disconnect();
     session = await client.createSession(config);
     stop = observe(session);
+    await enableExtension(session, extensionId);
     await session.rpc.tools.initializeAndValidate();
     const fresh = await own(session, "FOREGROUND SEARCH in a new root session.", "ok");
     assert.match(JSON.stringify(fresh.snippets), /memory-foreground/);
     assert.ok(Number(fresh.sessionRemaining) > Number(cold.sessionRemaining));
     cases.push("new-session-recall");
     stop();
+    await disableExtension(session, extensionId);
     await session.disconnect();
     assert.equal(provider.counts().failures, 0);
     passed = true;
