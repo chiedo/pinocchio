@@ -77,10 +77,13 @@ test("native automatic capture survives cold sessions without model memory calls
       const recalled = await turn("automatic-alpha", "What was the mascot?");
       assert.match(recalled, /Pinocchio conversation memory/);
       assert.match(recalled, /Indigo Heron/);
-      assert.doesNotMatch(await turn("automatic-beta", "What was the mascot?"), /Indigo Heron/);
-
       await setConversationEnabled(reference, false);
-      assert.doesNotMatch(await turn("automatic-alpha", "What was the mascot? Also: paused sentinel."), /Indigo Heron/);
+      const [isolated, paused] = await Promise.all([
+        turn("automatic-beta", "What was the mascot?"),
+        turn("automatic-alpha", "What was the mascot? Also: paused sentinel."),
+      ]);
+      assert.doesNotMatch(isolated, /Indigo Heron/);
+      assert.doesNotMatch(paused, /Indigo Heron/);
       const pausedStore = await MemoryStore.open(reference, { namespace: binding.namespace, scope: "global" });
       try {
         assert.equal((await pausedStore.search("paused sentinel")).items.length, 0);
