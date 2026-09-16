@@ -63,6 +63,7 @@ test("enrolled native profiles recall independently through the production conte
     env: f.env, useLoggedInUser: false, logLevel: "none",
   });
   let client = createClient();
+  let session: CopilotSession | undefined;
   let passed = false;
   let stage = "enrollment";
   function observe(session: CopilotSession) {
@@ -132,7 +133,7 @@ test("enrolled native profiles recall independently through the production conte
     await client.start();
     assert.equal((await client.getStatus()).version, "1.0.83");
     stage = "create-session";
-    let session = await client.createSession(config);
+    session = await client.createSession(config);
     let stop = observe(session);
     await session.rpc.tools.initializeAndValidate();
     await own(session, "FOREGROUND SAVE synthetic work.", "committed");
@@ -188,6 +189,7 @@ test("enrolled native profiles recall independently through the production conte
     cases.push("extension-reload");
     const sessionId = session.sessionId;
     stop();
+    await session.disconnect();
     await client.stop();
     client = createClient();
     await client.start();
@@ -212,12 +214,14 @@ test("enrolled native profiles recall independently through the production conte
     assert.ok(Number(fresh.sessionRemaining) > Number(cold.sessionRemaining));
     cases.push("new-session-recall");
     stop();
+    await session.disconnect();
     assert.equal(provider.counts().failures, 0);
     passed = true;
   } catch (error) {
     t.diagnostic(JSON.stringify({ gate: "memory-workflow", stage, cases, provider: provider.counts() }));
     throw error;
   } finally {
+    await session?.disconnect().catch(() => {});
     const stopped = await Promise.allSettled([client.stop(), provider.close()]);
     const cleaned = await Promise.allSettled([f.close()]);
     await mkdir("test-results", { recursive: true });

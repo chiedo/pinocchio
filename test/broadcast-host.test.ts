@@ -21,7 +21,9 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
   const sessions: CopilotSession[] = [];
   async function close() {
     for (const session of sessions) await session.disconnect();
-    for (const client of clients) await client.stop();
+    for (const client of clients) {
+      assert.equal((await client.stop()).length, 0, "CLEANUP_FAILED");
+    }
     await provider.close();
     await workspace.close();
   }
@@ -38,16 +40,23 @@ async function fixture(options: SyntheticProviderOptions = {}, scoped = false) {
     const profile = join(config, "agents", "broadcast-agent.agent.md");
     const shared = join(config, "pinocchio", "AGENTS.md");
     await writeFile(profile, (await readFile(profile, "utf8")) + "\nSynthetic original role marker.\n");
-    async function openSession(workingDirectory = repository, agent = "broadcast-agent") {
-      const client = new CopilotClient({
-        connection: RuntimeConnection.forStdio({
-          path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
-        }),
-        mode: "empty", workingDirectory, baseDirectory: config,
-        env: workspace.env, useLoggedInUser: false, logLevel: "none",
-      });
-      clients.push(client);
-      await client.start();
+    async function openSession(
+      workingDirectory = repository,
+      agent = "broadcast-agent",
+      freshHost = false,
+    ) {
+      let client = freshHost ? undefined : clients.at(-1);
+      if (!client) {
+        client = new CopilotClient({
+          connection: RuntimeConnection.forStdio({
+            path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
+          }),
+          mode: "empty", workingDirectory, baseDirectory: config,
+          env: workspace.env, useLoggedInUser: false, logLevel: "none",
+        });
+        clients.push(client);
+        await client.start();
+      }
       const session = await client.createSession({
         workingDirectory, configDirectory: config,
         enableConfigDiscovery: true, requestExtensions: true,
@@ -107,7 +116,8 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("Synthetic original role marker.", "Synthetic refreshed role marker."));
     await writeFile(f.shared, (await readFile(f.shared, "utf8")) + "\nSynthetic shared refresh marker.\n");
     await upgradeBroadcast(f.config);
-    await new Promise((resolve) => setTimeout(resolve, BROADCAST_HEARTBEAT_MS + 500));
+    await f.waitFor((status) => status.sessions.length === 2 &&
+      status.sessions.every((item) => item.status === "updated"));
     assert.equal(f.provider.counts().requests, 1, "Refreshing must not call the model or interrupt active work");
     assert.equal((await chat(first)).length, 1, "The blocked user turn must remain the only chat event");
     assert.deepEqual(await chat(second), []);
@@ -122,7 +132,7 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     await f.waitFor((status) => status.sessions.length === 2 && status.sessions.every((item) => item.status === "updated"));
     assert.equal((await chat(first)).length, 2, "The original user task must finish normally");
 
-    const restarted = await f.openSession();
+    const restarted = await f.openSession(undefined, "broadcast-agent", true);
     await f.waitFor((status) => status.sessions.length === 3 && status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await chat(restarted), [], "Opening a new agent must not replay a saved broadcast into chat");
     assert.equal(f.provider.counts().requests, 1);

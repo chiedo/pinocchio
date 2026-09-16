@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { approveAll, CopilotClient, RuntimeConnection, ToolSet } from "@github/copilot-sdk";
+import { approveAll, CopilotClient, RuntimeConnection, ToolSet, type CopilotSession } from "@github/copilot-sdk";
 import { loadBinding, registerBinding } from "../src/binding-registry.js";
 import type { BindingReference } from "../src/binding-registry.js";
 import { conversationEnabled, setConversationEnabled } from "../src/conversation-memory.js";
@@ -31,9 +31,10 @@ test("native automatic capture survives cold sessions without model memory calls
         mode: "empty", workingDirectory: f.repository, baseDirectory: f.config,
         env: f.env, useLoggedInUser: false, logLevel: "none",
       });
+      let session: CopilotSession | undefined;
       try {
         await client.start();
-        const session = await client.createSession({
+        session = await client.createSession({
           workingDirectory: f.repository, configDirectory: f.config, enableConfigDiscovery: true,
           requestExtensions: true, enableExperimentalMode: true, enableManagedSettings: false,
           extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
@@ -43,7 +44,10 @@ test("native automatic capture survives cold sessions without model memory calls
         });
         await session.rpc.tools.initializeAndValidate();
         await session.sendAndWait({ prompt }, 20_000);
-      } finally { await client.stop(); }
+      } finally {
+        await session?.disconnect();
+        assert.equal((await client.stop()).length, 0, "CLEANUP_FAILED");
+      }
       assert.ok(modelContexts.length > before);
       return modelContexts.slice(before).join("\n");
     }

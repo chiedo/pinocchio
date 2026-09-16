@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { approveAll, CopilotClient, RuntimeConnection, ToolSet } from "@github/copilot-sdk";
+import { approveAll, CopilotClient, RuntimeConnection, ToolSet, type CopilotSession } from "@github/copilot-sdk";
 import type { SessionHooks } from "@github/copilot-sdk";
 import { createProductionFixture } from "./support/production-fixture.js";
 import { startSyntheticProvider } from "./support/provider.js";
@@ -32,9 +32,10 @@ test("public host supplies trusted root/recipient context to pre-MCP hooks", { t
     mode: "empty", workingDirectory: f.repository, baseDirectory: f.config,
     env: f.env, useLoggedInUser: false, logLevel: "none",
   });
+  let session: CopilotSession | undefined;
   try {
     await client.start();
-    const session = await client.createSession({
+    session = await client.createSession({
       workingDirectory: f.repository, configDirectory: f.config,
       model: "synthetic-model",
       provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
@@ -68,7 +69,8 @@ test("public host supplies trusted root/recipient context to pre-MCP hooks", { t
     assert.notEqual(helper.recipient, foreground.recipient);
     assert.equal(helper.promptSeen, true, "HELPER_REQUEST_HOOK_REQUIRED");
   } finally {
-    await client.stop();
+    await session?.disconnect();
+    assert.equal((await client.stop()).length, 0, "CLEANUP_FAILED");
     await provider.close();
     await f.close();
   }

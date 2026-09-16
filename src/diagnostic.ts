@@ -140,25 +140,37 @@ export async function diagnose(previewPlatform = false) {
       infiniteSessions: { enabled: false },
     };
     await client.start();
-    async function turn(prompt: string, expected: string, absent?: string) {
-      stage = prompt;
-      observed.length = 0;
+    async function withSession(run: (session: Awaited<ReturnType<CopilotClient["createSession"]>>) => Promise<void>) {
       const session = await client!.createSession(sessionConfig);
       try {
         await session.rpc.tools.initializeAndValidate();
-        await session.sendAndWait({ prompt }, 45_000);
-        const results = observed.join("\n");
-        assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
-        if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
-        cases.push(prompt.toLowerCase().replaceAll(" ", "-"));
+        await run(session);
       } finally {
         await session.disconnect();
       }
     }
-    await turn("FOREGROUND SAVE", "committed");
-    await turn("DELEGATE SAVE", "committed");
-    await turn("FOREGROUND SEARCH", "synthetic memory marker check-main", "synthetic memory marker check-helper");
-    await turn("DELEGATE SEARCH", "synthetic memory marker check-helper", "synthetic memory marker check-main");
+    async function turn(
+      session: Awaited<ReturnType<CopilotClient["createSession"]>>,
+      prompt: string,
+      expected: string,
+      absent?: string,
+    ) {
+      stage = prompt;
+      observed.length = 0;
+      await session.sendAndWait({ prompt }, 45_000);
+      const results = observed.join("\n");
+      assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
+      if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
+      cases.push(prompt.toLowerCase().replaceAll(" ", "-"));
+    }
+    await withSession(async (session) => {
+      await turn(session, "FOREGROUND SAVE", "committed");
+      await turn(session, "DELEGATE SAVE", "committed");
+    });
+    await withSession(async (session) => {
+      await turn(session, "FOREGROUND SEARCH", "synthetic memory marker check-main", "synthetic memory marker check-helper");
+      await turn(session, "DELEGATE SEARCH", "synthetic memory marker check-helper", "synthetic memory marker check-main");
+    });
     for (const ref of references) {
       const binding = await loadBinding(ref);
       const store = await MemoryStore.open(ref, { namespace: binding.namespace, scope: "repository" });
@@ -169,10 +181,12 @@ export async function diagnose(previewPlatform = false) {
         await store.forget(saved.recordId, 1, "synthetic-delete");
       } finally { store.close(); }
     }
-    await turn("FOREGROUND SEARCH DELETED", '"snippets":[]');
-    await turn("DELEGATE SEARCH DELETED", '"snippets":[]');
+    await withSession(async (session) => {
+      await turn(session, "FOREGROUND SEARCH DELETED", '"snippets":[]');
+      await turn(session, "DELEGATE SEARCH DELETED", '"snippets":[]');
+    });
     assert.equal(provider.counts().failures, 0);
-    return { status: "passed", host, cases, sessions: 6, syntheticOnly: true,
+    return { status: "passed", host, cases, sessions: 3, syntheticOnly: true,
       liveCertification: "unvalidated", desktop: "unvalidated" };
   } catch (error) {
     const toolCode = /"code"\s*:\s*"([A-Z_]+)"/.exec(observed.join("\n"))?.[1];
