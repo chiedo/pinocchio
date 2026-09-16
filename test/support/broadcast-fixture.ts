@@ -20,6 +20,7 @@ import {
 export async function createBroadcastFixture(
   options: SyntheticProviderOptions = {},
   scoped = false,
+  includeOtherAgent = true,
 ) {
   const workspace = await createWorkspace();
   const provider = await startSyntheticProvider({ textOnly: true, ...options });
@@ -60,16 +61,18 @@ export async function createBroadcastFixture(
       tools: "view,web_search,exec",
       ...(scoped ? { repository } : { global: true }),
     });
-    await setup({
-      configRoot: config,
-      name: "other-agent",
-      global: true,
-    });
-    const otherProfile = join(config, "agents", "other-agent.agent.md");
-    await writeFile(
-      otherProfile,
-      `${await readFile(otherProfile, "utf8")}\nSynthetic other role marker.\n`,
-    );
+    if (includeOtherAgent) {
+      await setup({
+        configRoot: config,
+        name: "other-agent",
+        global: true,
+      });
+      const otherProfile = join(config, "agents", "other-agent.agent.md");
+      await writeFile(
+        otherProfile,
+        `${await readFile(otherProfile, "utf8")}\nSynthetic other role marker.\n`,
+      );
+    }
     const profile = join(config, "agents", "broadcast-agent.agent.md");
     const shared = join(config, "pinocchio", "AGENTS.md");
     await writeFile(

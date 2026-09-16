@@ -16,7 +16,7 @@ import {
 test("unrecoverable runtime reloads show one actionable warning without model turns", {
   timeout: 90_000,
 }, async () => {
-  const f = await createBroadcastFixture();
+  const f = await createBroadcastFixture({}, false, false);
   try {
     const session = await f.openSession();
     await f.waitFor((status) => status.sessions.length === 1);

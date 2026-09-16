@@ -16,7 +16,7 @@ test("a repository-scoped refresh cannot change instructions outside its bound r
     observeRequest(messages) {
       observed = JSON.stringify(messages);
     },
-  }, true);
+  }, true, false);
   try {
     const session = await f.openSession(
       await realpath(f.workspace.otherRepository),
