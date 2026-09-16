@@ -167,7 +167,7 @@ test("enrollment preserves defaults and unrelated edits; removal only removes ma
   assert.match(contents, /model: synthetic-native/);
   assert.match(contents, /reasoning-effort: high/);
   assert.match(contents, /pinocchio-memory:v1/);
-  assert.match(contents, /pinocchio_cloud_jobs/);
+  assert.match(contents, /pinocchio_jobs/);
   assert.ok(contents.includes('- Agent ID: "shared"'));
   assert.ok(contents.includes(`- Agent profile: ${JSON.stringify(path)}`));
   assert.ok(contents.includes(`- Memory scope: repository ${JSON.stringify(f.repository)}`));
@@ -178,7 +178,7 @@ test("enrollment preserves defaults and unrelated edits; removal only removes ma
   assert.match(removed, /Original instructions/);
   assert.match(removed, /Unrelated new instructions/);
   assert.match(removed, /model: synthetic-native/);
-  assert.doesNotMatch(removed, /pinocchio-memory:v1|agent_memory_search|pinocchio_cloud_jobs|Your Pinocchio agent/);
+  assert.doesNotMatch(removed, /pinocchio-memory:v1|agent_memory_search|pinocchio_jobs|Your Pinocchio agent/);
   assert.equal((await f.store.list()).items.length, 4);
 });
 test("enrollment refuses implicit broad access and unapproved shared profiles", async (t) => {

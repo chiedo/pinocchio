@@ -6,16 +6,14 @@ import { captureConversation, conversationOwner } from "./conversation-memory.js
 import type { ConversationOwner } from "./conversation-memory.js";
 import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, ToolError } from "./memory-protocol.js";
 import {
-  CLOUD_JOBS_TOOL,
   CloudJobsError,
   checkCloudJobResultNotices,
-  extensionCloudJobInputSchema,
   formatCloudJobResultNotices,
-  handleCloudJobTool,
   markCloudJobResultNotices,
   releaseCloudJobResultNotices,
   startCloudJobDriftMonitor,
 } from "./cloud-jobs.js";
+import { JOBS_TOOL, extensionJobsToolInputSchema, handleJobsTool } from "./jobs.js";
 import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
 import { z } from "zod";
 import { BroadcastListener, BROADCAST_HEARTBEAT_MS, broadcastCode, broadcastRuntimeVersion } from "./broadcast.js";
@@ -77,7 +75,7 @@ const context = createMemoryHooks(configRoot, async (input) => {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
   });
   const cloudNotice = cloudStatus?.status === "checked" && cloudStatus.drifted
-    ? `Pinocchio cloud jobs: ${cloudStatus.drifted} published agent snapshot(s) differ from local profiles or need attention. Tell the user and use ${CLOUD_JOBS_TOOL} with action=drift before proposing a sync.\n`
+    ? `Pinocchio jobs: ${cloudStatus.drifted} published cloud snapshot(s) differ from local profiles or need attention. Tell the user and use ${JOBS_TOOL} with action=drift before proposing a sync.\n`
     : cloudStatus?.status === "unavailable"
       ? `Pinocchio cloud job drift checking is unavailable (${cloudStatus.code}). Tell the user if cloud jobs are relevant to this request.\n`
       : "";
@@ -146,17 +144,17 @@ session = await joinSession({
       }
     },
   })), {
-    name: CLOUD_JOBS_TOOL,
+    name: JOBS_TOOL,
     description:
       "Manage approved GitHub Actions cloud jobs for the selected Pinocchio agent. Preview returns the exact upload and approval token. Never configure, bootstrap, publish, sync, pause, resume, or delete without the user's explicit approval.",
-    parameters: extensionCloudJobInputSchema,
+    parameters: extensionJobsToolInputSchema,
     defer: "never",
     async handler(args: unknown, invocation) {
       try {
         if (!session) throw new CloudJobsError("CONVERSATION_CONTEXT_UNAVAILABLE");
         const owner = await ownerForTool(invocation.toolCallId);
         if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
-        const result = await handleCloudJobTool(owner.reference, args);
+        const result = await handleJobsTool(owner.reference, args);
         if (isRecord(args) && args.action === "latest" &&
             args.includeResult === true && "result" in result &&
             typeof result.result === "string") {
@@ -186,7 +184,7 @@ for (const name of ["subagent.started", "subagent.selected"] as const) {
   });
 }
 session.on("tool.execution_start", (event) => {
-  if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL].includes(event.data.toolName)) {
+  if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
     toolOwners.set(event.data.toolCallId, event.agentId
       ? subagentOwners.get(event.agentId) ?? Promise.resolve(undefined)
       : selectedOwner());

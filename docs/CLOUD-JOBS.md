@@ -1,4 +1,16 @@
-# Cloud-scheduled agent jobs
+# Agent-owned jobs
+
+Pinocchio exposes one `pinocchio_jobs` interface for local and cloud jobs.
+Definitions and run history are authoritative; memory search is never used to
+decide whether an agent has schedules or completed work.
+
+Local jobs are currently fail-closed. The pinned public SDK exposes task
+cancellation and background-task events, but not the native agent-task start
+API needed to run a separate, identity-preserving local worker. Pinocchio
+does not substitute cron, launchd, a detached worker, or a headless CLI.
+
+Cloud jobs remain independent of local session lifetime and are published to
+the repository selected for that job.
 
 Pinocchio can publish an approved agent job to a private GitHub
 repository. GitHub Actions runs the job even when the local computer is off.
@@ -25,8 +37,10 @@ npm run jobs -- configure \
   --confirm
 ```
 
-This writes `~/.pinocchio/config.yml` with mode `0600`. It stores a repository
-name and the name of an Actions secret, never the secret value:
+This writes `~/.pinocchio/config.yml` with mode `0600`. The repository is an
+optional default for new previews; every cloud job persists its own resolved
+destination. The configuration stores a repository name and the name of an
+Actions secret, never the secret value:
 
 ```yaml
 version: 1
@@ -69,8 +83,9 @@ job tool to the agent profile without changing authored instructions.
 
 ## Preview and publish
 
-From an enrolled agent, ask it to schedule a job. The agent must first call
-`pinocchio_cloud_jobs` with `action: preview`. The result contains:
+From an enrolled agent, ask it to schedule a cloud job. The agent must first
+call `pinocchio_jobs` with `backend: cloud` and `action: preview`. A preview
+may provide a repository different from the configured default. The result contains:
 
 - the exact prompt, sanitized profile, manifest and workflow to be uploaded;
 - the canonical local source profile;
