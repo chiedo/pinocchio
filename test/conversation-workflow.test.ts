@@ -22,35 +22,36 @@ test("native automatic capture survives cold sessions without model memory calls
         modelContexts.push(JSON.stringify(messages));
       },
     });
-    async function turn(agent: string, prompt: string) {
-      const before = modelContexts.length;
-      const client = new CopilotClient({
+    function createClient() {
+      return new CopilotClient({
         connection: RuntimeConnection.forStdio({
           path: fileURLToPath(new URL("../../node_modules/.bin/copilot", import.meta.url)),
         }),
         mode: "empty", workingDirectory: f.repository, baseDirectory: f.config,
         env: f.env, useLoggedInUser: false, logLevel: "none",
       });
-      let session: CopilotSession | undefined;
-      try {
-        await client.start();
-        session = await client.createSession({
-          workingDirectory: f.repository, configDirectory: f.config, enableConfigDiscovery: true,
-          requestExtensions: true, enableExperimentalMode: true, enableManagedSettings: false,
-          extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
-          model: "synthetic-model", provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
-          availableTools: new ToolSet(), agent, onPermissionRequest: approveAll,
-          infiniteSessions: { enabled: false },
-        });
-        await session.rpc.tools.initializeAndValidate();
-        await session.sendAndWait({ prompt }, 20_000);
-      } finally {
-        await session?.disconnect();
-        assert.equal((await client.stop()).length, 0, "CLEANUP_FAILED");
-      }
+    }
+    async function open(client: CopilotClient, agent: string) {
+      await client.start();
+      const session = await client.createSession({
+        workingDirectory: f.repository, configDirectory: f.config, enableConfigDiscovery: true,
+        requestExtensions: true, enableExperimentalMode: true, enableManagedSettings: false,
+        extensionSdkPath: fileURLToPath(new URL(".", import.meta.resolve("@github/copilot-sdk"))),
+        model: "synthetic-model", provider: { type: "openai", baseUrl: provider.baseUrl, wireApi: "completions" },
+        availableTools: new ToolSet(), agent, onPermissionRequest: approveAll,
+        infiniteSessions: { enabled: false },
+      });
+      await session.rpc.tools.initializeAndValidate();
+      return session;
+    }
+    async function turn(session: CopilotSession, prompt: string) {
+      const before = modelContexts.length;
+      await session.sendAndWait({ prompt }, 20_000);
       assert.ok(modelContexts.length > before);
       return modelContexts.slice(before).join("\n");
     }
+    let client = createClient();
+    let session: CopilotSession | undefined;
     try {
       const references = new Map<string, BindingReference>();
       const root = join(f.config, "agents");
@@ -65,7 +66,11 @@ test("native automatic capture survives cold sessions without model memory calls
         assert.equal(await conversationEnabled(reference), true);
         references.set(name, reference);
       }
-      await turn("automatic-alpha", "The synthetic mascot is Indigo Heron.");
+      session = await open(client, "automatic-alpha");
+      await turn(session, "The synthetic mascot is Indigo Heron.");
+      await session.disconnect();
+      assert.equal((await client.stop()).length, 0, "CLEANUP_FAILED");
+      session = undefined;
       const reference = references.get("automatic-alpha");
       assert.ok(reference);
       const binding = await loadBinding(reference);
@@ -74,16 +79,21 @@ test("native automatic capture survives cold sessions without model memory calls
         assert.ok((await store.search("Indigo Heron")).items.length > 0, "USER_EVENT_NOT_CAPTURED");
       } finally { store.close(); }
 
-      const recalled = await turn("automatic-alpha", "What was the mascot?");
+      client = createClient();
+      session = await open(client, "automatic-alpha");
+      const recalled = await turn(session, "What was the mascot?");
       assert.match(recalled, /Pinocchio conversation memory/);
       assert.match(recalled, /Indigo Heron/);
       await setConversationEnabled(reference, false);
-      const [isolated, paused] = await Promise.all([
-        turn("automatic-beta", "What was the mascot?"),
-        turn("automatic-alpha", "What was the mascot? Also: paused sentinel."),
-      ]);
-      assert.doesNotMatch(isolated, /Indigo Heron/);
+      const paused = await turn(
+        session,
+        "What was the mascot? Also: paused sentinel.",
+      );
       assert.doesNotMatch(paused, /Indigo Heron/);
+      await session.rpc.agent.select({ name: "automatic-beta" });
+      await session.rpc.tools.initializeAndValidate();
+      const isolated = await turn(session, "What was the mascot?");
+      assert.doesNotMatch(isolated, /Indigo Heron/);
       const pausedStore = await MemoryStore.open(reference, { namespace: binding.namespace, scope: "global" });
       try {
         assert.equal((await pausedStore.search("paused sentinel")).items.length, 0);
@@ -91,6 +101,9 @@ test("native automatic capture survives cold sessions without model memory calls
       assert.equal(provider.counts().toolRequests, 0);
       assert.equal(provider.counts().failures, 0);
     } finally {
+      await session?.disconnect().catch(() => {});
+      const cleanup = await client.stop();
       try { await provider.close(); } finally { await f.close(); }
+      assert.equal(cleanup.length, 0, "CLEANUP_FAILED");
     }
   });
