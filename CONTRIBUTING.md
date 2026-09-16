@@ -43,7 +43,11 @@ work on the advertised platform.
 
 Use Node.js 22.18.0 (`.node-version`), run `npm ci` and `npm run typecheck`,
 prepare the Python environment from [SEMANTIC.md](docs/SEMANTIC.md), then run
-`PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
+the complete suite with `PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
+CI runs this same full suite for pull requests, pushes to `main`, and manual
+workflow dispatches. Pull-request branches do not also run a duplicate
+push-triggered copy; the `synthetic` job remains the required check and keeps
+packaging and compatibility artifacts behind a passing suite.
 The full suite includes a pinned public runtime, real local embeddings and a scripted
 loopback provider. No authentication or paid inference is required; the embedding
 gate explicitly downloads pinned public model artifacts.
