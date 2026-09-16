@@ -69,7 +69,8 @@ export const cloudJobsConfigSchema = z.object({
   version: z.literal(1).default(1),
   jobs: z.object({
     provider: z.literal("github-actions"),
-    repository: repositorySchema,
+    // Optional agent default. Individual jobs persist their resolved destination.
+    repository: repositorySchema.optional(),
     branch: branchSchema.optional(),
     token_secret: secretNameSchema.default("PINOCCHIO_COPILOT_TOKEN"),
     require_approval: z.literal(true),
@@ -87,6 +88,7 @@ const jobManifestSchema = z.object({
   version: z.literal(1),
   id: jobIdSchema,
   agent: agentIdSchema,
+  repository: repositorySchema,
   cron: cronSchema,
   timezone: z.literal("UTC"),
   enabled: z.boolean(),
@@ -120,6 +122,7 @@ export const cloudJobToolInputSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("preview"),
     id: jobIdSchema,
+    repository: repositorySchema.optional(),
     prompt: z.string().trim().min(1).max(PROMPT_LIMIT),
     cron: cronSchema,
     timezone: z.literal("UTC").default("UTC"),
@@ -312,7 +315,34 @@ export async function loadCloudJobsConfig(explicitHome?: string) {
         error.code === "ENOENT") {
       throw new CloudJobsError("CLOUD_JOBS_NOT_CONFIGURED");
     }
+
     throw error;
+  }
+}
+
+async function loadCloudConfigForRepository(
+  explicitHome: string | undefined,
+  repository?: string,
+) {
+  try {
+    return await loadCloudJobsConfig(explicitHome);
+  } catch (error) {
+    if (!(error instanceof CloudJobsError) ||
+        error.code !== "CLOUD_JOBS_NOT_CONFIGURED" || !repository) throw error;
+    return cloudJobsConfigSchema.parse({
+      version: 1,
+      jobs: {
+        provider: "github-actions",
+        repository,
+        token_secret: "PINOCCHIO_COPILOT_TOKEN",
+        require_approval: true,
+        agent_sync: {
+          check_interval: "24h",
+          check_on_startup: true,
+          update_policy: "require-approval",
+        },
+      },
+    });
   }
 }
 
@@ -350,6 +380,22 @@ export async function configureCloudJobs(input: {
   };
 }
 
+function configForRepository(config: CloudJobsConfig, repository: string): CloudJobsConfig {
+  return {
+    ...config,
+    jobs: { ...config.jobs, repository },
+  };
+}
+
+function requiredRepository(
+  config: CloudJobsConfig,
+  requested?: string,
+) {
+  const repository = requested ?? config.jobs.repository;
+  if (!repository) throw new CloudJobsError("CLOUD_REPOSITORY_REQUIRED");
+  return repository;
+}
+
 async function run(
   command: string,
   args: string[],
@@ -367,12 +413,13 @@ async function repositoryInfo(
   config: CloudJobsConfig,
   timeout = 60_000,
 ) {
+  const repository = requiredRepository(config);
   let result;
   try {
     result = await run("gh", [
       "repo",
       "view",
-      config.jobs.repository,
+      repository,
       "--json",
       "isPrivate,viewerPermission,defaultBranchRef",
     ], { timeout });
@@ -399,6 +446,7 @@ async function repositoryInfo(
 }
 
 async function assertTokenAvailable(config: CloudJobsConfig) {
+  const repository = requiredRepository(config);
   if (config.jobs.token_secret === "GITHUB_TOKEN") return;
   let output;
   try {
@@ -406,7 +454,7 @@ async function assertTokenAvailable(config: CloudJobsConfig) {
       "secret",
       "list",
       "--repo",
-      config.jobs.repository,
+      repository,
       "--json",
       "name",
     ]);
@@ -421,13 +469,18 @@ async function assertTokenAvailable(config: CloudJobsConfig) {
   }
 }
 
-export async function bootstrapCloudJobsRepository(explicitHome?: string) {
-  const config = await loadCloudJobsConfig(explicitHome);
+export async function bootstrapCloudJobsRepository(
+  explicitHome?: string,
+  requestedRepository?: string,
+) {
+  const config = await loadCloudConfigForRepository(explicitHome, requestedRepository);
+  const repository = requiredRepository(config, requestedRepository);
+  const selected = configForRepository(config, repository);
   try {
-    const info = await repositoryInfo(config);
+    const info = await repositoryInfo(selected);
     return {
       status: "ready" as const,
-      repository: config.jobs.repository,
+      repository,
       branch: info.branch,
       created: false,
     };
@@ -439,7 +492,7 @@ export async function bootstrapCloudJobsRepository(explicitHome?: string) {
     await run("gh", [
       "repo",
       "create",
-      config.jobs.repository,
+      repository,
       "--private",
       "--add-readme",
       "--description",
@@ -448,10 +501,10 @@ export async function bootstrapCloudJobsRepository(explicitHome?: string) {
   } catch {
     throw new CloudJobsError("CLOUD_REPOSITORY_CREATE_FAILED");
   }
-  const info = await repositoryInfo(config);
+  const info = await repositoryInfo(selected);
   return {
     status: "ready" as const,
-    repository: config.jobs.repository,
+    repository,
     branch: info.branch,
     created: true,
   };
@@ -469,7 +522,7 @@ async function withRepository<T>(
       await run("gh", [
         "repo",
         "clone",
-        config.jobs.repository,
+        requiredRepository(config),
         root,
         "--",
         "--depth",
@@ -782,7 +835,9 @@ export async function prepareCloudJob(
   explicitHome?: string,
 ) {
   const { agent, binding } = await boundCloudAgent(reference);
-  const config = await loadCloudJobsConfig(explicitHome);
+  const config = await loadCloudConfigForRepository(explicitHome, input.repository);
+  const repository = requiredRepository(config, input.repository);
+  const selected = configForRepository(config, repository);
   const source = await readFile(binding.definition.path, "utf8");
   if (input.tools.includes("*") && input.allowUrls.length > 0) {
     throw new CloudJobsError("CLOUD_UNRESTRICTED_URL_ALLOWLIST_CONFLICT");
@@ -797,6 +852,7 @@ export async function prepareCloudJob(
     version: 1,
     id: input.id,
     agent,
+    repository,
     cron: input.cron,
     timezone: input.timezone,
     enabled: true,
@@ -817,16 +873,16 @@ export async function prepareCloudJob(
     version: 1 as const,
     draftId,
     createdAt,
-    repository: config.jobs.repository,
-    ...(config.jobs.branch ? { branch: config.jobs.branch } : {}),
-    tokenSecret: config.jobs.token_secret,
+    repository,
+    ...(selected.jobs.branch ? { branch: selected.jobs.branch } : {}),
+    tokenSecret: selected.jobs.token_secret,
     sourceProfile: binding.definition.path,
     sourceHash: exported.sourceHash,
     agent,
     manifest,
     prompt,
     profile: exported.profile,
-    workflow: workflowFor(manifest, config.jobs.token_secret),
+    workflow: workflowFor(manifest, selected.jobs.token_secret),
     warnings: exported.warnings,
     blockers: exported.blockers,
   };
@@ -879,18 +935,19 @@ export async function publishCloudJob(
     throw new CloudJobsError("CLOUD_DRAFT_APPROVAL_MISMATCH");
   }
   if (draft.blockers.length) throw new CloudJobsError("CLOUD_DRAFT_BLOCKED");
-  const config = await loadCloudJobsConfig(explicitHome);
-  if (config.jobs.repository !== draft.repository ||
+  const config = await loadCloudConfigForRepository(explicitHome, draft.repository);
+  if (config.jobs.repository && config.jobs.repository !== draft.repository ||
       config.jobs.branch !== draft.branch ||
       config.jobs.token_secret !== draft.tokenSecret) {
     throw new CloudJobsError("CLOUD_CONFIG_CHANGED_AFTER_PREVIEW");
   }
-  await assertTokenAvailable(config);
+  const selected = configForRepository(config, draft.repository);
+  await assertTokenAvailable(selected);
   const source = await readFile(draft.sourceProfile, "utf8");
   if (hash(source) !== draft.sourceHash) {
     throw new CloudJobsError("CLOUD_PROFILE_CHANGED_AFTER_PREVIEW");
   }
-  const changed = await withRepository(config, async (root, branch) => {
+  const changed = await withRepository(selected, async (root, branch) => {
     await writeJob(root, draft);
     return commitRepository(
       root,
@@ -930,15 +987,20 @@ async function readRemoteJobs(root: string) {
   return jobs;
 }
 
-export async function listCloudJobs(explicitHome?: string) {
-  const config = await loadCloudJobsConfig(explicitHome);
-  const jobs = await withRepository(config, (root) => readRemoteJobs(root));
+export async function listCloudJobs(
+  explicitHome?: string,
+  repository?: string,
+) {
+  const config = await loadCloudConfigForRepository(explicitHome, repository);
+  const destination = requiredRepository(config, repository);
+  const selected = configForRepository(config, destination);
+  const jobs = await withRepository(selected, (root) => readRemoteJobs(root));
   return {
     status: "ready" as const,
-    repository: config.jobs.repository,
+    repository: destination,
     jobs: jobs.map((job) => ({
       ...job,
-      workflowUrl: `https://github.com/${config.jobs.repository}/actions/workflows/pinocchio-${job.id}.yml`,
+      workflowUrl: `https://github.com/${job.repository}/actions/workflows/pinocchio-${job.id}.yml`,
     })),
   };
 }
@@ -973,9 +1035,12 @@ function conciseDiff(published: string, local: string) {
 export async function checkCloudJobDrift(
   configRoot = configRootPath(),
   explicitHome?: string,
+  requestedRepository?: string,
 ) {
-  const config = await loadCloudJobsConfig(explicitHome);
-  const results = await withRepository(config, async (root) => {
+  const config = await loadCloudConfigForRepository(explicitHome, requestedRepository);
+  const destination = requiredRepository(config, requestedRepository);
+  const selected = configForRepository(config, destination);
+  const results = await withRepository(selected, async (root) => {
     const jobs = await readRemoteJobs(root);
     return Promise.all(jobs.map(async (job) => {
       const publishedPath = join(jobDirectory(root, job.id), `${job.agent}.agent.md`);
@@ -1048,7 +1113,7 @@ export async function checkCloudJobDrift(
         approvalToken: hash(JSON.stringify({
           version: 1,
           action: "sync",
-          repository: config.jobs.repository,
+          repository: destination,
           id: job.id,
           publishedProfileHash: job.profile_hash,
           sourceHash: exported.sourceHash,
@@ -1059,7 +1124,7 @@ export async function checkCloudJobDrift(
   });
   return {
     status: "checked" as const,
-    repository: config.jobs.repository,
+    repository: destination,
     checkedAt: new Date().toISOString(),
     drifted: results.filter((result) => result.status !== "in-sync").length,
     jobs: results,
@@ -1164,13 +1229,16 @@ export async function changeCloudJob(
   configRoot = configRootPath(),
   explicitHome?: string,
   approvalToken?: string,
+  repository?: string,
 ) {
   if (!jobIdSchema.safeParse(id).success ||
       !["sync", "pause", "resume", "delete"].includes(operation)) {
     throw new CloudJobsError("INVALID_ARGUMENTS");
   }
   const config = await loadCloudJobsConfig(explicitHome);
-  return withRepository(config, async (root, branch) => {
+  const destination = requiredRepository(config, repository);
+  const selected = configForRepository(config, destination);
+  return withRepository(selected, async (root, branch) => {
     let manifest: CloudJobManifest;
     try {
       manifest = jobManifestSchema.parse(
@@ -1201,7 +1269,7 @@ export async function changeCloudJob(
       const expectedApproval = hash(JSON.stringify({
         version: 1,
         action: "sync",
-        repository: config.jobs.repository,
+        repository: destination,
         id,
         publishedProfileHash: manifest.profile_hash,
         sourceHash: exported.sourceHash,
@@ -1222,7 +1290,7 @@ export async function changeCloudJob(
       );
       await writeFile(
         workflowPath(root, id),
-        workflowFor(manifest, config.jobs.token_secret),
+        workflowFor(manifest, selected.jobs.token_secret),
       );
     } else {
       manifest = jobManifestSchema.parse({
@@ -1235,7 +1303,7 @@ export async function changeCloudJob(
       );
       await writeFile(
         workflowPath(root, id),
-        workflowFor(manifest, config.jobs.token_secret),
+        workflowFor(manifest, selected.jobs.token_secret),
       );
     }
     const changed = await commitRepository(
@@ -1246,7 +1314,7 @@ export async function changeCloudJob(
     return {
       status: changed ? operation : "unchanged",
       id,
-      repository: config.jobs.repository,
+      repository: destination,
     };
   });
 }
@@ -1297,7 +1365,7 @@ function emptyResultState(repository: string): ResultState {
 async function readResultState(root: string, repository: string) {
   try {
     const parsed = resultStateSchema.safeParse(JSON.parse(
-      await readPrivateText(join(root, "result-state.json"), 1024 * 1024),
+      await readPrivateText(join(root, `result-state-${hash(repository)}.json`), 1024 * 1024),
     ) as unknown);
     if (!parsed.success) throw new CloudJobsError("CLOUD_RESULT_STATE_INVALID");
     return parsed.data.repository === repository
@@ -1317,7 +1385,7 @@ async function readResultState(root: string, repository: string) {
 
 async function writeResultState(root: string, state: ResultState) {
   await writePrivateText(
-    join(root, "result-state.json"),
+    join(root, `result-state-${hash(state.repository)}.json`),
     `${JSON.stringify(state)}\n`,
   );
 }
@@ -1336,7 +1404,7 @@ async function listCloudJobRuns(
       "run",
       "list",
       "--repo",
-      config.jobs.repository,
+      requiredRepository(config),
       ...(options.id
         ? ["--workflow", `pinocchio-${options.id}.yml`]
         : []),
@@ -1373,7 +1441,7 @@ async function readCloudJobRunResult(
         "download",
         String(databaseId),
         "--repo",
-        config.jobs.repository,
+        requiredRepository(config),
         "--name",
         `pinocchio-${id}-result`,
         "--dir",
@@ -1408,8 +1476,10 @@ export async function checkCloudJobResultNotices(
 ) {
   const { agent } = await boundCloudAgent(reference);
   const config = await loadCloudJobsConfig(explicitHome);
+  const destination = requiredRepository(config);
+  const selected = configForRepository(config, destination);
   const jobs = await withRepository(
-    config,
+    selected,
     (root) => readRemoteJobs(root),
     RESULT_CHECK_TIMEOUT_MS,
   );
@@ -1433,16 +1503,16 @@ export async function checkCloudJobResultNotices(
   });
 
   const root = await ensureCloudHome(explicitHome);
-  const lock = await acquireCloudLock(root, "result-state");
+  const lock = await acquireCloudLock(root, `result-state-${hash(destination)}`);
   if (!lock) {
     return {
       status: "busy" as const,
       agent,
-      repository: config.jobs.repository,
+      repository: destination,
     };
   }
   try {
-    const state = await readResultState(root, config.jobs.repository);
+    const state = await readResultState(root, destination);
     const now = Date.now();
     let stateChanged = false;
     for (const entry of Object.values(state.jobs)) {
@@ -1459,7 +1529,7 @@ export async function checkCloudJobResultNotices(
       return {
         status: "ready" as const,
         agent,
-        repository: config.jobs.repository,
+        repository: destination,
         checkedAt: new Date().toISOString(),
         runs: [],
         omitted: 0,
@@ -1558,15 +1628,13 @@ export async function releaseCloudJobResultNotices(
 ) {
   if (result.status !== "ready" || !result.runs.length ||
       !("claimId" in result)) return;
-  const config = await loadCloudJobsConfig(explicitHome);
-  if (config.jobs.repository !== result.repository) {
-    throw new CloudJobsError("CLOUD_RESULT_STATE_REPOSITORY_MISMATCH");
-  }
+  await loadCloudJobsConfig(explicitHome);
+  if (!result.repository) throw new CloudJobsError("CLOUD_RESULT_STATE_REPOSITORY_MISMATCH");
   const root = await ensureCloudHome(explicitHome);
-  const lock = await acquireCloudLock(root, "result-state");
+  const lock = await acquireCloudLock(root, `result-state-${hash(result.repository)}`);
   if (!lock) throw new CloudJobsError("CLOUD_RESULT_STATE_BUSY");
   try {
-    const state = await readResultState(root, config.jobs.repository);
+    const state = await readResultState(root, result.repository);
     let changed = false;
     for (const id of new Set(result.runs.map((item) => item.id))) {
       const entry = state.jobs[id];
@@ -1587,15 +1655,13 @@ export async function markCloudJobResultNotices(
   explicitHome?: string,
 ) {
   if (result.status !== "ready" || !result.runs.length) return;
-  const config = await loadCloudJobsConfig(explicitHome);
-  if (config.jobs.repository !== result.repository) {
-    throw new CloudJobsError("CLOUD_RESULT_STATE_REPOSITORY_MISMATCH");
-  }
+  await loadCloudJobsConfig(explicitHome);
+  if (!result.repository) throw new CloudJobsError("CLOUD_RESULT_STATE_REPOSITORY_MISMATCH");
   const root = await ensureCloudHome(explicitHome);
-  const lock = await acquireCloudLock(root, "result-state");
+  const lock = await acquireCloudLock(root, `result-state-${hash(result.repository)}`);
   if (!lock) throw new CloudJobsError("CLOUD_RESULT_STATE_BUSY");
   try {
-    const state = await readResultState(root, config.jobs.repository);
+    const state = await readResultState(root, result.repository);
     for (const item of result.runs) {
       const { id, run } = item;
       const previous = state.jobs[id] ?? {
@@ -1663,10 +1729,10 @@ async function markCloudJobRunRead(
   explicitHome?: string,
 ) {
   const root = await ensureCloudHome(explicitHome);
-  const lock = await acquireCloudLock(root, "result-state");
+  const lock = await acquireCloudLock(root, `result-state-${hash(requiredRepository(config))}`);
   if (!lock) throw new CloudJobsError("CLOUD_RESULT_STATE_BUSY");
   try {
-    const state = await readResultState(root, config.jobs.repository);
+    const state = await readResultState(root, requiredRepository(config));
     const previous = state.jobs[id] ?? {
       notifiedThrough: 0,
       readThrough: 0,
@@ -1690,19 +1756,22 @@ export async function latestCloudJobResult(
   id: string,
   includeResult: boolean,
   explicitHome?: string,
+  repository?: string,
 ) {
   if (!jobIdSchema.safeParse(id).success) {
     throw new CloudJobsError("INVALID_ARGUMENTS");
   }
   const config = await loadCloudJobsConfig(explicitHome);
-  await repositoryInfo(config);
-  const latest = (await listCloudJobRuns(config, { id, limit: 1 }))[0];
+  const destination = requiredRepository(config, repository);
+  const selected = configForRepository(config, destination);
+  await repositoryInfo(selected);
+  const latest = (await listCloudJobRuns(selected, { id, limit: 1 }))[0];
   if (!latest) return { status: "no-runs" as const, id };
   if (!includeResult || latest.status !== "completed") {
     return { status: "ready" as const, id, run: latest };
   }
-  const result = await readCloudJobRunResult(config, id, latest.databaseId);
-  await markCloudJobRunRead(config, id, latest.databaseId, explicitHome);
+  const result = await readCloudJobRunResult(selected, id, latest.databaseId);
+  await markCloudJobRunRead(selected, id, latest.databaseId, explicitHome);
   return { status: "ready" as const, id, run: latest, result };
 }
 
@@ -1795,5 +1864,3 @@ export async function handleCloudJobTool(
       return latestCloudJobResult(input.id, input.includeResult);
   }
 }
-
-export const CLOUD_JOBS_TOOL = "pinocchio_cloud_jobs";

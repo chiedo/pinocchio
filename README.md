@@ -27,10 +27,11 @@ their own history instead of sharing one pool.
   scoped per agent.
 - **Automatic capture** — no need to say "remember this"; conversations are
   captured as you go.
-- **Optional cloud jobs** — publish explicitly approved scheduled jobs with
-  full tool access, Playwright browsers, and screenshot artifacts to a private
-  GitHub Actions repository while local memory and history stay local.
-  Restricted read-only jobs remain available.
+- **Unified agent-owned jobs** — inspect local and cloud schedules through one
+  `pinocchio_jobs` tool. Cloud jobs can each use a different private GitHub
+  Actions repository; local active-session execution is currently blocked by
+  the native-background compatibility gate rather than falling back to a
+  detached scheduler.
 
 ## Requirements
 
@@ -114,7 +115,7 @@ restart but keeps stored notes and the agent's other instructions.
 ## Docs
 
 [Setup, updates & controls](docs/INSTALL.md) ·
-[Cloud-scheduled jobs](docs/CLOUD-JOBS.md) ·
+[Agent-owned jobs](docs/CLOUD-JOBS.md) ·
 [Local scheduled tasks](docs/LOCAL-SCHEDULED-TASKS.md) ·
 [Design](docs/DESIGN.md) ·
 [Privacy](PRIVACY.md) ·

@@ -265,12 +265,12 @@ test("broadcast restores missing managed tools even when the instruction block i
     const match = /^---\n([\s\S]*?)\n---\n/.exec(original);
     assert.ok(match);
     const doc = parseDocument(match[1]!);
-    doc.set("tools", (await broadcastSnapshot(f.reference)).target.tools.filter((tool) => tool !== "pinocchio_cloud_jobs"));
+    doc.set("tools", (await broadcastSnapshot(f.reference)).target.tools.filter((tool) => tool !== "pinocchio_jobs"));
     await writeFile(f.profile, `---\n${String(doc)}---\n${original.slice(match[0].length)}`);
-    assert.equal((await broadcastSnapshot(f.reference)).target.tools.includes("pinocchio_cloud_jobs"), false);
+    assert.equal((await broadcastSnapshot(f.reference)).target.tools.includes("pinocchio_jobs"), false);
     const result = await upgradeBroadcast(f.root);
     assert.equal(result.agents[0]?.status, "refreshed");
-    assert.ok((await broadcastSnapshot(f.reference)).target.tools.includes("pinocchio_cloud_jobs"));
+    assert.ok((await broadcastSnapshot(f.reference)).target.tools.includes("pinocchio_jobs"));
   } finally { await rm(f.root, { recursive: true }); }
 });
 

@@ -69,7 +69,7 @@ name: synthetic-agent
 description: Synthetic cloud job agent
 model: auto
 skills: [local-only]
-tools: [view, rg, glob, bash, pinocchio_memory_search, pinocchio_memory_save, pinocchio_cloud_jobs]
+tools: [view, rg, glob, bash, pinocchio_memory_search, pinocchio_memory_save, pinocchio_jobs]
 mcp-servers:
   pinocchio:
     type: local
@@ -96,7 +96,7 @@ test("cloud export preserves authored instructions without local memory wiring",
     tools?: unknown;
   };
   assert.deepEqual(frontmatter.tools, ["view", "rg", "glob"]);
-  assert.doesNotMatch(result.profile, /pinocchio_memory|pinocchio_cloud_jobs/);
+  assert.doesNotMatch(result.profile, /pinocchio_memory|pinocchio_jobs/);
   assert.doesNotMatch(result.profile, /Persistent memory|Your Pinocchio agent/);
   assert.doesNotMatch(result.profile, /skills:|mcp-servers:|bash/);
   assert.deepEqual(result.blockers, []);
@@ -121,7 +121,7 @@ test("permissive cloud export enables all tools without exporting local integrat
   assert.deepEqual(frontmatter.tools, ["*"]);
   assert.match(result.profile, /require\('playwright'\)/);
   assert.match(result.profile, /PINOCCHIO_OUTPUT_DIR/);
-  assert.doesNotMatch(result.profile, /pinocchio_memory|pinocchio_cloud_jobs|mcp-servers:|skills:/);
+  assert.doesNotMatch(result.profile, /pinocchio_memory|pinocchio_jobs|mcp-servers:|skills:/);
   assert.match(result.warnings.join("\n"), /Unrestricted cloud execution/);
   assert.throws(
     () => exportCloudAgentProfile(enrolledProfile(), ["web_fetch"]),

@@ -1,5 +1,22 @@
 # Memory compatibility gates
 
+## Unified jobs background gate
+
+Issue #43's local backend is **blocked**, not passed. The pinned public
+`@github/copilot-sdk` 1.0.13 declarations expose `tasks.cancel` for
+client-owned task cancellation and `session.background_tasks_changed` events,
+but no public native agent-task start method. Pinocchio therefore does not
+queue local work in the foreground, launch a headless CLI, or install cron or
+launchd.
+
+The exposed `pinocchio_jobs` tool reports
+`LOCAL_BACKGROUND_TASK_API_UNAVAILABLE` for local execution and keeps the
+cloud backend separate. A future gate must prove a separate invocation of the
+exact enrolled binding, foreground responsiveness while blocked, scoped
+memory read/write and MCP access, targeted cancellation, and session teardown.
+This is evidence from the installed public declarations, not desktop support
+or live-model certification.
+
 **CLI preview installation:** [INSTALL.md](INSTALL.md) provides the separate pinned
 runtime and blank-session agent setup. The full suite publishes
 `installation.json` for a clean custom-root installation, native CLI saves,

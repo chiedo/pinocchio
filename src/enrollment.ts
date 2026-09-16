@@ -11,9 +11,9 @@ import type { BindingRecord, BindingReference } from "./binding-registry.js";
 import { memoryLaunch } from "./memory-mcp.js";
 import { EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, ToolError } from "./memory-protocol.js";
 import { isRecord } from "./identity.js";
-import { CLOUD_JOBS_TOOL } from "./cloud-jobs.js";
+import { JOBS_TOOL } from "./jobs.js";
 
-export const MANAGED_AGENT_TOOLS = [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL] as const;
+export const MANAGED_AGENT_TOOLS = [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL] as const;
 
 const BEGIN = "<!-- pinocchio-memory:v1 -->";
 const END = "<!-- /pinocchio-memory:v1 -->";
@@ -49,7 +49,7 @@ You are the named Copilot CLI agent below, with Pinocchio memory. These are conf
 ## Cloud jobs
 
 - Scheduled cloud jobs use this exact local profile as their source: ${JSON.stringify(binding.definition.path)}. Pinocchio publishes only a reviewed cloud-safe snapshot, never the memory database or conversation history.
-- Use ${CLOUD_JOBS_TOOL} with action=preview first. Show the user its exact upload and blockers; do not publish until the user explicitly approves that preview.
+- Use ${JOBS_TOOL} with backend=cloud and action=preview first. Show the user its exact upload and blockers; do not publish until the user explicitly approves that preview. Local scheduling is unavailable until the native-background compatibility gate passes.
 - Configuring or bootstrapping a jobs repository and publishing, syncing, pausing, resuming, or deleting a job are remote or persistent changes. Perform them only after explicit user approval.
 - Cloud jobs keep using their last approved snapshot while this computer is off. When drift is reported, show the cloud-safe diff and require approval before syncing.
 - The jobs repository and workflow results are cloud data even when the repository is private. Never put credentials in the profile, task prompt, or Pinocchio YAML configuration.
@@ -289,7 +289,7 @@ export async function removeEnrollment(reference: BindingReference, dryRun = fal
   const servers = doc.get("mcp-servers", true);
   if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
   for (let index = tools.items.length - 1; index >= 0; index--) {
-    if ([SEARCH_TOOL, SAVE_TOOL, EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, CLOUD_JOBS_TOOL].some((tool) =>
+    if ([SEARCH_TOOL, SAVE_TOOL, EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].some((tool) =>
       [tool, `${launch.serverName}-${tool}`].includes(String(tools.items[index])))) tools.delete(index);
   }
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body.replace(`${newline}${block}${newline}`, "")}`;
