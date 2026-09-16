@@ -185,6 +185,11 @@ export async function diagnose(previewPlatform = false) {
           prompt.toLowerCase().replaceAll(" ", "-"),
           () => session.sendAndWait({ prompt }, 45_000),
         );
+        await measured(
+          timingsMs,
+          `${prompt.toLowerCase().replaceAll(" ", "-")}-cleanup`,
+          () => session.rpc.cancelAllBackgroundAgents(),
+        );
       } else {
         const result = await measured(
           timingsMs,

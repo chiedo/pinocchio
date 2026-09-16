@@ -55,10 +55,6 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
       f.openSession(),
       f.openSession(undefined, "other-agent"),
     ]);
-    await Promise.all([
-      restarted.rpc.tools.initializeAndValidate(),
-      other.rpc.tools.initializeAndValidate(),
-    ]);
     await f.waitFor((status) => status.sessions.length === 4 &&
       status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await chat(restarted), [], "Opening a new agent must not replay a saved broadcast into chat");
@@ -97,10 +93,12 @@ test("native refresh is silent across startup, ongoing work, reload, and agent s
     await restarted.rpc.tools.initializeAndValidate();
     await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
     await restarted.rpc.agent.select({ name: "other-agent" });
+    await restarted.rpc.tools.initializeAndValidate();
     await f.waitFor((status) => status.sessions.some((item) => item.sessionId === restarted.sessionId && item.agent === "other-agent" && item.status === "updated"));
     await restarted.rpc.agent.deselect();
     await f.waitFor((status) => status.sessions.length === 3);
     await restarted.rpc.agent.select({ name: "broadcast-agent" });
+    await restarted.rpc.tools.initializeAndValidate();
     await f.waitFor((status) => status.sessions.length === 4 && status.sessions.every((item) => item.status === "updated"));
     assert.deepEqual(await Promise.all(f.sessions.map(async (session) => (await chat(session)).length)), chatCounts);
     assert.equal(f.provider.counts().requests, 4);
