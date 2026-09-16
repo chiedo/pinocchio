@@ -119,6 +119,13 @@ async function execute(raw: unknown): Promise<unknown> {
   } finally { ledger.close(); }
 }
 parentPort?.on("message", async (message: { id: number; payload: unknown }) => {
+  if (typeof message.payload === "object" && message.payload !== null &&
+      Reflect.get(message.payload, "action") === "shutdown") {
+    await semantic.close();
+    parentPort?.postMessage({ id: message.id, value: { status: "closed" } });
+    parentPort?.close();
+    return;
+  }
   try { parentPort?.postMessage({ id: message.id, value: await execute(message.payload) }); }
   catch (error) {
     const code = error instanceof ToolError || error instanceof MemoryError || error instanceof BindingError

@@ -12,7 +12,7 @@ import {
   ToolSet,
 } from "@github/copilot-sdk";
 import type { SessionConfig } from "@github/copilot-sdk";
-import { registerBinding, loadBinding } from "./binding-registry.js";
+import { registerBinding, loadBinding, type BindingReference } from "./binding-registry.js";
 import { enroll } from "./enrollment.js";
 import { MemoryStore } from "./memory-store.js";
 import { setConversationEnabled } from "./conversation-memory.js";
@@ -29,6 +29,19 @@ import { pinnedCliPath, PUBLIC_HOST, PUBLIC_NODE } from "./release.js";
 
 const execute = promisify(execFile);
 export const installedHost = pinnedCliPath();
+
+async function measured<T>(
+  timings: Record<string, number>,
+  name: string,
+  action: () => Promise<T>,
+) {
+  const started = performance.now();
+  try {
+    return await action();
+  } finally {
+    timings[name] = Math.round(performance.now() - started);
+  }
+}
 
 export async function prerequisites(previewPlatform = false) {
   if (process.versions.node !== PUBLIC_NODE) throw new ToolError("NODE_22_18_0_REQUIRED");
@@ -53,8 +66,11 @@ export async function prerequisites(previewPlatform = false) {
 
 /** No account, real profiles, model inference or user memory enters this diagnostic. */
 export async function diagnose(previewPlatform = false) {
-  const host = await prerequisites(previewPlatform);
-  const root = await realpath(await mkdtemp(join(tmpdir(), "pinocchio-install-check-")));
+  const timingsMs: Record<string, number> = {};
+  const host = await measured(timingsMs, "prerequisites", () =>
+    prerequisites(previewPlatform));
+  const root = await measured(timingsMs, "workspace", async () =>
+    realpath(await mkdtemp(join(tmpdir(), "pinocchio-install-check-"))));
   const home = join(root, "home");
   const config = join(home, "custom-config");
   const repository = join(root, "repository");
@@ -100,20 +116,23 @@ export async function diagnose(previewPlatform = false) {
     COPILOT_OFFLINE: "true",
   };
   try {
-    await mkdir(join(config, "agents"), { recursive: true, mode: 0o700 });
-    await mkdir(repository, { mode: 0o700 });
-    await execute("git", ["init", "--quiet", "--initial-branch=main", repository], { env });
-    const references = [];
-    for (const name of ["check-main", "check-helper"]) {
-      const path = join(config, "agents", `${name}.agent.md`);
-      await writeFile(path, `---\nname: ${name}\ndescription: Synthetic installation check\ntools: [view, task]\n---\nUse your scoped tools.\n`);
-      const ref = await registerBinding({ configRoot: config, definitionPath: path, origin: "user",
-        originRoot: join(config, "agents"), scope: { kind: "repository", root: repository } });
-      await enroll(ref);
-      // This gate checks explicit saves/deletes; automatic capture has its own native-host gate.
-      await setConversationEnabled(ref, false);
-      references.push(ref);
-    }
+    const references = await measured(timingsMs, "setup", async () => {
+      await mkdir(join(config, "agents"), { recursive: true, mode: 0o700 });
+      await mkdir(repository, { mode: 0o700 });
+      await execute("git", ["init", "--quiet", "--initial-branch=main", repository], { env });
+      const enrolled: BindingReference[] = [];
+      for (const name of ["check-main", "check-helper"]) {
+        const path = join(config, "agents", `${name}.agent.md`);
+        await writeFile(path, `---\nname: ${name}\ndescription: Synthetic installation check\ntools: [view, task]\n---\nUse your scoped tools.\n`);
+        const ref = await registerBinding({ configRoot: config, definitionPath: path, origin: "user",
+          originRoot: join(config, "agents"), scope: { kind: "repository", root: repository } });
+        await enroll(ref);
+        // This gate checks explicit saves/deletes; automatic capture has its own native-host gate.
+        await setConversationEnabled(ref, false);
+        enrolled.push(ref);
+      }
+      return enrolled;
+    });
     cases.push("tools-verified-before-enrollment");
     client = new CopilotClient({
       connection: RuntimeConnection.forStdio({ path: installedHost }),
@@ -139,22 +158,131 @@ export async function diagnose(previewPlatform = false) {
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
     };
-    await client.start();
-    async function turn(prompt: string, expected: string, absent?: string) {
+    await measured(timingsMs, "client-start", () => client!.start());
+    const discovered = await measured(
+      timingsMs,
+      "extension-discovery",
+      () => client!.rpc.extensions.discover(),
+    );
+    const extension = discovered.extensions.find((item) =>
+      item.name === "pinocchio-memory");
+    if (!extension) throw new ToolError("INSTALL_DIAGNOSTIC_EXTENSION_MISSING");
+    const extensionId = extension.id;
+    await measured(
+      timingsMs,
+      "extension-defer",
+      () => client!.rpc.extensions.disable({ ids: [extensionId] }),
+    );
+    let sessionNumber = 0;
+    async function withSession(run: (session: Awaited<ReturnType<CopilotClient["createSession"]>>) => Promise<void>) {
+      const number = ++sessionNumber;
+      const session = await measured(
+        timingsMs,
+        `session-${number}-create`,
+        () => client!.createSession(sessionConfig),
+      );
+      try {
+        await measured(
+          timingsMs,
+          `session-${number}-extensions`,
+          () => session.rpc.extensions.enable({ id: extensionId }),
+        );
+        await measured(
+          timingsMs,
+          `session-${number}-tools`,
+          () => session.rpc.tools.initializeAndValidate(),
+        );
+        await run(session);
+      } finally {
+        await measured(
+          timingsMs,
+          `session-${number}-extensions-stop`,
+          () => session.rpc.extensions.disable({ id: extensionId }),
+        );
+        await measured(
+          timingsMs,
+          `session-${number}-shutdown`,
+          () => session.rpc.shutdown({ type: "routine" }),
+        );
+        await measured(
+          timingsMs,
+          `session-${number}-disconnect`,
+          () => session.disconnect(),
+        );
+      }
+    }
+    async function turn(
+      session: Awaited<ReturnType<CopilotClient["createSession"]>>,
+      prompt: string,
+      expected: string,
+      absent?: string,
+    ) {
       stage = prompt;
       observed.length = 0;
-      const session = await client!.createSession(sessionConfig);
-      await session.rpc.tools.initializeAndValidate();
-      await session.sendAndWait({ prompt }, 45_000);
-      const results = observed.join("\n");
+      const delegated = prompt.includes("DELEGATE");
+      const save = prompt.includes("SAVE");
+      let direct = "";
+      if (delegated) {
+        await measured(
+          timingsMs,
+          prompt.toLowerCase().replaceAll(" ", "-"),
+          () => session.sendAndWait({ prompt }, 45_000),
+        );
+        await measured(
+          timingsMs,
+          `${prompt.toLowerCase().replaceAll(" ", "-")}-cleanup`,
+          async () => {
+            for (const task of (await session.rpc.tasks.list()).tasks) {
+              if (task.type !== "agent") continue;
+              if (task.status === "running" || task.status === "idle") {
+                await session.rpc.tasks.cancel({ id: task.id });
+              }
+              await session.rpc.tasks.remove({ id: task.id });
+            }
+          },
+        );
+      } else {
+        const result = await measured(
+          timingsMs,
+          prompt.toLowerCase().replaceAll(" ", "-"),
+          () => session.rpc.tools.execute({
+              name: save ? EXTENSION_SAVE_TOOL : EXTENSION_SEARCH_TOOL,
+              arguments: save
+                ? {
+                    action: "remember",
+                    operationId: "save-check-main",
+                    note: {
+                      content: "synthetic memory marker check-main",
+                      kind: "fact",
+                      evidence: [{
+                        kind: "manual_entry",
+                        reference: {
+                          type: "text",
+                          value: "invented installation check",
+                        },
+                      }],
+                    },
+                  }
+                : { query: "synthetic memory" },
+            }),
+        );
+        direct = typeof result === "string"
+          ? result
+          : result.textResultForLlm;
+      }
+      const results = `${observed.join("\n")}\n${direct}`;
       assert.ok(results.includes(expected), "EXPECTED_SYNTHETIC_TOOL_RESULT_MISSING");
       if (absent) assert.ok(!results.includes(absent), "CROSS_SCOPE_SYNTHETIC_RESULT");
       cases.push(prompt.toLowerCase().replaceAll(" ", "-"));
     }
-    await turn("FOREGROUND SAVE", "committed");
-    await turn("DELEGATE SAVE", "committed");
-    await turn("FOREGROUND SEARCH", "synthetic memory marker check-main", "synthetic memory marker check-helper");
-    await turn("DELEGATE SEARCH", "synthetic memory marker check-helper", "synthetic memory marker check-main");
+    await withSession(async (session) => {
+      await turn(session, "FOREGROUND SAVE", "committed");
+      await turn(session, "DELEGATE SAVE", "committed");
+    });
+    await withSession(async (session) => {
+      await turn(session, "FOREGROUND SEARCH", "synthetic memory marker check-main", "synthetic memory marker check-helper");
+      await turn(session, "DELEGATE SEARCH", "synthetic memory marker check-helper", "synthetic memory marker check-main");
+    });
     for (const ref of references) {
       const binding = await loadBinding(ref);
       const store = await MemoryStore.open(ref, { namespace: binding.namespace, scope: "repository" });
@@ -165,10 +293,12 @@ export async function diagnose(previewPlatform = false) {
         await store.forget(saved.recordId, 1, "synthetic-delete");
       } finally { store.close(); }
     }
-    await turn("FOREGROUND SEARCH DELETED", '"snippets":[]');
-    await turn("DELEGATE SEARCH DELETED", '"snippets":[]');
+    await withSession(async (session) => {
+      await turn(session, "FOREGROUND SEARCH DELETED", '"snippets":[]');
+      await turn(session, "DELEGATE SEARCH DELETED", '"snippets":[]');
+    });
     assert.equal(provider.counts().failures, 0);
-    return { status: "passed", host, cases, sessions: 6, syntheticOnly: true,
+    return { status: "passed", host, cases, sessions: 3, timingsMs, syntheticOnly: true,
       liveCertification: "unvalidated", desktop: "unvalidated" };
   } catch (error) {
     const toolCode = /"code"\s*:\s*"([A-Z_]+)"/.exec(observed.join("\n"))?.[1];
@@ -178,10 +308,16 @@ export async function diagnose(previewPlatform = false) {
     throw new ToolError(`INSTALL_DIAGNOSTIC_FAILED_${stage.replaceAll(" ", "_")}_${reason}`);
   } finally {
     try {
-      if (client) await client.stop();
+      if (client) {
+        const cleanupErrors = await measured(timingsMs, "client-stop", () => client!.stop());
+        if (cleanupErrors.length) throw new ToolError("INSTALL_DIAGNOSTIC_CLEANUP_FAILED");
+      }
     } finally {
-      try { await provider.close(); }
-      finally { await rm(root, { recursive: true, force: true }); }
+      try { await measured(timingsMs, "provider-close", () => provider.close()); }
+      finally {
+        await measured(timingsMs, "workspace-cleanup", () =>
+          rm(root, { recursive: true, force: true }));
+      }
     }
   }
 }

@@ -44,10 +44,22 @@ work on the advertised platform.
 Use Node.js 22.18.0 (`.node-version`), run `npm ci` and `npm run typecheck`,
 prepare the Python environment from [SEMANTIC.md](docs/SEMANTIC.md), then run
 the complete suite with `PINOCCHIO_TEST_PYTHON="$PWD/.venv/bin/python" npm test`.
+The complete-suite command compiles and type-checks the project before starting
+the Node test runner.
+The test runner uses four concurrent test files; each fixture owns its temporary
+home, configuration, repository, database, and report filename. Set
+`PINOCCHIO_TEST_CONCURRENCY=1` to reproduce a serial comparison without changing
+which files or scenarios run. The public-safe `ci-timing.json` artifact records
+the complete file/scenario inventory, runner and dependency versions, cache
+state, concurrency, result counts, build/test durations, and required workflow
+elapsed time through release packaging.
 CI runs this same full suite for pull requests, pushes to `main`, and manual
 workflow dispatches. Pull-request branches do not also run a duplicate
 push-triggered copy; the `synthetic` job remains the required check and keeps
-packaging and compatibility artifacts behind a passing suite.
+packaging and compatibility artifacts behind a passing suite. CI provisions
+Python 3.12 and caches pip downloads, the hash-verified pinned model assets, and
+the Playwright browser payload. Each run still creates a fresh `.venv`, mutable
+indexes, stores, configuration, and output directories.
 The full suite includes a pinned public runtime, real local embeddings and a scripted
 loopback provider. No authentication or paid inference is required; the embedding
 gate explicitly downloads pinned public model artifacts.

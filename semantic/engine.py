@@ -66,6 +66,10 @@ def prepare(root):
         path = root / name
         path.parent.mkdir(mode=0o700, exist_ok=True)
         private_directory(path.parent)
+        if path.exists():
+            require(private_file(path).st_size == spec["bytes"], "MODEL_SIZE_MISMATCH")
+            require(digest(path.read_bytes()) == spec["sha256"], "MODEL_HASH_MISMATCH")
+            continue
         temporary = path.with_name(path.name + "." + str(os.getpid()) + ".download")
         url = f'https://huggingface.co/{SPEC["model"]}/resolve/{SPEC["revision"]}/{name}'
         try:

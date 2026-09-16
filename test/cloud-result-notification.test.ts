@@ -23,6 +23,10 @@ import { enroll } from "../src/enrollment.js";
 import { EXTENSION_SEARCH_TOOL } from "../src/memory-protocol.js";
 import { startSyntheticProvider } from "./support/provider.js";
 import { createWorkspace } from "./support/workspace.js";
+import {
+  deferExtension,
+  enableExtension,
+} from "./support/extensions.js";
 
 test("an open agent session announces unread cloud results without a user prompt", {
   timeout: 120_000,
@@ -137,6 +141,7 @@ if (args[0] === "repo" && args[1] === "view") {
   });
   try {
     await client.start();
+    const extensionId = await deferExtension(client);
     const session = await client.createSession({
       workingDirectory: repository,
       configDirectory: config,
@@ -158,6 +163,7 @@ if (args[0] === "repo" && args[1] === "view") {
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
     });
+    await enableExtension(session, extensionId);
     await session.rpc.tools.initializeAndValidate();
     const deadline = Date.now() + 15_000;
     let events = await session.getEvents();
@@ -172,7 +178,10 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.ok(user && user.type === "user.message");
     assert.equal(user.data.content, "Pinocchio found new cloud job results");
     assert.equal(user.data.delivery, "idle");
-    assert.match(user.data.transformedContent ?? "", /changelog: success/);
+    assert.match(
+      user.data.transformedContent ?? "",
+      /changelog \[example\/pinocchio-jobs\]: success/,
+    );
     assert.match(
       user.data.transformedContent ?? "",
       /Automatic changelog summary/,
@@ -189,7 +198,7 @@ if (args[0] === "repo" && args[1] === "view") {
         claim?: unknown;
       }>;
     } | undefined;
-    for (let attempt = 0; attempt < 20 && !state; attempt++) {
+    for (let attempt = 0; attempt < 100; attempt++) {
       try {
         state = JSON.parse(
           await readFile(join(
@@ -205,9 +214,17 @@ if (args[0] === "repo" && args[1] === "view") {
             claim?: unknown;
           }>;
         };
+        if (
+          state.jobs.changelog?.notifiedThrough === 31 &&
+          state.jobs.changelog?.readThrough === 31 &&
+          state.jobs.changelog?.claim === undefined
+        ) {
+          break;
+        }
       } catch {
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        state = undefined;
       }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
     }
     assert.ok(state);
     assert.equal(state.jobs.changelog?.notifiedThrough, 31);

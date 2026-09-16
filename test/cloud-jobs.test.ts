@@ -194,7 +194,7 @@ test("local configuration and preview keep agent history local", async () => {
     );
     assert.match(preview.exactUpload.workflow, /persist-credentials: false/);
     assert.match(preview.exactUpload.workflow, new RegExp(
-      `copilot -C "\\\\.pinocchio/jobs/${remoteId}"`,
+      `copilot -C "\\.pinocchio/jobs/${remoteId}"`,
     ));
     assert.match(preview.exactUpload.workflow, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
     assert.doesNotMatch(preview.exactUpload.workflow, /COPILOT_GITHUB_TOKEN: \$\{\{/);
@@ -492,7 +492,7 @@ test("registered owner repositories aggregate and route management per destinati
 id: summary
 agent: synthetic-agent
 repository: ${repository}
-uid: ${uid}
+uid: "${uid}"
 owner: ${owner.id}
 owner_label: synthetic-agent
 remote_id: ${remoteId}
@@ -516,7 +516,8 @@ const { appendFileSync, existsSync, mkdirSync, writeFileSync } = require("node:f
 const { join } = require("node:path");
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
-const repository = args[args.indexOf("--repo") + 1] || args[2];
+const repositoryFlag = args.indexOf("--repo");
+const repository = repositoryFlag >= 0 ? args[repositoryFlag + 1] : args[2];
 const remote = repository === ${JSON.stringify(repositoryA)}
   ? ${JSON.stringify(remoteA)}
   : ${JSON.stringify(remoteB)};
@@ -635,7 +636,7 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.equal(defaultPreview.repository, repositoryA);
 
     const discovered = await discoverCloudJobs(reference, cloudHome);
-    assert.equal(discovered.status, "ready");
+    assert.equal(discovered.status, "ready", JSON.stringify(discovered));
     assert.deepEqual(
       discovered.jobs.map((job) => [job.repository, job.id, job.remoteId]),
       [
@@ -700,7 +701,7 @@ if (args[0] === "repo" && args[1] === "view") {
     assert.equal(cancelled.remoteId, remoteB);
 
     const notices = await checkCloudJobResultNotices(reference, cloudHome);
-    assert.equal(notices.status, "ready");
+    assert.equal(notices.status, "ready", JSON.stringify(notices));
     if (notices.status !== "ready") throw new Error("RESULT_NOTICE_BUSY");
     assert.deepEqual(
       notices.runs.map((item) => [item.repository, item.remoteId]).sort(),
