@@ -1,6 +1,6 @@
 # 👃 Pinocchio
 
-**Make Copilot CLI agents real (and more truthful) by giving them memory.** Each named agent remembers what it
+**Make Copilot CLI agents real by giving them memory.** Each named agent remembers what it
 learned in past conversations — your preferences, decisions, and unfinished
 work — so you stop re-explaining context every session.
 
