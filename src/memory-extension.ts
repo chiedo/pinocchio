@@ -39,6 +39,11 @@ let cloudResultCompletion: Promise<void> | undefined;
 let checkingCloudResults = false;
 let skipNextAssistantCapture = false;
 const subagentOwners = new Map<string, Promise<ConversationOwner | undefined>>();
+const pendingSubagentOwners = new Map<string, {
+  promise: Promise<ConversationOwner | undefined>;
+  resolve: (owner: ConversationOwner | PromiseLike<ConversationOwner | undefined> | undefined) => void;
+  timer: NodeJS.Timeout;
+}>();
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
 const subagentToolCalls = new Set<string>();
 let broadcastChecking = false;
@@ -137,7 +142,47 @@ async function ownerForAgent(name: string) {
 async function ownerForSession(sessionId: string) {
   if (!session) return;
   if (sessionId === session.sessionId) return selectedOwner();
-  return subagentOwners.get(sessionId);
+  return ownerForSubagent(sessionId);
+}
+function ownerForSubagent(agentId: string) {
+  const known = subagentOwners.get(agentId);
+  if (known) return known;
+  const pendingOwner = pendingSubagentOwners.get(agentId);
+  if (pendingOwner) return pendingOwner.promise;
+  let resolveOwner!: (
+    owner: ConversationOwner | PromiseLike<ConversationOwner | undefined> | undefined,
+  ) => void;
+  const promise = new Promise<ConversationOwner | undefined>((resolve) => {
+    resolveOwner = resolve;
+  });
+  const timer = setTimeout(() => {
+    const pending = pendingSubagentOwners.get(agentId);
+    if (pending?.promise !== promise) return;
+    pendingSubagentOwners.delete(agentId);
+    resolveOwner(undefined);
+  }, 1_000);
+  timer.unref();
+  pendingSubagentOwners.set(agentId, { promise, resolve: resolveOwner, timer });
+  return promise;
+}
+function registerSubagentOwner(
+  agentId: string,
+  owner: Promise<ConversationOwner | undefined>,
+) {
+  subagentOwners.set(agentId, owner);
+  const pendingOwner = pendingSubagentOwners.get(agentId);
+  if (!pendingOwner) return;
+  clearTimeout(pendingOwner.timer);
+  pendingSubagentOwners.delete(agentId);
+  pendingOwner.resolve(owner);
+}
+function releaseSubagentOwner(agentId: string) {
+  subagentOwners.delete(agentId);
+  const pendingOwner = pendingSubagentOwners.get(agentId);
+  if (!pendingOwner) return;
+  clearTimeout(pendingOwner.timer);
+  pendingSubagentOwners.delete(agentId);
+  pendingOwner.resolve(undefined);
 }
 async function ownerForTool(toolCallId: string) {
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -288,14 +333,16 @@ session = await joinSession({
 localJobs = new LocalJobs(jobsStore, session);
 for (const name of ["subagent.started", "subagent.selected"] as const) {
   session.on(name, (event) => {
-    if (event.agentId) subagentOwners.set(event.agentId, ownerForAgent(event.data.agentName));
+    if (event.agentId) {
+      registerSubagentOwner(event.agentId, ownerForAgent(event.data.agentName));
+    }
   });
 }
 session.on("tool.execution_start", (event) => {
   if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
     if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
     toolOwners.set(event.data.toolCallId, event.agentId
-      ? subagentOwners.get(event.agentId) ?? Promise.resolve(undefined)
+      ? ownerForSubagent(event.agentId)
       : selectedOwner());
   }
 });
@@ -305,7 +352,7 @@ for (const name of ["subagent.completed", "subagent.failed"] as const) {
       void localJobs?.reconcile(event.agentId).catch(() => {
         process.stderr.write("Pinocchio: LOCAL_JOB_RECONCILE_FAILED\n");
       });
-      subagentOwners.delete(event.agentId);
+      releaseSubagentOwner(event.agentId);
     }
   });
 }
