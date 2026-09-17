@@ -57,6 +57,9 @@ npm run jobs -- publish \
 The selected root session must be in the approved working directory and have
 all required tools initialized before a scheduled or manual run can start.
 Background job agents cannot create, change, or recursively run other jobs.
+Agent-owned local artifacts such as scripts, static files, caches, and job
+support files belong under `~/.pinocchio/<agent-id>/`. Files intended as
+repository deliverables remain in the repository.
 
 ## Inspect and manage
 
