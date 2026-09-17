@@ -44,6 +44,11 @@ their own history instead of sharing one pool.
 
 ## Quick start
 
+**Want a useful agent out of the box?**
+[Setting up your first agent](docs/FIRST-AGENT.md) walks through a Chief of Staff
+example, connecting MCP servers, and checking that memory and tools really work.
+Reuse the template for a researcher, assistant, or engineer.
+
 ### 1. Install Pinocchio
 
 ```bash
@@ -181,6 +186,7 @@ restart but keeps stored notes and the agent's other instructions.
 
 ## Docs
 
+[Setting up your first agent](docs/FIRST-AGENT.md) ·
 [Setup, updates & controls](docs/INSTALL.md) ·
 [Agent-owned jobs](docs/CLOUD-JOBS.md) ·
 [Local scheduled tasks](docs/LOCAL-SCHEDULED-TASKS.md) ·
