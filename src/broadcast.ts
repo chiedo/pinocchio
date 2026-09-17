@@ -190,8 +190,11 @@ export class BroadcastListener {
     delete this.record.code;
     delete this.record.missingTools;
     delete this.record.unmatchedTools;
+    const snapshot = await broadcastSnapshot(reference);
     const reason = request.runtime !== this.runtime ? "RUNTIME_CHANGED"
-      : target.settingsHash !== this.record.settingsHash ? "AGENT_SETTINGS_CHANGED" : undefined;
+      : snapshot.target.settingsHash !== this.record.settingsHash
+        ? "AGENT_SETTINGS_CHANGED"
+        : undefined;
     if (reason) {
       this.record.status = "restart-required"; this.record.code = reason;
       await this.save();
@@ -202,7 +205,9 @@ export class BroadcastListener {
     const required = new Set<string>(MANAGED_AGENT_TOOLS);
     const missingTools = MANAGED_AGENT_TOOLS.filter((tool) => !offered.has(tool));
     // Profile tools are an allowlist, not dependencies: hosts ignore unknown/product-specific names.
-    const unmatchedTools = target.tools.filter((tool) => !required.has(tool) && !offered.has(tool));
+    const unmatchedTools = snapshot.target.tools.filter(
+      (tool) => !required.has(tool) && !offered.has(tool),
+    );
     if (unmatchedTools.length) this.record.unmatchedTools = unmatchedTools;
     if (missingTools.length) {
       this.record.status = "failed"; this.record.code = "TOOLS_NOT_AVAILABLE";
@@ -210,8 +215,6 @@ export class BroadcastListener {
       await this.save();
       return;
     }
-    const snapshot = await broadcastSnapshot(reference);
-    if (JSON.stringify(snapshot.target) !== JSON.stringify(target)) fail("BROADCAST_TARGET_CHANGED");
     const prompt = [
       snapshot.body,
       "## Shared Pinocchio instructions",
@@ -221,7 +224,7 @@ export class BroadcastListener {
       "Continue the user's actual request normally. Do not announce or acknowledge this background instruction refresh, or save it to memory.",
     ].join("\n\n");
     this.record.status = "pending";
-    this.delivery = { request, target };
+    this.delivery = { request, target: snapshot.target };
     await this.save();
     return prompt;
   }
@@ -269,11 +272,17 @@ export class BroadcastListener {
     const delivery = this.delivery;
     if (!delivery || !this.record || this.record.bindingId !== reference.bindingId) fail("BROADCAST_NO_DELIVERY");
     const snapshot = await broadcastSnapshot(reference);
-    if (JSON.stringify(snapshot.target) !== JSON.stringify(delivery.target)) fail("BROADCAST_TARGET_CHANGED");
+    if (JSON.stringify(snapshot.target) !== JSON.stringify(delivery.target)) {
+      this.record.status = "pending";
+      this.delivery = undefined;
+      await this.save();
+      return false;
+    }
     this.record.status = "updated";
     this.record.heartbeat = Date.now();
     this.delivery = undefined;
     await this.save();
+    return true;
   }
   issue() {
     const record = this.record;

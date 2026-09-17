@@ -92,6 +92,26 @@ test("identical broadcasts replace the prompt with identical instructions rather
   } finally { await rm(f.root, { recursive: true }); }
 });
 
+test("profile changes after publication are delivered from the current authoritative files", async () => {
+  const f = await fixture();
+  try {
+    const request = await f.request();
+    await writeFile(
+      f.profile,
+      (await readFile(f.profile, "utf8")) + "\nUse the newest profile text.\n",
+    );
+    const prompt = await f.listener.prepare(
+      f.reference,
+      (await broadcastSnapshot(f.reference)).target.tools,
+    );
+    assert.match(prompt ?? "", /Use the newest profile text/);
+    assert.equal(await f.listener.acknowledge(f.reference), true);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "updated");
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.requestId, request.id);
+    assert.equal(f.listener.issue(), undefined);
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
 test("failed host delivery never reports updated or repeatedly retries the same request", async () => {
   const f = await fixture();
   try {
@@ -231,13 +251,20 @@ test("independent listeners acknowledge independently and exclude expired heartb
   } finally { await rm(f.root, { recursive: true }); }
 });
 
-test("changed snapshots, revoked bindings, and switched agents cannot be acknowledged", async () => {
+test("changed snapshots retry while revoked bindings and switched agents cannot be acknowledged", async () => {
   const f = await fixture();
   try {
     let request = await f.request();
     await f.listener.prepare(f.reference, request.targets[0]!.tools);
     await writeFile(join(f.root, "pinocchio", "AGENTS.md"), "New shared rules\n");
-    await assert.rejects(f.listener.acknowledge(f.reference), { code: "BROADCAST_TARGET_CHANGED" });
+    assert.equal(await f.listener.acknowledge(f.reference), false);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "pending");
+    assert.match(
+      await f.listener.prepare(f.reference, request.targets[0]!.tools) ?? "",
+      /New shared rules/,
+    );
+    assert.equal(await f.listener.acknowledge(f.reference), true);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "updated");
     request = await f.request();
     await f.listener.prepare(f.reference, request.targets[0]!.tools);
     await setup({ configRoot: f.root, name: "second", global: true });
