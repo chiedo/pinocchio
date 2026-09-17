@@ -170,6 +170,9 @@ no synthetic user message, acknowledgment, or extra model request, including on
 startup and extension reload. Ongoing work is not interrupted; subsequent work uses
 the refreshed instructions. Repeating an unchanged broadcast does not stack
 instructions. Updates are not copied into conversation memory.
+If an agent profile or the shared instructions change after a broadcast is
+published, listeners read and deliver the newest files. A further change during
+delivery leaves the session pending and retries silently on the next heartbeat.
 
 Only the selected agent's body and shared instructions are updated; its identity,
 YAML settings, tools, and permissions are preserved. The profile text goes to the
