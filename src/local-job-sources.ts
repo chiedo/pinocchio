@@ -45,13 +45,13 @@ const promptPathSchema = z.string().min(1).max(500)
 const jobIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,49}$/);
 const requiredToolsSchema = z.array(z.string().min(1).max(200)).max(50).default([]);
 
-const repositoryJobSchema = z.object({
+export const repositoryJobSchema = z.object({
   version: z.literal(1),
   id: jobIdSchema,
   schedule: z.object({
     cron: z.string().trim().min(1).max(200),
     timezone: z.string().trim().min(1).max(100).default("UTC"),
-  }).strict(),
+  }).strict().optional(),
   execution: z.object({
     "working-directory": z.enum(["subscriber", "source"]).default("subscriber"),
     "required-tools": requiredToolsSchema,
@@ -80,6 +80,7 @@ export const githubJobSourceSchema = z.object({
   lastSyncedAt: z.string(),
   checkoutDirectory: z.string().min(1),
   workingDirectoryMode: z.enum(["subscriber", "source"]),
+  automaticExecutionAllowed: z.boolean().default(true),
   allowedTools: requiredToolsSchema,
   maximumTimeoutMinutes: z.number().int().min(1).max(360),
   maximumAiCredits: z.number().int().positive().max(100).optional(),
@@ -91,7 +92,7 @@ export type GitHubJobSource = z.infer<typeof githubJobSourceSchema>;
 export interface ResolvedRepositoryJob {
   id: string;
   prompt: string;
-  cron: string;
+  cron?: string;
   timezone: string;
   requiredTools: string[];
   timeoutMinutes: number;
@@ -100,7 +101,8 @@ export interface ResolvedRepositoryJob {
   sourceDirectory: string;
   source: Omit<
     GitHubJobSource,
-    "workingDirectoryMode" | "allowedTools" | "maximumTimeoutMinutes" | "maximumAiCredits" | "syncError"
+    "workingDirectoryMode" | "automaticExecutionAllowed" | "allowedTools" |
+    "maximumTimeoutMinutes" | "maximumAiCredits" | "syncError"
   >;
 }
 
@@ -307,7 +309,10 @@ async function safeFile(checkout: string, path: string) {
   return actual;
 }
 
-export async function resolveGitHubJobSource(locator: string, agent: string) {
+export async function resolveGitHubJobSource(
+  locator: string,
+  agent: string,
+): Promise<ResolvedRepositoryJob> {
   const parsedLocator = parseGitHubJobLocator(locator);
   const { checkout, commit } = await managedCheckout(
     agent,
@@ -344,11 +349,15 @@ export async function resolveGitHubJobSource(locator: string, agent: string) {
       code: "INVALID_JOB_SOURCE_PROMPT",
     });
   }
-  const resolved = {
+  const resolved: Omit<ResolvedRepositoryJob, "sourceDirectory" | "source"> = {
     id: definition.id,
     prompt,
-    cron: definition.schedule.cron,
-    timezone: definition.schedule.timezone,
+    ...(definition.schedule
+      ? {
+          cron: definition.schedule.cron,
+          timezone: definition.schedule.timezone,
+        }
+      : { timezone: "UTC" }),
     requiredTools: definition.execution["required-tools"],
     timeoutMinutes: definition.execution["timeout-minutes"],
     ...(definition.execution["max-ai-credits"] === undefined
@@ -373,6 +382,7 @@ export async function resolveGitHubJobSource(locator: string, agent: string) {
 export function sourcePolicyAllows(source: GitHubJobSource, resolved: ResolvedRepositoryJob) {
   const allowed = new Set(source.allowedTools);
   return source.workingDirectoryMode === resolved.workingDirectoryMode &&
+    (resolved.cron === undefined || source.automaticExecutionAllowed) &&
     resolved.requiredTools.every((tool) => allowed.has(tool)) &&
     resolved.timeoutMinutes <= source.maximumTimeoutMinutes &&
     (source.maximumAiCredits === undefined ||

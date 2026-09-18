@@ -161,7 +161,9 @@ function publicJob(job: StoredJob, history: StoredRun[] = []) {
     id: job.slug,
     backend: job.backend,
     state: job.state,
-    schedule: { cron: job.cron, timezone: job.timezone },
+    ...(job.cron
+      ? { schedule: { cron: job.cron, timezone: job.timezone } }
+      : { schedule: null }),
     nextDueAt: job.nextDueAt,
     workingDirectory: job.workingDirectory,
     requiredTools: job.requiredTools,
@@ -186,6 +188,7 @@ export class LocalJobs {
   constructor(
     private readonly store: JobsStore,
     private readonly session?: CopilotSession,
+    private readonly sourceResolver = resolveGitHubJobSource,
   ) {}
 
   setActiveOwner(
@@ -216,7 +219,7 @@ export class LocalJobs {
     const binding = await loadBinding(reference);
     const owner = await this.store.owner(reference);
     const resolved = input.definition
-      ? await resolveGitHubJobSource(input.definition, owner.agent)
+      ? await this.sourceResolver(input.definition, owner.agent)
       : undefined;
     if (resolved && input.id && input.id !== resolved.id) {
       throw Object.assign(new Error("JOB_SOURCE_ID_MISMATCH"), {
@@ -235,13 +238,15 @@ export class LocalJobs {
         code: "JOB_SCOPE_MISMATCH",
       });
     }
-    const nextDueAt = nextCronOccurrence(
-      resolved?.cron ?? input.cron!,
-      resolved?.timezone ?? input.timezone,
-    ).toISOString();
+    const cron = resolved?.cron ?? input.cron;
+    const timezone = resolved?.timezone ?? input.timezone;
+    const nextDueAt = cron
+      ? nextCronOccurrence(cron, timezone).toISOString()
+      : undefined;
     const source = resolved ? {
       ...resolved.source,
       workingDirectoryMode: resolved.workingDirectoryMode,
+      automaticExecutionAllowed: resolved.cron !== undefined,
       allowedTools: resolved.requiredTools,
       maximumTimeoutMinutes: resolved.timeoutMinutes,
       ...(resolved.maxAiCredits === undefined
@@ -254,10 +259,7 @@ export class LocalJobs {
       owner,
       id: resolved?.id ?? input.id!,
       prompt: resolved?.prompt ?? input.prompt!,
-      schedule: {
-        cron: resolved?.cron ?? input.cron!,
-        timezone: resolved?.timezone ?? input.timezone,
-      },
+      ...(cron ? { schedule: { cron, timezone } } : {}),
       execution: {
         mode: "active-session" as const,
         workingDirectory,
@@ -268,7 +270,7 @@ export class LocalJobs {
           : { maxAiCredits: resolved?.maxAiCredits ?? input.maxAiCredits }),
       },
       ...(source ? { source } : {}),
-      nextDueAt,
+      ...(nextDueAt ? { nextDueAt } : {}),
     };
     const draft = this.store.saveDraft(reference, exactJob);
     return {
@@ -298,7 +300,7 @@ export class LocalJobs {
       }),
       id: z.string(),
       prompt: z.string(),
-      schedule: z.object({ cron: z.string(), timezone: z.string() }),
+      schedule: z.object({ cron: z.string(), timezone: z.string() }).optional(),
       execution: z.object({
         mode: z.literal("active-session"),
         workingDirectory: z.string(),
@@ -307,7 +309,7 @@ export class LocalJobs {
         maxAiCredits: z.number().optional(),
       }),
       source: githubJobSourceSchema.optional(),
-      nextDueAt: z.string(),
+      nextDueAt: z.string().optional(),
     }).parse(this.store.consumeDraft(reference, draftId, approvalToken));
     if (exact.owner.fingerprint !== reference.fingerprint) {
       throw Object.assign(new Error("JOB_APPROVAL_STALE"), {
@@ -330,8 +332,8 @@ export class LocalJobs {
       backend: "local",
       revision: (existing?.revision ?? 0) + 1,
       prompt: exact.prompt,
-      cron: exact.schedule.cron,
-      timezone: exact.schedule.timezone,
+      cron: exact.schedule?.cron ?? "",
+      timezone: exact.schedule?.timezone ?? "UTC",
       workingDirectory: exact.execution.workingDirectory,
       requiredTools: exact.execution.requiredTools,
       timeoutMinutes: exact.execution.timeoutMinutes,
@@ -341,7 +343,7 @@ export class LocalJobs {
       ...(exact.source ? { source: exact.source } : {}),
       state: "enabled",
       approvalFingerprint: hash(exact),
-      nextDueAt: exact.nextDueAt,
+      ...(exact.nextDueAt ? { nextDueAt: exact.nextDueAt } : {}),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
@@ -439,7 +441,7 @@ export class LocalJobs {
       return { status: "deleted" as const, id };
     }
     this.store.setState(job.uid, operation === "pause" ? "paused" : "enabled");
-    if (operation === "resume") {
+    if (operation === "resume" && job.cron) {
       this.store.setNextDue(
         job.uid,
         nextCronOccurrence(job.cron, job.timezone).toISOString(),
@@ -514,7 +516,7 @@ export class LocalJobs {
     return [
       "Pinocchio jobs inventory (authoritative; do not substitute memory search):",
       ...jobs.map((job) =>
-        `- local ${job.id}: ${job.state}, ${job.schedule.cron} ${job.schedule.timezone}, next ${job.nextDueAt ?? "unknown"}, last ${job.lastAttempt?.status ?? "never"}`),
+        `- local ${job.id}: ${job.state}, ${job.schedule ? `${job.schedule.cron} ${job.schedule.timezone}, next ${job.nextDueAt ?? "unknown"}` : "manual-only"}, last ${job.lastAttempt?.status ?? "never"}`),
       ...unread.map((run) =>
         `- unread local result ${run.runId}: ${run.status} at ${run.completedAt ?? run.startedAt}${run.errorCode ? ` (${run.errorCode})` : ""}`),
       "Use pinocchio_jobs for exact definitions, history, results, changes, run-now, or cancellation.",
@@ -613,7 +615,7 @@ export class LocalJobs {
   private async refreshSource(job: StoredJob) {
     if (!job.source) return job;
     try {
-      const resolved = await resolveGitHubJobSource(
+      const resolved = await this.sourceResolver(
         job.source.locator,
         job.ownerAgent,
       );
@@ -631,15 +633,18 @@ export class LocalJobs {
           job.source.definitionFingerprint) {
         return this.store.updateSource(job.uid, source) ?? job;
       }
-      const nextDueAt = job.cron === resolved.cron &&
-          job.timezone === resolved.timezone
-        ? job.nextDueAt
-        : nextCronOccurrence(resolved.cron, resolved.timezone).toISOString();
+      const nextDueAt = resolved.cron
+        ? job.cron === resolved.cron &&
+            job.timezone === resolved.timezone &&
+            job.nextDueAt
+          ? job.nextDueAt
+          : nextCronOccurrence(resolved.cron, resolved.timezone).toISOString()
+        : undefined;
       const updated = {
         ...job,
         revision: job.revision + 1,
         prompt: resolved.prompt,
-        cron: resolved.cron,
+        cron: resolved.cron ?? "",
         timezone: resolved.timezone,
         workingDirectory: resolved.workingDirectoryMode === "source"
           ? resolved.sourceDirectory
@@ -647,9 +652,10 @@ export class LocalJobs {
         requiredTools: resolved.requiredTools,
         timeoutMinutes: resolved.timeoutMinutes,
         source,
-        ...(nextDueAt ? { nextDueAt } : {}),
         updatedAt: new Date().toISOString(),
       };
+      if (nextDueAt === undefined) delete updated.nextDueAt;
+      else updated.nextDueAt = nextDueAt;
       if (resolved.maxAiCredits === undefined) delete updated.maxAiCredits;
       else updated.maxAiCredits = resolved.maxAiCredits;
       return this.store.putJob(updated)!;

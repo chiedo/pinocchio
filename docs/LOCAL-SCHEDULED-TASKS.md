@@ -1,4 +1,4 @@
-# Local scheduled tasks (active owning session)
+# Local scheduled and manual tasks (active owning session)
 
 Pinocchio runs local schedules through the public native background-task API.
 Each run is a separate invocation of the exact enrolled agent and is hosted by
@@ -11,7 +11,8 @@ A local definition records:
 
 - the trusted enrolled owner and scope;
 - the approved absolute working directory;
-- the prompt, five-field cron expression, and IANA timezone;
+- the prompt and either manual-only execution or a five-field cron expression
+  with an IANA timezone;
 - the required initialized tools and runtime limits; and
 - a fingerprint of the exact approved definition.
 
@@ -81,7 +82,7 @@ Pinocchio clones the repository into the owning agent's managed directory under
 the definition from an exact detached commit. Private repositories use the
 machine's existing Git credentials.
 
-Definitions use this format:
+Scheduled definitions use this format:
 
 ```yaml
 version: 1
@@ -100,6 +101,37 @@ execution:
 prompt-file: ./prompts/feedback-summary.md
 ```
 
+For a manual-only repository-backed job, omit `schedule`:
+
+```yaml
+version: 1
+id: interactive-feedback
+
+execution:
+  working-directory: subscriber
+  required-tools:
+    - computer-use-get_window_state
+  timeout-minutes: 30
+
+prompt-file: ./prompts/interactive-feedback.md
+```
+
+The tool flow is the same as the CLI flow:
+
+```json
+{
+  "action": "preview",
+  "backend": "local",
+  "definition": "github://github/example-jobs/.pinocchio/jobs/interactive-feedback.yml?ref=main",
+  "workingDirectory": "/absolute/path/to/local/workspace"
+}
+```
+
+After reviewing the resolved commit, fingerprint, capabilities, and manual-only
+mode, publish with the returned `draftId` and `approvalToken`, then explicitly
+run it with `action: "run"`, `backend: "local"`, its `id`, and
+`confirmed: true`.
+
 Exactly one of `prompt` or `prompt-file` is required. A prompt file is resolved
 relative to the definition. `working-directory: subscriber` uses the local
 directory approved during preview; `working-directory: source` runs against the
@@ -108,13 +140,17 @@ requires a globally scoped agent because repository-scoped agents remain bound
 to their approved local checkout.
 
 The initial publication approves the repository, ref, path, working-directory
-mode, required tools, and runtime limits. Later commits may automatically change
-the prompt, schedule, or reduce capabilities. A change that adds tools, changes
-the working-directory mode, removes an approved AI-credit limit, or increases a
-runtime limit is blocked with `JOB_SOURCE_REAPPROVAL_REQUIRED`.
+mode, required tools, runtime limits, and whether automatic execution is
+allowed. Later commits may automatically change the prompt or reduce
+capabilities. Scheduled jobs may become manual-only without reapproval, but a
+manual-only job cannot add a schedule without a new preview and explicit
+publication approval. A change that adds tools, enables automatic execution,
+changes the working-directory mode, removes an approved AI-credit limit, or
+increases a runtime limit is blocked with `JOB_SOURCE_REAPPROVAL_REQUIRED`.
 
 Sources synchronize when the owning session starts, at least every five minutes
-while active, immediately before a due run, before a manual run, or explicitly:
+while active, immediately before a due run, before every manual run, or
+explicitly:
 
 ```bash
 npm run jobs -- change \
@@ -131,6 +167,11 @@ confirm that they executed the same revision. The run receives the managed
 checkout path for repository support files and is instructed to treat it as
 read-only. Pinocchio materializes immutable Git worktrees by commit so a source
 refresh cannot change files underneath an active run.
+
+Manual-only jobs appear with `schedule: null` and `nextDueAt` omitted when
+listed or inspected. They never become due automatically. Run them explicitly
+with the same `npm run jobs -- run ... --confirm` or `pinocchio_jobs`
+`action: "run"` flow shown below.
 
 ## Inspect and manage
 
