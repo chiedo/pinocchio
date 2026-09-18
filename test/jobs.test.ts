@@ -7,7 +7,9 @@ import type { CopilotSession } from "@github/copilot-sdk";
 import { registerBinding } from "../src/binding-registry.js";
 import { JOBS_TOOL, jobsToolInputSchema } from "../src/jobs.js";
 import {
+  githubJobSourceSchema,
   parseGitHubJobLocator,
+  repositoryJobSchema,
   sourcePolicyAllows,
 } from "../src/local-job-sources.js";
 import type {
@@ -57,6 +59,20 @@ test("unified jobs input exposes local and cloud jobs", () => {
 });
 
 test("repository-backed local job locators and policies are constrained", () => {
+  assert.deepEqual(repositoryJobSchema.parse({
+    version: 1,
+    id: "feedback",
+    prompt: "Summarize feedback.",
+  }), {
+    version: 1,
+    id: "feedback",
+    execution: {
+      "working-directory": "subscriber",
+      "required-tools": [],
+      "timeout-minutes": 30,
+    },
+    prompt: "Summarize feedback.",
+  });
   assert.deepEqual(
     parseGitHubJobLocator(
       "github://github/example-jobs/.pinocchio/jobs/feedback.yml?ref=main",
@@ -83,6 +99,7 @@ test("repository-backed local job locators and policies are constrained", () => 
     lastSyncedAt: "2026-09-18T12:00:00.000Z",
     checkoutDirectory: "/tmp/source",
     workingDirectoryMode: "subscriber",
+    automaticExecutionAllowed: true,
     allowedTools: ["view"],
     maximumTimeoutMinutes: 30,
     maximumAiCredits: 50,
@@ -118,6 +135,23 @@ test("repository-backed local job locators and policies are constrained", () => 
   assert.equal(sourcePolicyAllows(source, {
     ...withoutAiLimit,
   }), false);
+  assert.equal(sourcePolicyAllows({
+    ...source,
+    automaticExecutionAllowed: false,
+  }, resolved), false);
+  const { cron: _cron, ...manualResolved } = resolved;
+  assert.equal(sourcePolicyAllows({
+    ...source,
+    automaticExecutionAllowed: false,
+  }, manualResolved), true);
+  const {
+    automaticExecutionAllowed: _automaticExecutionAllowed,
+    ...legacySource
+  } = source;
+  assert.equal(
+    githubJobSourceSchema.parse(legacySource).automaticExecutionAllowed,
+    true,
+  );
 });
 
 test("job storage records repository source revisions on runs", async () => {
@@ -136,6 +170,7 @@ test("job storage records repository source revisions on runs", async () => {
         lastSyncedAt: "2026-09-18T12:00:00.000Z",
         checkoutDirectory: "/tmp/source",
         workingDirectoryMode: "subscriber",
+        automaticExecutionAllowed: false,
         allowedTools: ["view"],
         maximumTimeoutMinutes: 30,
       };
@@ -149,7 +184,7 @@ test("job storage records repository source revisions on runs", async () => {
         backend: "local",
         revision: 1,
         prompt: "Run the job.",
-        cron: "0 10 * * 1-5",
+        cron: "",
         timezone: "UTC",
         workingDirectory: "/tmp",
         requiredTools: ["view"],
@@ -157,11 +192,11 @@ test("job storage records repository source revisions on runs", async () => {
         source,
         state: "enabled",
         approvalFingerprint: "approval",
-        nextDueAt: "2026-09-18T14:00:00.000Z",
         createdAt: "2026-09-18T12:00:00.000Z",
         updatedAt: "2026-09-18T12:00:00.000Z",
       });
       assert.equal(job?.source?.resolvedCommit, source.resolvedCommit);
+      assert.equal(store.dueJobs("owner", "9999-12-31T23:59:59.999Z").length, 0);
       const run = store.claimRun(job!, "manual:source", "session");
       assert.equal(run?.sourceCommit, source.resolvedCommit);
       assert.equal(
@@ -202,6 +237,37 @@ test("local jobs preview, publish and run through the native task API", async ()
       scope: { kind: "global" },
     });
     let taskStatus: "running" | "completed" = "running";
+    let sourceCalls = 0;
+    let sourceShouldFail = false;
+    const resolveSource = async (locator: string): Promise<ResolvedRepositoryJob> => {
+      sourceCalls++;
+      if (sourceShouldFail) {
+        throw Object.assign(new Error("JOB_SOURCE_SYNC_FAILED"), {
+          code: "JOB_SOURCE_SYNC_FAILED",
+        });
+      }
+      const revision = sourceCalls.toString(16).padStart(40, "0");
+      return {
+        id: "interactive-feedback",
+        prompt: "Collect feedback after interactive login.",
+        timezone: "UTC",
+        requiredTools: ["view"],
+        timeoutMinutes: 10,
+        workingDirectoryMode: "subscriber",
+        sourceDirectory: join(root, "source"),
+        source: {
+          kind: "github",
+          locator,
+          repository: "github/example-jobs",
+          ref: "main",
+          path: ".pinocchio/jobs/interactive-feedback.yml",
+          resolvedCommit: revision,
+          definitionFingerprint: revision.padStart(64, "0"),
+          lastSyncedAt: new Date().toISOString(),
+          checkoutDirectory: join(root, "source", revision),
+        },
+      };
+    };
     const fakeSession = {
       sessionId: "local-session",
       rpc: {
@@ -230,7 +296,7 @@ test("local jobs preview, publish and run through the native task API", async ()
       },
     } as unknown as CopilotSession;
     const store = await JobsStore.open(configRoot);
-    const local = new LocalJobs(store, fakeSession);
+    const local = new LocalJobs(store, fakeSession, resolveSource);
     try {
       local.setActiveOwner(reference, "local-agent", work);
       const preview = await local.preview(reference, {
@@ -258,6 +324,44 @@ test("local jobs preview, publish and run through the native task API", async ()
       if (latest.status !== "ready") throw new Error("LOCAL_RESULT_MISSING");
       assert.equal(latest.outcome, "succeeded");
       assert.equal(latest.result, "Completed local work.");
+
+      const manualPreview = await local.preview(reference, {
+        definition:
+          "github://github/example-jobs/.pinocchio/jobs/interactive-feedback.yml?ref=main",
+        workingDirectory: work,
+      });
+      assert.equal(manualPreview.exactJob.schedule, undefined);
+      assert.equal(manualPreview.exactJob.nextDueAt, undefined);
+      const manualPublished = await local.publish(
+        reference,
+        manualPreview.draftId,
+        manualPreview.approvalToken,
+      );
+      assert.equal(manualPublished.status, "published");
+      const manualInspection = local.inspect(reference, "interactive-feedback");
+      assert.equal(manualInspection.schedule, null);
+      assert.equal(manualInspection.nextDueAt, undefined);
+      assert.equal(
+        store.dueJobs(reference.bindingId, "9999-12-31T23:59:59.999Z").length,
+        0,
+      );
+
+      sourceShouldFail = true;
+      await assert.rejects(
+        local.run(reference, "interactive-feedback"),
+        /JOB_SOURCE_SYNC_FAILED/,
+      );
+      assert.equal(local.history(reference, "interactive-feedback").length, 0);
+
+      sourceShouldFail = false;
+      taskStatus = "running";
+      const manualStarted = await local.run(reference, "interactive-feedback");
+      assert.equal(manualStarted?.status, "running");
+      assert.equal(manualStarted?.sourceCommit, sourceCalls.toString(16).padStart(40, "0"));
+      assert.equal(
+        manualStarted?.definitionFingerprint,
+        sourceCalls.toString(16).padStart(64, "0"),
+      );
     } finally {
       await local.close();
       store.close();
