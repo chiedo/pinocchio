@@ -116,12 +116,15 @@ function profile(text: string) {
     throw new ToolError("EXPLICIT_TOOL_LIST_REQUIRED");
   }
   const names = tools.toJSON() as unknown;
-  if (!Array.isArray(names) || names.some((name: unknown) => typeof name !== "string" || name.includes("*"))) {
+  if (!Array.isArray(names) || names.some((name: unknown) =>
+    typeof name !== "string" ||
+    (name.includes("*") && name !== "*" && !/^[^*/]+\/\*$/.test(name)))) {
     throw new ToolError("EXPLICIT_TOOL_LIST_REQUIRED");
   }
   return {
     doc,
     tools,
+    allTools: names.includes("*"),
     frontmatter: match[2] ?? "",
     body: text.slice(match[0].length),
     newline: match[1]?.includes("\r") ? "\r\n" : "\n",
@@ -216,7 +219,7 @@ export async function enroll(reference: BindingReference, explicitShared = false
   const path = binding.definition.path;
   const original = await readFile(path, "utf8");
   if (original.includes("<!-- pinocchio-memory:")) throw new ToolError("ALREADY_ENROLLED");
-  const { doc, tools, body, newline } = profile(original);
+  const { doc, tools, allTools, body, newline } = profile(original);
   const launch = await verifyMemoryTools(reference);
   const existing = doc.get("mcp-servers", true);
   if (existing !== undefined && !isMap(existing)) throw new ToolError("INVALID_PROFILE_SERVERS");
@@ -224,7 +227,9 @@ export async function enroll(reference: BindingReference, explicitShared = false
   if (tools.items.some((item) => String(item).startsWith("pinocchio_"))) throw new ToolError("PROFILE_SERVER_CONFLICT");
   const extension = await prepareContextExtension(reference.configRoot);
   const sharedInstructions = await prepareSharedInstructions(reference.configRoot);
-  for (const tool of MANAGED_AGENT_TOOLS) tools.add(tool);
+  if (!allTools) {
+    for (const tool of MANAGED_AGENT_TOOLS) tools.add(tool);
+  }
   const block = instructions(launch.serverName, binding, reference.configRoot).replaceAll("\n", newline);
   const next = `---${newline}${String(doc).trimEnd().replaceAll("\n", newline)}${newline}---${newline}${body}${newline}${block}${newline}`;
   await loadBinding(reference);
@@ -239,6 +244,7 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
   const {
     doc,
     tools,
+    allTools,
     frontmatter,
     body,
     newline,
@@ -255,22 +261,28 @@ export async function refreshEnrollment(reference: BindingReference, explicitSha
     const servers = doc.get("mcp-servers", true);
     if (isMap(servers) && servers.items.length === 0) doc.delete("mcp-servers");
   }
-  const obsoleteTools = [
+  const obsoleteTools: readonly string[] = [
     SEARCH_TOOL, SAVE_TOOL,
     `${launch.serverName}-${SEARCH_TOOL}`, `${launch.serverName}-${SAVE_TOOL}`,
   ];
-  const hadLegacyTool = tools.items.some((item) => obsoleteTools.includes(String(item)));
+  const removableTools = allTools
+    ? [...obsoleteTools, ...MANAGED_AGENT_TOOLS]
+    : obsoleteTools;
+  const removedManagedTool = tools.items.some((item) =>
+    removableTools.includes(String(item)));
   for (let index = tools.items.length - 1; index >= 0; index--) {
-    if (obsoleteTools.includes(String(tools.items[index]))) tools.delete(index);
+    if (removableTools.includes(String(tools.items[index]))) tools.delete(index);
   }
   let addedExtensionTool = false;
-  for (const tool of MANAGED_AGENT_TOOLS) {
-    if (!tools.items.some((item) => String(item) === tool)) {
-      tools.add(tool);
-      addedExtensionTool = true;
+  if (!allTools) {
+    for (const tool of MANAGED_AGENT_TOOLS) {
+      if (!tools.items.some((item) => String(item) === tool)) {
+        tools.add(tool);
+        addedExtensionTool = true;
+      }
     }
   }
-  const frontmatterChanged = configured !== undefined || hadLegacyTool ||
+  const frontmatterChanged = configured !== undefined || removedManagedTool ||
     addedExtensionTool;
   const updated = block !== currentBlock || frontmatterChanged;
   if (updated) {

@@ -35,7 +35,8 @@ export async function main(args: string[], beforeEnroll?: (reference: BindingRef
       throw new ToolError("INVALID_ARGUMENTS");
     }
     const tools = (values.tools ?? "view").split(",");
-    if (!tools.length || tools.some((tool) => !/^[a-z][a-z0-9_]*$/.test(tool)) ||
+    if (!tools.length || tools.some((tool) =>
+      tool !== "*" && !/^[a-z][a-z0-9_-]*(?:\/\*)?$/.test(tool)) ||
         new Set(tools).size !== tools.length) throw new ToolError("EXPLICIT_TOOL_LIST_REQUIRED");
     const handle = await open(values.definition, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try {

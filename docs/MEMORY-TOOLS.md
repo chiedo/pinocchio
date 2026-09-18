@@ -135,10 +135,13 @@ checkout breaks its absolute runtime reference. Keep runtime, profiles and
 private memory outside public commits. Existing nonmatching context-extension
 files are not overwritten.
 
-Existing profiles must have an explicit, non-wildcard YAML `tools` list.
-Implicit/all-tools profiles are refused rather than silently broadening access
-or replacing their existing tool access. Narrow such profiles deliberately
-before enrollment. Project/shared and plugin definitions additionally require
+Existing profiles must have a YAML `tools` list. Pinocchio preserves Copilot's
+global `*` and server-scoped wildcard entries such as `computer-use/*`. A global
+wildcard already includes Pinocchio's extension tools, so enrollment does not
+add redundant entries; narrower lists receive explicit managed tool entries.
+Profiles without a tools list or with malformed wildcard patterns are refused
+rather than silently replacing their access. Project/shared and plugin
+definitions additionally require
 `--allow-shared`; no shared profile is silently enrolled. Native model and
 reasoning settings, unrelated frontmatter, comments and body instructions are
 preserved; YAML formatting may be normalized.
