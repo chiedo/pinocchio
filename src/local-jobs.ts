@@ -4,21 +4,35 @@ import type { CopilotSession } from "@github/copilot-sdk";
 import { z } from "zod";
 import { canonicalRepository, loadBinding } from "./binding-registry.js";
 import type { BindingReference } from "./binding-registry.js";
+import {
+  githubJobSourceSchema,
+  resolveGitHubJobSource,
+  sourcePolicyAllows,
+} from "./local-job-sources.js";
+import type {
+  GitHubJobSource,
+} from "./local-job-sources.js";
 import { JobsStore } from "./jobs-store.js";
 import type { StoredJob, StoredRun } from "./jobs-store.js";
 
 const activeRunStatuses = new Set(["claimed", "running", "cancelling"]);
 
 const localPreviewSchema = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/),
-  prompt: z.string().trim().min(1).max(32 * 1024),
-  cron: z.string().trim().min(1).max(200),
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/).optional(),
+  prompt: z.string().trim().min(1).max(32 * 1024).optional(),
+  definition: z.string().min(1).max(1_000).optional(),
+  cron: z.string().trim().min(1).max(200).optional(),
   timezone: z.string().trim().min(1).max(100).default("UTC"),
-  workingDirectory: z.string().min(1),
+  workingDirectory: z.string().min(1).optional(),
   requiredTools: z.array(z.string().min(1).max(200)).max(50).default([]),
   timeoutMinutes: z.number().int().min(1).max(360).default(30),
   maxAiCredits: z.number().int().positive().max(100).optional(),
-}).strict();
+}).strict().refine((input) =>
+  input.definition
+    ? input.prompt === undefined && input.cron === undefined
+    : input.id !== undefined && input.prompt !== undefined &&
+      input.cron !== undefined && input.workingDirectory !== undefined,
+);
 
 export type LocalPreviewInput = z.infer<typeof localPreviewSchema>;
 
@@ -153,6 +167,7 @@ function publicJob(job: StoredJob, history: StoredRun[] = []) {
     requiredTools: job.requiredTools,
     timeoutMinutes: job.timeoutMinutes,
     maxAiCredits: job.maxAiCredits,
+    source: job.source,
     revision: job.revision,
     lastAttempt: history[0],
     lastSuccess: history.find((run) => run.status === "succeeded"),
@@ -165,6 +180,7 @@ export class LocalJobs {
   private workingDirectory = "";
   private timer: NodeJS.Timeout | undefined;
   private ticking = false;
+  private forceSourceSync = false;
   private readonly timeouts = new Map<string, NodeJS.Timeout>();
 
   constructor(
@@ -184,7 +200,10 @@ export class LocalJobs {
     this.ownerReference = reference;
     this.ownerAgent = agent;
     this.workingDirectory = workingDirectory;
-    if (changed) void this.cancelHostedRuns("OWNER_SESSION_CHANGED");
+    if (changed) {
+      this.forceSourceSync = true;
+      void this.cancelHostedRuns("OWNER_SESSION_CHANGED");
+    }
     if (!this.timer && this.session) {
       this.timer = setInterval(() => { void this.tick(); }, 30_000);
       this.timer.unref();
@@ -195,7 +214,21 @@ export class LocalJobs {
   async preview(reference: BindingReference, raw: unknown) {
     const input = localPreviewSchema.parse(raw);
     const binding = await loadBinding(reference);
-    const workingDirectory = await realpath(input.workingDirectory);
+    const owner = await this.store.owner(reference);
+    const resolved = input.definition
+      ? await resolveGitHubJobSource(input.definition, owner.agent)
+      : undefined;
+    if (resolved && input.id && input.id !== resolved.id) {
+      throw Object.assign(new Error("JOB_SOURCE_ID_MISMATCH"), {
+        code: "JOB_SOURCE_ID_MISMATCH",
+      });
+    }
+    if (resolved?.workingDirectoryMode !== "source" && !input.workingDirectory) {
+      throw Object.assign(new Error("INVALID_ARGUMENTS"), { code: "INVALID_ARGUMENTS" });
+    }
+    const workingDirectory = resolved?.workingDirectoryMode === "source"
+      ? resolved.sourceDirectory
+      : await realpath(input.workingDirectory!);
     if (binding.scope.kind === "repository" &&
         await canonicalRepository(workingDirectory) !== binding.scope.root) {
       throw Object.assign(new Error("JOB_SCOPE_MISMATCH"), {
@@ -203,26 +236,38 @@ export class LocalJobs {
       });
     }
     const nextDueAt = nextCronOccurrence(
-      input.cron,
-      input.timezone,
+      resolved?.cron ?? input.cron!,
+      resolved?.timezone ?? input.timezone,
     ).toISOString();
-    const owner = await this.store.owner(reference);
+    const source = resolved ? {
+      ...resolved.source,
+      workingDirectoryMode: resolved.workingDirectoryMode,
+      allowedTools: resolved.requiredTools,
+      maximumTimeoutMinutes: resolved.timeoutMinutes,
+      ...(resolved.maxAiCredits === undefined
+        ? {}
+        : { maximumAiCredits: resolved.maxAiCredits }),
+    } satisfies GitHubJobSource : undefined;
     const exactJob = {
       version: 1,
       backend: "local" as const,
       owner,
-      id: input.id,
-      prompt: input.prompt,
-      schedule: { cron: input.cron, timezone: input.timezone },
+      id: resolved?.id ?? input.id!,
+      prompt: resolved?.prompt ?? input.prompt!,
+      schedule: {
+        cron: resolved?.cron ?? input.cron!,
+        timezone: resolved?.timezone ?? input.timezone,
+      },
       execution: {
         mode: "active-session" as const,
         workingDirectory,
-        requiredTools: input.requiredTools,
-        timeoutMinutes: input.timeoutMinutes,
-        ...(input.maxAiCredits === undefined
+        requiredTools: resolved?.requiredTools ?? input.requiredTools,
+        timeoutMinutes: resolved?.timeoutMinutes ?? input.timeoutMinutes,
+        ...((resolved?.maxAiCredits ?? input.maxAiCredits) === undefined
           ? {}
-          : { maxAiCredits: input.maxAiCredits }),
+          : { maxAiCredits: resolved?.maxAiCredits ?? input.maxAiCredits }),
       },
+      ...(source ? { source } : {}),
       nextDueAt,
     };
     const draft = this.store.saveDraft(reference, exactJob);
@@ -230,7 +275,7 @@ export class LocalJobs {
       status: "approval-required" as const,
       ...draft,
       exactJob,
-      warnings: input.maxAiCredits === undefined ? [] : [
+      warnings: (resolved?.maxAiCredits ?? input.maxAiCredits) === undefined ? [] : [
         "The AI-credit limit is enforced by the owning session's shared task limits; it is not a separate local-job budget.",
       ],
       blockers: [],
@@ -261,6 +306,7 @@ export class LocalJobs {
         timeoutMinutes: z.number(),
         maxAiCredits: z.number().optional(),
       }),
+      source: githubJobSourceSchema.optional(),
       nextDueAt: z.string(),
     }).parse(this.store.consumeDraft(reference, draftId, approvalToken));
     if (exact.owner.fingerprint !== reference.fingerprint) {
@@ -292,6 +338,7 @@ export class LocalJobs {
       ...(exact.execution.maxAiCredits === undefined
         ? {}
         : { maxAiCredits: exact.execution.maxAiCredits }),
+      ...(exact.source ? { source: exact.source } : {}),
       state: "enabled",
       approvalFingerprint: hash(exact),
       nextDueAt: exact.nextDueAt,
@@ -333,8 +380,9 @@ export class LocalJobs {
   }
 
   async run(reference: BindingReference, id: string) {
-    const job = this.store.getJob(reference.bindingId, "local", id);
+    let job = this.store.getJob(reference.bindingId, "local", id);
     if (!job) throw Object.assign(new Error("JOB_NOT_FOUND"), { code: "JOB_NOT_FOUND" });
+    job = await this.refreshSource(job);
     if (job.state !== "enabled") {
       throw Object.assign(new Error("JOB_PAUSED"), { code: "JOB_PAUSED" });
     }
@@ -342,7 +390,8 @@ export class LocalJobs {
       this.ownerReference.fingerprint === reference.fingerprint &&
       job.ownerFingerprint === reference.fingerprint &&
       this.ownerAgent === job.ownerAgent &&
-      this.workingDirectory === job.workingDirectory;
+      (this.workingDirectory === job.workingDirectory ||
+        job.source?.workingDirectoryMode === "source");
     if (!this.session || !active) {
       throw Object.assign(new Error("LOCAL_OWNER_SESSION_UNAVAILABLE"), {
         code: "LOCAL_OWNER_SESSION_UNAVAILABLE",
@@ -367,10 +416,19 @@ export class LocalJobs {
   async change(
     reference: BindingReference,
     id: string,
-    operation: "pause" | "resume" | "delete",
+    operation: "sync" | "pause" | "resume" | "delete",
   ) {
     const job = this.store.getJob(reference.bindingId, "local", id);
     if (!job) throw Object.assign(new Error("JOB_NOT_FOUND"), { code: "JOB_NOT_FOUND" });
+    if (operation === "sync") {
+      if (!job.source) {
+        throw Object.assign(new Error("JOB_SOURCE_NOT_CONFIGURED"), {
+          code: "JOB_SOURCE_NOT_CONFIGURED",
+        });
+      }
+      const refreshed = await this.refreshSource(job);
+      return { status: "synced" as const, job: publicJob(refreshed, this.store.history(refreshed.uid)) };
+    }
     if (operation === "delete") {
       const active = this.store.history(job.uid).find((item) =>
         activeRunStatuses.has(item.status));
@@ -470,16 +528,53 @@ export class LocalJobs {
     try {
       await this.reconcile();
       const now = new Date();
+      const sourceFailures = new Map<string, string>();
+      for (const sourceJob of this.store.listJobs(
+        this.ownerReference.bindingId,
+        "local",
+      ).filter((job) => job.state === "enabled" && job.source)) {
+        const syncDue = this.forceSourceSync ||
+          Date.parse(sourceJob.source!.lastSyncedAt) <= now.getTime() - 5 * 60_000 ||
+          (sourceJob.nextDueAt !== undefined &&
+            Date.parse(sourceJob.nextDueAt) <= now.getTime() + 30_000);
+        if (!syncDue) continue;
+        try {
+          await this.refreshSource(sourceJob);
+        } catch (error) {
+          sourceFailures.set(
+            sourceJob.uid,
+            error instanceof Error ? error.message : "JOB_SOURCE_SYNC_FAILED",
+          );
+        }
+      }
+      this.forceSourceSync = false;
       for (const job of this.store.dueJobs(
         this.ownerReference.bindingId,
         now.toISOString(),
       )) {
         if (job.ownerAgent !== this.ownerAgent ||
-            job.workingDirectory !== this.workingDirectory) continue;
+            (job.workingDirectory !== this.workingDirectory &&
+              job.source?.workingDirectoryMode !== "source")) continue;
         this.store.setNextDue(
           job.uid,
           nextCronOccurrence(job.cron, job.timezone, now).toISOString(),
         );
+        const sourceFailure = sourceFailures.get(job.uid);
+        if (sourceFailure) {
+          const blocked = this.store.claimRun(
+            job,
+            `scheduled:${job.nextDueAt ?? now.toISOString()}`,
+            this.session.sessionId,
+          );
+          if (blocked) {
+            this.store.updateRun(blocked.runId, {
+              status: "blocked",
+              completedAt: new Date().toISOString(),
+              errorCode: sourceFailure,
+            });
+          }
+          continue;
+        }
         if (job.ownerFingerprint !== this.ownerReference.fingerprint) {
           const stale = this.store.claimRun(
             job,
@@ -515,6 +610,56 @@ export class LocalJobs {
     }
   }
 
+  private async refreshSource(job: StoredJob) {
+    if (!job.source) return job;
+    try {
+      const resolved = await resolveGitHubJobSource(
+        job.source.locator,
+        job.ownerAgent,
+      );
+      if (resolved.id !== job.slug || !sourcePolicyAllows(job.source, resolved)) {
+        throw Object.assign(new Error("JOB_SOURCE_REAPPROVAL_REQUIRED"), {
+          code: "JOB_SOURCE_REAPPROVAL_REQUIRED",
+        });
+      }
+      const { syncError: _syncError, ...approvedSource } = job.source;
+      const source: GitHubJobSource = {
+        ...approvedSource,
+        ...resolved.source,
+      };
+      if (resolved.source.definitionFingerprint ===
+          job.source.definitionFingerprint) {
+        return this.store.updateSource(job.uid, source) ?? job;
+      }
+      const nextDueAt = job.cron === resolved.cron &&
+          job.timezone === resolved.timezone
+        ? job.nextDueAt
+        : nextCronOccurrence(resolved.cron, resolved.timezone).toISOString();
+      const updated = {
+        ...job,
+        revision: job.revision + 1,
+        prompt: resolved.prompt,
+        cron: resolved.cron,
+        timezone: resolved.timezone,
+        workingDirectory: resolved.workingDirectoryMode === "source"
+          ? resolved.sourceDirectory
+          : job.workingDirectory,
+        requiredTools: resolved.requiredTools,
+        timeoutMinutes: resolved.timeoutMinutes,
+        source,
+        ...(nextDueAt ? { nextDueAt } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      if (resolved.maxAiCredits === undefined) delete updated.maxAiCredits;
+      else updated.maxAiCredits = resolved.maxAiCredits;
+      return this.store.putJob(updated)!;
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "JOB_SOURCE_SYNC_FAILED";
+      this.store.updateSource(job.uid, { ...job.source, syncError: code });
+      throw Object.assign(new Error(code), { code });
+    }
+  }
+
   private async dispatch(job: StoredJob, run: StoredRun) {
     if (!this.session) return run;
     try {
@@ -529,6 +674,7 @@ export class LocalJobs {
           errorCode: `REQUIRED_TOOLS_UNAVAILABLE:${missing.join(",")}`,
         });
       }
+
       const checkpoint = this.store.history(job.uid).find((item) =>
         item.runId !== run.runId && item.status === "succeeded" && item.result);
       const started = await this.session.rpc.tasks.startAgent({
@@ -539,6 +685,12 @@ export class LocalJobs {
           `Run the approved Pinocchio local job ${JSON.stringify(job.slug)}.`,
           `This is job revision ${job.revision}, run ${run.runId}.`,
           `Work only in ${JSON.stringify(job.workingDirectory)}.`,
+          ...(job.source
+            ? [
+                `The approved repository source is ${JSON.stringify(job.source.repository)} at commit ${job.source.resolvedCommit}.`,
+                `Definition and support files are available at ${JSON.stringify(job.source.checkoutDirectory)}. Treat this managed checkout as read-only.`,
+              ]
+            : []),
           "Use your normal scoped memory, instructions, skills, and approved tools.",
           "Do not create or change schedules. Complete the task and return a concise final result.",
           ...(checkpoint?.result

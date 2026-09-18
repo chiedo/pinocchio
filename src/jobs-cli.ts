@@ -16,6 +16,7 @@ export async function main(args: string[]) {
       repository: { type: "string" }, branch: { type: "string" },
       "token-secret": { type: "string" }, agent: { type: "string" },
       id: { type: "string" }, "prompt-file": { type: "string" },
+      definition: { type: "string" },
       cron: { type: "string" }, backend: { type: "string" },
       timezone: { type: "string" }, "working-directory": { type: "string" },
       tool: { type: "string", multiple: true }, "allow-url": { type: "string", multiple: true },
@@ -43,6 +44,7 @@ export async function main(args: string[]) {
   const input: Record<string, unknown> = {
     action: command, backend: values.backend,
     repository: values.repository, id: values.id, cron: values.cron,
+    definition: values.definition,
     timezone: values.timezone,
     workingDirectory: values["working-directory"] ?? process.cwd(),
     draftId: values.draft, approvalToken: values["approval-token"],
@@ -58,8 +60,14 @@ export async function main(args: string[]) {
   };
   if (command === "preview") {
     const { readFile } = await import("node:fs/promises");
-    if (!values["prompt-file"]) throw new CloudJobsError("INVALID_ARGUMENTS");
-    input.prompt = await readFile(values["prompt-file"], "utf8");
+    if (values.definition) {
+      if (values["prompt-file"] || values.cron) {
+        throw new CloudJobsError("INVALID_ARGUMENTS");
+      }
+    } else {
+      if (!values["prompt-file"]) throw new CloudJobsError("INVALID_ARGUMENTS");
+      input.prompt = await readFile(values["prompt-file"], "utf8");
+    }
   }
   void agent;
   const store = await JobsStore.open(configRoot);

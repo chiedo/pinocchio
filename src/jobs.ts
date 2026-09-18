@@ -37,6 +37,7 @@ const jobsInputSchema = z.object({
   confirmed: z.boolean().optional(),
   id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/).optional(),
   prompt: z.string().max(32 * 1024).optional(),
+  definition: z.string().max(1_000).optional(),
   cron: z.string().optional(),
   timezone: z.string().max(100).optional(),
   workingDirectory: z.string().optional(),
@@ -82,11 +83,12 @@ export async function handleJobsTool(
     if (!localJobs) throw new CloudJobsError("LOCAL_OWNER_SESSION_UNAVAILABLE");
     if (input.action === "preview") {
       return localJobs.preview(reference, {
-        id: requireField(input.id),
-        prompt: requireField(input.prompt),
-        cron: requireField(input.cron),
+        id: input.id,
+        prompt: input.prompt,
+        definition: input.definition,
+        cron: input.cron,
         timezone: input.timezone ?? "UTC",
-        workingDirectory: requireField(input.workingDirectory),
+        workingDirectory: input.workingDirectory,
         requiredTools: input.tools ?? [],
         timeoutMinutes: input.timeoutMinutes ?? 30,
         ...(input.maxAiCredits === undefined
@@ -136,7 +138,6 @@ export async function handleJobsTool(
     }
     if (input.action === "change") {
       requireConfirmed(input.confirmed);
-      if (input.operation === "sync") throw new CloudJobsError("INVALID_ARGUMENTS");
       return localJobs.change(
         reference,
         requireField(input.id),
