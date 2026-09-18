@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { loadBinding, privateDirectory } from "./binding-registry.js";
 import type { BindingReference } from "./binding-registry.js";
+import { githubJobSourceSchema } from "./local-job-sources.js";
+import type { GitHubJobSource } from "./local-job-sources.js";
 
 const backendSchema = z.enum(["local", "cloud"]);
 const stateSchema = z.enum(["enabled", "paused", "deleted"]);
@@ -33,6 +35,7 @@ export interface StoredJob {
   requiredTools: string[];
   timeoutMinutes: number;
   maxAiCredits?: number;
+  source?: GitHubJobSource;
   state: "enabled" | "paused" | "deleted";
   approvalFingerprint: string;
   nextDueAt?: string;
@@ -55,6 +58,8 @@ export interface StoredRun {
   result?: string;
   errorCode?: string;
   readAt?: string;
+  sourceCommit?: string;
+  definitionFingerprint?: string;
 }
 
 interface JobRow {
@@ -74,6 +79,7 @@ interface JobRow {
   required_tools: string;
   timeout_minutes: number;
   max_ai_credits: number | null;
+  source_json: string;
   state: string;
   approval_fingerprint: string;
   next_due_at: string | null;
@@ -96,6 +102,8 @@ interface RunRow {
   result: string | null;
   error_code: string | null;
   read_at: string | null;
+  source_commit: string | null;
+  definition_fingerprint: string | null;
 }
 
 function digest(value: string) {
@@ -120,6 +128,9 @@ function jobFromRow(row: JobRow): StoredJob {
     requiredTools: z.array(z.string()).parse(JSON.parse(row.required_tools)),
     timeoutMinutes: row.timeout_minutes,
     ...(row.max_ai_credits === null ? {} : { maxAiCredits: row.max_ai_credits }),
+    ...(row.source_json ? {
+      source: githubJobSourceSchema.parse(JSON.parse(row.source_json)),
+    } : {}),
     state: stateSchema.parse(row.state),
     approvalFingerprint: row.approval_fingerprint,
     ...(row.next_due_at ? { nextDueAt: row.next_due_at } : {}),
@@ -144,6 +155,10 @@ function runFromRow(row: RunRow): StoredRun {
     ...(row.result ? { result: row.result } : {}),
     ...(row.error_code ? { errorCode: row.error_code } : {}),
     ...(row.read_at ? { readAt: row.read_at } : {}),
+    ...(row.source_commit ? { sourceCommit: row.source_commit } : {}),
+    ...(row.definition_fingerprint
+      ? { definitionFingerprint: row.definition_fingerprint }
+      : {}),
   };
 }
 
@@ -183,6 +198,7 @@ export class JobsStore {
         required_tools TEXT NOT NULL,
         timeout_minutes INTEGER NOT NULL,
         max_ai_credits INTEGER,
+        source_json TEXT NOT NULL DEFAULT '',
         state TEXT NOT NULL CHECK (state IN ('enabled','paused','deleted')),
         approval_fingerprint TEXT NOT NULL,
         next_due_at TEXT,
@@ -212,6 +228,8 @@ export class JobsStore {
         result TEXT,
         error_code TEXT,
         read_at TEXT,
+        source_commit TEXT,
+        definition_fingerprint TEXT,
         UNIQUE(job_uid, occurrence_key)
       );
       CREATE INDEX IF NOT EXISTS job_owner_index
@@ -226,6 +244,21 @@ export class JobsStore {
         ON job_runs(job_uid)
         WHERE status IN ('claimed','running','cancelling');
     `);
+    const jobColumns = new Set((database.prepare("PRAGMA table_info(jobs)").all() as {
+      name: string;
+    }[]).map((column) => column.name));
+    if (!jobColumns.has("source_json")) {
+      database.exec("ALTER TABLE jobs ADD COLUMN source_json TEXT NOT NULL DEFAULT ''");
+    }
+    const runColumns = new Set((database.prepare("PRAGMA table_info(job_runs)").all() as {
+      name: string;
+    }[]).map((column) => column.name));
+    if (!runColumns.has("source_commit")) {
+      database.exec("ALTER TABLE job_runs ADD COLUMN source_commit TEXT");
+    }
+    if (!runColumns.has("definition_fingerprint")) {
+      database.exec("ALTER TABLE job_runs ADD COLUMN definition_fingerprint TEXT");
+    }
     return new JobsStore(root, database);
   }
 
@@ -294,9 +327,9 @@ export class JobsStore {
       INSERT INTO jobs(
         uid,owner_binding_id,owner_fingerprint,owner_agent,owner_scope,slug,
         backend,repository,revision,prompt,cron,timezone,working_directory,
-        required_tools,timeout_minutes,max_ai_credits,state,approval_fingerprint,
+        required_tools,timeout_minutes,max_ai_credits,source_json,state,approval_fingerprint,
         next_due_at,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(owner_binding_id,backend,repository,slug) DO UPDATE SET
         owner_fingerprint=excluded.owner_fingerprint,
         owner_agent=excluded.owner_agent,
@@ -309,6 +342,7 @@ export class JobsStore {
         required_tools=excluded.required_tools,
         timeout_minutes=excluded.timeout_minutes,
         max_ai_credits=excluded.max_ai_credits,
+        source_json=excluded.source_json,
         state=excluded.state,
         approval_fingerprint=excluded.approval_fingerprint,
         next_due_at=excluded.next_due_at,
@@ -318,7 +352,8 @@ export class JobsStore {
       job.ownerScope, job.slug, job.backend, job.repository ?? "", job.revision,
       job.prompt, job.cron, job.timezone, job.workingDirectory,
       JSON.stringify(job.requiredTools), job.timeoutMinutes,
-      job.maxAiCredits ?? null, job.state, job.approvalFingerprint,
+      job.maxAiCredits ?? null, job.source ? JSON.stringify(job.source) : "",
+      job.state, job.approvalFingerprint,
       job.nextDueAt ?? null, job.createdAt, job.updatedAt,
     );
     return this.getJob(job.ownerBindingId, job.backend, job.slug, job.repository);
@@ -373,6 +408,13 @@ export class JobsStore {
     ).run(nextDueAt, new Date().toISOString(), uid);
   }
 
+  updateSource(uid: string, source: GitHubJobSource) {
+    this.database.prepare(
+      "UPDATE jobs SET source_json=?,updated_at=? WHERE uid=?",
+    ).run(JSON.stringify(source), new Date().toISOString(), uid);
+    return this.getJobByUid(uid);
+  }
+
   setState(uid: string, state: "enabled" | "paused") {
     this.database.prepare(
       "UPDATE jobs SET state=?,updated_at=? WHERE uid=?",
@@ -396,11 +438,13 @@ export class JobsStore {
       this.database.prepare(`
         INSERT INTO job_runs(
           run_id,job_uid,job_revision,occurrence_key,backend,status,
-          host_session_id,started_at
-        ) VALUES(?,?,?,?,?,'claimed',?,?)
+          host_session_id,started_at,source_commit,definition_fingerprint
+        ) VALUES(?,?,?,?,?,'claimed',?,?,?,?)
       `).run(
         runId, job.uid, job.revision, occurrenceKey, job.backend,
         hostSessionId ?? null, new Date().toISOString(),
+        job.source?.resolvedCommit ?? null,
+        job.source?.definitionFingerprint ?? null,
       );
     } catch (error) {
       if (error instanceof Error &&

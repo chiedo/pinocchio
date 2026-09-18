@@ -61,6 +61,77 @@ Agent-owned local artifacts such as scripts, static files, caches, and job
 support files belong under `~/.pinocchio/<agent-id>/`. Files intended as
 repository deliverables remain in the repository.
 
+## Repository-backed definitions
+
+A local job can subscribe to a definition stored in a GitHub repository instead
+of copying its prompt and schedule into the local database:
+
+```bash
+npm run jobs -- preview \
+  --backend local \
+  --agent example-agent \
+  --definition "github://github/example-jobs/.pinocchio/jobs/feedback-summary.yml?ref=main" \
+  --working-directory /absolute/path/to/local/workspace
+```
+
+The locator format is
+`github://OWNER/REPOSITORY/PATH?ref=BRANCH_TAG_OR_COMMIT`.
+Pinocchio clones the repository into the owning agent's managed directory under
+`~/.pinocchio/<agent-id>/jobs/sources/`, fetches the selected ref, and resolves
+the definition from an exact detached commit. Private repositories use the
+machine's existing Git credentials.
+
+Definitions use this format:
+
+```yaml
+version: 1
+id: feedback-summary
+
+schedule:
+  cron: "0 10 * * 1-5"
+  timezone: America/New_York
+
+execution:
+  working-directory: subscriber
+  required-tools:
+    - slack-slack_search_public
+  timeout-minutes: 30
+
+prompt-file: ./prompts/feedback-summary.md
+```
+
+Exactly one of `prompt` or `prompt-file` is required. A prompt file is resolved
+relative to the definition. `working-directory: subscriber` uses the local
+directory approved during preview; `working-directory: source` runs against the
+managed checkout and does not require `--working-directory`. Source mode
+requires a globally scoped agent because repository-scoped agents remain bound
+to their approved local checkout.
+
+The initial publication approves the repository, ref, path, working-directory
+mode, required tools, and runtime limits. Later commits may automatically change
+the prompt, schedule, or reduce capabilities. A change that adds tools, changes
+the working-directory mode, removes an approved AI-credit limit, or increases a
+runtime limit is blocked with `JOB_SOURCE_REAPPROVAL_REQUIRED`.
+
+Sources synchronize when the owning session starts, at least every five minutes
+while active, immediately before a due run, before a manual run, or explicitly:
+
+```bash
+npm run jobs -- change \
+  --backend local \
+  --agent example-agent \
+  --id feedback-summary \
+  --operation sync \
+  --confirm
+```
+
+Runs fail closed when the source cannot synchronize or validate. Each run
+records the exact source commit and definition fingerprint, so installations can
+confirm that they executed the same revision. The run receives the managed
+checkout path for repository support files and is instructed to treat it as
+read-only. Pinocchio materializes immutable Git worktrees by commit so a source
+refresh cannot change files underneath an active run.
+
 ## Inspect and manage
 
 All administrative commands name the enrolled agent because local definitions

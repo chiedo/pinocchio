@@ -6,6 +6,14 @@ import test from "node:test";
 import type { CopilotSession } from "@github/copilot-sdk";
 import { registerBinding } from "../src/binding-registry.js";
 import { JOBS_TOOL, jobsToolInputSchema } from "../src/jobs.js";
+import {
+  parseGitHubJobLocator,
+  sourcePolicyAllows,
+} from "../src/local-job-sources.js";
+import type {
+  GitHubJobSource,
+  ResolvedRepositoryJob,
+} from "../src/local-job-sources.js";
 import { LocalJobs, nextCronOccurrence } from "../src/local-jobs.js";
 import { JobsStore } from "../src/jobs-store.js";
 
@@ -39,6 +47,133 @@ test("unified jobs input exposes local and cloud jobs", () => {
     ).toISOString(),
     "2026-09-16T14:00:00.000Z",
   );
+  const sourced = jobsToolInputSchema.parse({
+    action: "preview",
+    backend: "local",
+    definition: "github://github/example-jobs/.pinocchio/jobs/feedback.yml?ref=main",
+    workingDirectory: "/tmp",
+  });
+  assert.equal(sourced.definition?.includes("github/example-jobs"), true);
+});
+
+test("repository-backed local job locators and policies are constrained", () => {
+  assert.deepEqual(
+    parseGitHubJobLocator(
+      "github://github/example-jobs/.pinocchio/jobs/feedback.yml?ref=main",
+    ),
+    {
+      locator: "github://github/example-jobs/.pinocchio/jobs/feedback.yml?ref=main",
+      repository: "github/example-jobs",
+      ref: "main",
+      path: ".pinocchio/jobs/feedback.yml",
+    },
+  );
+  assert.throws(() =>
+    parseGitHubJobLocator(
+      "github://github/example-jobs/../private.yml?ref=main",
+    ));
+  const source: GitHubJobSource = {
+    kind: "github",
+    locator: "github://github/example-jobs/job.yml?ref=main",
+    repository: "github/example-jobs",
+    ref: "main",
+    path: "job.yml",
+    resolvedCommit: "a".repeat(40),
+    definitionFingerprint: "b".repeat(64),
+    lastSyncedAt: "2026-09-18T12:00:00.000Z",
+    checkoutDirectory: "/tmp/source",
+    workingDirectoryMode: "subscriber",
+    allowedTools: ["view"],
+    maximumTimeoutMinutes: 30,
+    maximumAiCredits: 50,
+  };
+  const resolved: ResolvedRepositoryJob = {
+    id: "feedback",
+    prompt: "Summarize feedback.",
+    cron: "0 10 * * 1-5",
+    timezone: "UTC",
+    requiredTools: ["view"],
+    timeoutMinutes: 20,
+    maxAiCredits: 40,
+    workingDirectoryMode: "subscriber",
+    sourceDirectory: "/tmp/source",
+    source: {
+      kind: "github",
+      locator: source.locator,
+      repository: source.repository,
+      ref: source.ref,
+      path: source.path,
+      resolvedCommit: source.resolvedCommit,
+      definitionFingerprint: source.definitionFingerprint,
+      lastSyncedAt: source.lastSyncedAt,
+      checkoutDirectory: source.checkoutDirectory,
+    },
+  };
+  assert.equal(sourcePolicyAllows(source, resolved), true);
+  assert.equal(sourcePolicyAllows(source, {
+    ...resolved,
+    requiredTools: ["view", "slack-slack_search_public"],
+  }), false);
+  const { maxAiCredits: _maxAiCredits, ...withoutAiLimit } = resolved;
+  assert.equal(sourcePolicyAllows(source, {
+    ...withoutAiLimit,
+  }), false);
+});
+
+test("job storage records repository source revisions on runs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pinocchio-source-store-"));
+  try {
+    const store = await JobsStore.open(join(root, ".copilot"));
+    try {
+      const source: GitHubJobSource = {
+        kind: "github",
+        locator: "github://github/example-jobs/job.yml?ref=main",
+        repository: "github/example-jobs",
+        ref: "main",
+        path: "job.yml",
+        resolvedCommit: "a".repeat(40),
+        definitionFingerprint: "b".repeat(64),
+        lastSyncedAt: "2026-09-18T12:00:00.000Z",
+        checkoutDirectory: "/tmp/source",
+        workingDirectoryMode: "subscriber",
+        allowedTools: ["view"],
+        maximumTimeoutMinutes: 30,
+      };
+      const job = store.putJob({
+        uid: "source-job",
+        ownerBindingId: "owner",
+        ownerFingerprint: "fingerprint",
+        ownerAgent: "agent",
+        ownerScope: "global",
+        slug: "source-job",
+        backend: "local",
+        revision: 1,
+        prompt: "Run the job.",
+        cron: "0 10 * * 1-5",
+        timezone: "UTC",
+        workingDirectory: "/tmp",
+        requiredTools: ["view"],
+        timeoutMinutes: 30,
+        source,
+        state: "enabled",
+        approvalFingerprint: "approval",
+        nextDueAt: "2026-09-18T14:00:00.000Z",
+        createdAt: "2026-09-18T12:00:00.000Z",
+        updatedAt: "2026-09-18T12:00:00.000Z",
+      });
+      assert.equal(job?.source?.resolvedCommit, source.resolvedCommit);
+      const run = store.claimRun(job!, "manual:source", "session");
+      assert.equal(run?.sourceCommit, source.resolvedCommit);
+      assert.equal(
+        run?.definitionFingerprint,
+        source.definitionFingerprint,
+      );
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(root, { recursive: true });
+  }
 });
 
 test("local jobs preview, publish and run through the native task API", async () => {
