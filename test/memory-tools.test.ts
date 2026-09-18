@@ -5,7 +5,7 @@ import test from "node:test";
 import type { TestContext } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { loadBinding } from "../src/binding-registry.js";
 import { ContextLedger } from "../src/context-ledger.js";
@@ -181,10 +181,56 @@ test("enrollment preserves defaults and unrelated edits; removal only removes ma
   assert.doesNotMatch(removed, /pinocchio-memory:v1|agent_memory_search|pinocchio_jobs|Your Pinocchio agent/);
   assert.equal((await f.store.list()).items.length, 4);
 });
-test("enrollment refuses implicit broad access and unapproved shared profiles", async (t) => {
+test("enrollment accepts Copilot wildcard tools and refuses missing tools", async (t) => {
   const f = await fixture(t);
   await assert.rejects(enroll(f.ref), { code: "EXPLICIT_TOOL_LIST_REQUIRED" });
+  const path = join(f.definitions.alpha.root, "shared.agent.md");
+  await writeFile(path, "---\nname: shared\ndescription: Synthetic\ntools: ['*']\n---\nKeep this role.\n");
+  assert.equal((await enroll(f.ref)).status, "enrolled");
+  let contents = await readFile(path, "utf8");
+  let frontmatter = parse(/^---\n([\s\S]*?)\n---/.exec(contents)![1]!) as {
+    tools: string[];
+  };
+  assert.deepEqual(frontmatter.tools, ["*"]);
+  await removeEnrollment(f.ref);
+  contents = await readFile(path, "utf8");
+  frontmatter = parse(/^---\n([\s\S]*?)\n---/.exec(contents)![1]!) as {
+    tools: string[];
+  };
+  assert.deepEqual(frontmatter.tools, ["*"]);
   await assert.rejects(enroll(await f.bind("beta")), { code: "EXPLICIT_SHARED_ENROLLMENT_REQUIRED" });
+});
+test("enrollment preserves server wildcards while managing Pinocchio tools", async (t) => {
+  const f = await fixture(t);
+  const path = join(f.definitions.alpha.root, "shared.agent.md");
+  await writeFile(path,
+    "---\nname: shared\ndescription: Synthetic\ntools: [view, 'computer-use/*']\n---\nKeep this role.\n");
+  await enroll(f.ref);
+  assert.equal((await refreshEnrollment(f.ref)).status, "refreshed");
+  let contents = await readFile(path, "utf8");
+  assert.match(contents, /computer-use\/\*/);
+  assert.match(contents, /pinocchio_jobs/);
+  await removeEnrollment(f.ref);
+  contents = await readFile(path, "utf8");
+  assert.match(contents, /computer-use\/\*/);
+  assert.doesNotMatch(contents, /pinocchio_jobs/);
+});
+test("refresh removes redundant managed entries when a profile switches to all tools", async (t) => {
+  const f = await fixture(t);
+  const path = join(f.definitions.alpha.root, "shared.agent.md");
+  await writeFile(path,
+    "---\nname: shared\ndescription: Synthetic\ntools: [view]\n---\nKeep this role.\n");
+  await enroll(f.ref);
+  const enrolled = await readFile(path, "utf8");
+  await writeFile(path, enrolled.replace("tools:", "tools:\n  - '*'"));
+  const refreshed = await refreshEnrollment(f.ref);
+  assert.equal(refreshed.updated, true);
+  const contents = await readFile(path, "utf8");
+  const frontmatter = parse(/^---\n([\s\S]*?)\n---/.exec(contents)![1]!) as {
+    tools: string[];
+  };
+  assert.deepEqual(frontmatter.tools, ["*", "view"]);
+  assert.doesNotMatch(contents.split("---", 3)[1] ?? "", /pinocchio_jobs/);
 });
 test("legacy enrollment can still be removed without a refresh", async (t) => {
   const f = await fixture(t);
@@ -267,6 +313,22 @@ test("new-profile helper enrolls memory without overriding native defaults", asy
   assert.doesNotMatch(content, /^model:|^reasoning-effort:/m);
   await assert.rejects(enrollmentMain(["remove", "--config-root", f.config,
     "--binding", f.ref.bindingId, "--fingerprint", f.ref.fingerprint, "--global"]), { code: "INVALID_ARGUMENTS" });
+});
+test("new-profile helper accepts global and server tool wildcards", async (t) => {
+  const f = await fixture(t);
+  const cases: Array<{ name: string; tools: string }> = [
+    { name: "all-tools", tools: "*" },
+    { name: "computer-tools", tools: "view,computer-use/*" },
+  ];
+  for (const { name, tools } of cases) {
+    const path = join(f.definitions.alpha.root, `${name}.agent.md`);
+    const result = await enrollmentMain(["create", "--config-root", f.config,
+      "--definition", path, "--origin-root", f.definitions.alpha.root, "--name", name,
+      "--repository", f.repository, "--tools", tools]);
+    assert.equal(result.status, "enrolled");
+    const content = await readFile(path, "utf8");
+    assert.match(content, new RegExp(tools.includes("*") ? "\\*" : "view"));
+  }
 });
 test("bounded worker queue, cancellation and deadlines fail explicitly", async () => {
   const worker = new MemoryWorker();
