@@ -534,7 +534,7 @@ const cloudResultTimer = setInterval(() => {
 }, 5 * 60 * 1000);
 cloudResultTimer.unref();
 for (const name of ["subagent.selected", "subagent.deselected"] as const) {
-  session.on(name, () => { generation++; previousUser = ""; previousOwner = ""; });
+  session.on(name, () => { generation++; previousUser = ""; previousOwner = ""; context.resetRecall(); });
 }
 for (const role of ["user", "assistant"] as const) {
   session.on(role === "user" ? "user.message" : "assistant.message", (event) => {

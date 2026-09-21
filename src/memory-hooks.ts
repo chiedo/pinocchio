@@ -1,13 +1,15 @@
 import type { SessionHooks } from "@github/copilot-sdk";
 import { MemoryWorker } from "./memory-worker-client.js";
 import { CONTEXT_META, EXTENSION_MEMORY_SERVER, MEMORY_DEADLINE_MS, SAVE_TOOL, SEARCH_TOOL, ToolError } from "./memory-protocol.js";
-import { recallConversation } from "./conversation-memory.js";
+import { conversationEnabled, recallConversation, redactConversation } from "./conversation-memory.js";
 import type { ConversationOwner } from "./conversation-memory.js";
+import { isRecallFollowup } from "./automatic-recall.js";
 
 export function createMemoryHooks(configRoot: string, onPrompt?: (input: {
   prompt: string; sessionId: string; workingDirectory: string;
 }) => Promise<string | undefined>) {
   const worker = new MemoryWorker();
+  let previousRecall: { key: string; prompts: string[] } | undefined;
   const hooks: SessionHooks = {
     async onUserPromptSubmitted(input, invocation) {
       try {
@@ -48,8 +50,15 @@ export function createMemoryHooks(configRoot: string, onPrompt?: (input: {
   return {
     hooks,
     health: () => worker.call({ action: "health", configRoot }),
-    recall: (owner: ConversationOwner, input: { sessionId: string; directory: string; prompt: string }) =>
-      recallConversation(worker, owner, input),
+    resetRecall: () => { previousRecall = undefined; },
+    recall: async (owner: ConversationOwner, input: { sessionId: string; directory: string; prompt: string }) => {
+      if (!await conversationEnabled(owner.reference)) { previousRecall = undefined; return ""; }
+      const key = JSON.stringify([input.sessionId, owner.reference.bindingId, input.directory]);
+      const previousPrompts = previousRecall?.key === key ? previousRecall.prompts : [];
+      const prompt = redactConversation(input.prompt).slice(0, 800);
+      previousRecall = { key, prompts: [...(isRecallFollowup(prompt) ? previousPrompts : []), prompt].slice(-2) };
+      return recallConversation(worker, owner, { ...input, previousPrompts });
+    },
     call: async (owner: ConversationOwner, input: {
       sessionId: string; directory: string; toolCallId: string;
       tool: typeof SEARCH_TOOL | typeof SAVE_TOOL; arguments: unknown; signal?: AbortSignal;

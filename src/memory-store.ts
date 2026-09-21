@@ -15,6 +15,7 @@ import { fuseRanks } from "./hybrid-ranking.js";
 import { MAX_INDEX_RECORDS, MODEL_ID, SemanticError } from "./semantic-types.js";
 import type { IndexSnapshot, IndexRecord, SemanticCandidate } from "./semantic-types.js";
 import type { ConversationWindow } from "./memory-query.js";
+import { automaticRecallTerms, rankAutomaticRecall } from "./automatic-recall.js";
 
 const stateSchema = z.object({
   id: z.string(), scope: z.string(), revision: z.number().int(),
@@ -280,7 +281,7 @@ export class MemoryStore {
     consume: (result: MemorySearchResult) => T | Promise<T>, candidates?: SemanticCandidate[], conversation = false,
     conversationSession?: string, relaxed = false) {
     validate(z.string().min(1).max(500).refine((value) => Boolean(value.trim())), query);
-    const terms = relaxed ? searchKeywords(query) : keywords(query);
+    const terms = conversation ? automaticRecallTerms(query) : relaxed ? searchKeywords(query) : keywords(query);
     if (terms.length > 64) throw new MemoryError("INVALID_INPUT");
     const { limit, offset } = validate(paginationSchema, pagination);
     const literal = normalizeText(query);
@@ -288,14 +289,26 @@ export class MemoryStore {
       ? `OR r.id IN (SELECT record_id FROM keyword_terms WHERE term IN (${terms.map(() => "?").join(",")})
         GROUP BY record_id HAVING count(*)>=?)` : "";
     return this.#transaction(() => {
-      let rows = this.#db.prepare(`${SELECT_CURRENT}
+      if (conversation && !terms.length) return consume({ status: "no_match", items: [] });
+      const exclude = conversation && conversationSession ? `AND NOT EXISTS (
+        SELECT 1 FROM json_each(v.evidence_json) AS e
+        WHERE instr(json_extract(e.value,'$.reference.value'),?)=1)` : "";
+      const excludedSession = exclude ? [`pinocchio-conversation:v1:${conversationSession}:`] : [];
+      let rows = conversation ? this.#db.prepare(`${SELECT_CURRENT}
+        JOIN (SELECT record_id,count(*) AS hits FROM keyword_terms
+          WHERE term IN (${terms.map(() => "?").join(",")}) GROUP BY record_id HAVING count(*)>=?) AS matches
+          ON matches.record_id=r.id
+        WHERE r.scope=? AND r.status IN ('active','tentative') ${exclude}
+        ORDER BY matches.hits DESC, r.updated_at DESC, r.id LIMIT 100`)
+        .all(...terms, Math.min(2, terms.length), this.#scope, ...excludedSession).map(view)
+        : this.#db.prepare(`${SELECT_CURRENT}
         JOIN keyword_entries k ON k.record_id=r.id AND k.revision=r.revision
         WHERE r.scope=? AND r.status IN ('active','tentative')
         AND (instr(k.literal_text,?)>0 ${keywordMatch})
         ORDER BY (instr(k.literal_text,?)>0) DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)
-        .all(this.#scope, literal, ...(terms.length ? [...terms, conversation ? 1 : terms.length] : []), literal,
+        .all(this.#scope, literal, ...(terms.length ? [...terms, terms.length] : []), literal,
           candidates ? 100 : limit, candidates ? 0 : offset).map(view);
-      if (relaxed && !rows.length && terms.length) {
+      if (!conversation && relaxed && !rows.length && terms.length) {
         rows = this.#db.prepare(`${SELECT_CURRENT}
           JOIN (SELECT record_id,count(*) AS hits FROM keyword_terms
             WHERE term IN (${terms.map(() => "?").join(",")}) GROUP BY record_id HAVING count(*)>=2) AS matches
@@ -309,27 +322,15 @@ export class MemoryStore {
         if (candidates.length > 50) throw new SemanticError("INVALID_SEMANTIC_CANDIDATES");
         const semanticRows = candidates.flatMap((candidate) => {
           const row = this.#db.prepare(`${SELECT_CURRENT} WHERE r.scope=? AND r.id=? AND r.revision=?
-            AND r.status IN ('active','tentative')`).get(this.#scope, candidate.id, candidate.revision);
+            AND r.status IN ('active','tentative') ${exclude}`)
+            .get(this.#scope, candidate.id, candidate.revision, ...excludedSession);
           return row ? [view(row)] : [];
         });
-        items = fuseRanks(query, rows, semanticRows, candidates).slice(offset, offset + limit);
+        items = conversation ? [...new Map([...rows, ...semanticRows].map((row) => [row.id, row])).values()]
+          : fuseRanks(query, rows, semanticRows, candidates).slice(offset, offset + limit);
       }
       if (conversation) {
-        const recent = this.#db.prepare(`${SELECT_CURRENT} WHERE r.scope=? AND r.status IN ('active','tentative')
-          AND json_extract(v.evidence_json,'$[0].reference.value') LIKE 'pinocchio-conversation:v1:%'
-          ORDER BY r.updated_at DESC, r.id LIMIT 6`).all(this.#scope).map(view);
-        const ranked = [...items].sort((a, b) => {
-          const score = (content: string) => terms.filter((term) => keywords(content).includes(term)).length;
-          return score(b.content) - score(a.content);
-        });
-        const seen = new Set<string>();
-        items = [...ranked, ...recent].filter((item) => {
-          const evidence = z.array(z.object({ reference: z.object({ value: z.string() }) })).safeParse(item.evidence);
-          if (conversationSession && evidence.success && evidence.data.some((source) =>
-            source.reference.value.startsWith(`pinocchio-conversation:v1:${conversationSession}:`))) return false;
-          if (seen.has(item.id)) return false;
-          seen.add(item.id); return true;
-        }).slice(0, limit);
+        items = rankAutomaticRecall(query, items, candidates ?? []).slice(offset, offset + limit);
       }
       return consume({ status: items.length ? "ok" : "no_match", items });
     });
