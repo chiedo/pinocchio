@@ -155,6 +155,31 @@ test("worker save receipts survive restart; correction and disabled reads remain
   await f.store.setDisabled(true, "disable");
   await assert.rejects(f.call(), { code: "STORE_DISABLED" });
 });
+test("recent worker searches bypass keywords, preserve byte budgets, and distinguish an empty window", async (t) => {
+  const f = await fixture(t);
+  await f.store.remember({
+    content: "[user] The synthetic mascot is Jade Wren.", kind: "other", sourceAt: "2026-05-12T13:59:00Z",
+    evidence: [{ kind: "user_statement", reference: { type: "text", value: "pinocchio-conversation:v1:previous:message:0" } }],
+  }, "capture");
+  const result = await f.call({
+    query: "What did we discuss in the past 15 minutes before 2026-05-12T14:00:00Z?",
+  });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.retrieval, { mode: "recent", since: "2026-05-12T13:45:00.000Z", before: "2026-05-12T14:00:00.000Z" });
+  assert.match(JSON.stringify(result.snippets), /Jade Wren/);
+  assert.ok(Buffer.byteLength(JSON.stringify(result.snippets)) <= 800);
+  assert.equal(result.chargedTokens, Buffer.byteLength(JSON.stringify(result.snippets)));
+  const repeat = await f.call({ mode: "recent", since: "2026-05-12T13:45:00Z", before: "2026-05-12T14:00:00Z" });
+  assert.equal(repeat.status, "already_delivered");
+  f.ledger.start("root", "foreground", "2026-01-01T00:00:01.000Z");
+  const empty = await f.call({ mode: "recent", since: "2026-05-12T14:01:00Z", before: "2026-05-12T14:02:00Z" });
+  assert.equal(empty.status, "no_match");
+  assert.equal(empty.reason, "NO_CAPTURED_CONVERSATION_IN_WINDOW");
+  assert.equal(empty.chargedTokens, 0);
+  const noTopic = await f.call({ query: "unseen-identifier" });
+  assert.equal(noTopic.reason, "NO_MATCHING_MEMORY");
+  await assert.rejects(f.call({ mode: "recent", since: "invalid" }), { code: "INVALID_INPUT" });
+});
 test("MCP uses bound process context when host hooks are unavailable and rejects malformed context", async (t) => {
   const f = await fixture(t);
   const server = await createMemoryMcpServer(f.ref, f.launch.serverName, f.repository);
@@ -163,6 +188,9 @@ test("MCP uses bound process context when host hooks are unavailable and rejects
   t.after(async () => { await client.close(); await server.close(); });
   await server.connect(left); await client.connect(right);
   const listed = await client.listTools();
+  const search = listed.tools.find((tool) => tool.name === SEARCH_TOOL);
+  assert.match(search?.description ?? "", /mode='recent'/);
+  assert.ok(search?.inputSchema.properties?.since);
   const save = listed.tools.find((tool) => tool.name === SAVE_TOOL);
   assert.ok(save);
   assert.deepEqual(save.inputSchema.required, ["action", "operationId"]);
@@ -175,6 +203,10 @@ test("MCP uses bound process context when host hooks are unavailable and rejects
   assert.equal(save.inputSchema.additionalProperties, false);
   const direct = await client.callTool({ name: SEARCH_TOOL, arguments: { query: "synthetic" } });
   assert.equal(direct.isError, false);
+  const recent = await client.callTool({ name: SEARCH_TOOL,
+    arguments: { mode: "recent", since: "2026-05-12T13:45:00Z", before: "2026-05-12T14:00:00Z" } });
+  assert.equal(recent.isError, false);
+  assert.match(JSON.stringify(recent.content), /NO_CAPTURED_CONVERSATION_IN_WINDOW/);
   const denied = await client.callTool({ name: SEARCH_TOOL, arguments: { query: "synthetic" },
     _meta: { [CONTEXT_META]: {} } });
   assert.equal(denied.isError, true);

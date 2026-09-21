@@ -4,7 +4,7 @@ import { loadBinding } from "../src/binding-registry.js";
 import { MemoryStore } from "../src/memory-store.js";
 import { createConversationFixture } from "./support/conversation-fixture.js";
 
-test("native automatic capture survives a genuinely cold session and recalls without model memory calls", {
+test("native cold-session recap recalls captured history without topic keywords or model memory calls", {
   timeout: 120_000,
 }, async () => {
   const f = await createConversationFixture(["automatic-alpha"]);
@@ -33,7 +33,7 @@ test("native automatic capture survives a genuinely cold session and recalls wit
 
     client = f.createClient();
     const recalledSession = await f.open(client, "automatic-alpha");
-    const recalled = await f.turn(recalledSession, "What was the mascot?");
+    const recalled = await f.turn(recalledSession, "What did we discuss in the past 15 minutes?");
     assert.match(recalled, /Pinocchio conversation memory/);
     assert.match(recalled, /Indigo Heron/);
     assert.equal(f.provider.counts().toolRequests, 0);

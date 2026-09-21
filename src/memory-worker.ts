@@ -3,6 +3,8 @@ import { z } from "zod";
 import { BindingError, canonicalRepository, loadBinding } from "./binding-registry.js";
 import { ContextLedger } from "./context-ledger.js";
 import { MemoryStore } from "./memory-store.js";
+import type { MemorySearchResult } from "./memory-store.js";
+import { resolveMemorySearch } from "./memory-query.js";
 import { MemoryError, validate } from "./memory-types.js";
 import { SAVE_TOOL, SEARCH_TOOL, saveSchema, searchSchema, ToolError } from "./memory-protocol.js";
 import { SemanticRuntime } from "./semantic-runtime.js";
@@ -50,8 +52,11 @@ async function execute(raw: unknown): Promise<unknown> {
         return result;
       }
       const args = validate(searchSchema, command.arguments);
+      const plan = resolveMemorySearch(args);
       if ((await store.status()).disabled) throw new MemoryError("STORE_DISABLED");
-      const retrieval = await semantic.candidates(command.reference, args.query, ticket.deadline);
+      const retrieval = plan.mode === "recent"
+        ? { retrieval: { mode: "recent", ...plan.window }, candidates: undefined }
+        : await semantic.candidates(command.reference, plan.query, ticket.deadline);
       ledger.db.exec("BEGIN IMMEDIATE");
       try {
         ledger.current(ticket);
@@ -69,7 +74,7 @@ async function execute(raw: unknown): Promise<unknown> {
             chargedTokens: 0, accounting: "conservative_utf8_bytes",
             requestRemaining: available, sessionUsed };
         }
-        return await store.searchSnapshot(args.query, { limit: 100 }, async (matches) => {
+        const consume = async (matches: MemorySearchResult) => {
         const snippets: { recordId: string; revision: number; content: string; kind: string;
           evidenceKinds: string[]; sourceAt: string | null; confirmedAt: string | null; recordedAt: string }[] = [];
         let duplicate = false;
@@ -112,11 +117,17 @@ async function execute(raw: unknown): Promise<unknown> {
         const status = snippets.length ? "ok" : matches.items.length ? (duplicate ? "already_delivered" : "budget_exhausted") : "no_match";
         return {
           status, ...(status === "budget_exhausted" ? { budgetScope: "recipient_request" } : {}),
+          ...(status === "no_match" ? { reason: plan.mode === "recent"
+            ? "NO_CAPTURED_CONVERSATION_IN_WINDOW" : "NO_MATCHING_MEMORY" } : {}),
           retrieval: retrieval.retrieval,
           snippets, chargedTokens: cost, accounting: "conservative_utf8_bytes",
           requestRemaining: available - cost, sessionUsed: sessionUsed + cost,
         };
-        }, retrieval.candidates ?? [], command.conversation ?? false, command.conversationSession);
+        };
+        return plan.mode === "recent"
+          ? await store.recentConversationSnapshot(plan.window, command.conversationSession ?? ticket.recipient, consume)
+          : await store.searchSnapshot(plan.query, { limit: 100 }, consume,
+            retrieval.candidates ?? [], command.conversation ?? false, command.conversationSession, true);
       } catch (error) {
         if (ledger.db.isTransaction) ledger.db.exec("ROLLBACK");
         throw error;

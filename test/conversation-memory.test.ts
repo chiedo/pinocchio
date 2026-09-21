@@ -46,6 +46,17 @@ test("capture persists without model saves; next-session recall is automatic and
     assert.match(await recallConversation(worker, owner, {
       sessionId, directory: process.cwd(), prompt: "What was the mascot?",
     }), /Amber Otter/);
+    await worker.call({ action: "start", configRoot: root, root: sessionId, recipient: sessionId,
+      stamp: new Date(Date.now() + 1_000).toISOString() });
+    assert.match(await recallConversation(worker, owner, {
+      sessionId, directory: process.cwd(), prompt: "What did we just discuss?",
+    }), /Amber Otter/);
+    await worker.call({ action: "start", configRoot: root, root: sessionId, recipient: sessionId,
+      stamp: new Date(Date.now() + 2_000).toISOString() });
+    assert.match(await recallConversation(worker, owner, {
+      sessionId, directory: process.cwd(),
+      prompt: "What did we discuss in the last 15 minutes before 2001-01-01T00:00:00Z?",
+    }), /no retained captured messages/);
     await setConversationEnabled(reference, false);
     assert.equal((await captureConversation(reference, { ...message, id: randomUUID(), content: "Paused content" })).status, "paused");
     assert.equal(await recallConversation(worker, owner, { sessionId, directory: process.cwd(), prompt: "mascot" }), "");

@@ -5,7 +5,7 @@ import { BindingError, fingerprint, loadBinding } from "./binding-registry.js";
 import type { BindingReference, BindingRecord } from "./binding-registry.js";
 import {
   MemoryError, keywords, normalizeText, noteSchema, operationIdSchema, recordIdSchema,
-  revisionSchema, validate, validateEvidence,
+  revisionSchema, validate, validateEvidence, searchKeywords,
 } from "./memory-types.js";
 import type { MemoryReceipt, Note, NoteInput } from "./memory-types.js";
 import { initializeStorage, STORAGE_SCHEMA_VERSION } from "./storage-schema.js";
@@ -14,6 +14,7 @@ import type { StoreFileIdentity } from "./storage-files.js";
 import { fuseRanks } from "./hybrid-ranking.js";
 import { MAX_INDEX_RECORDS, MODEL_ID, SemanticError } from "./semantic-types.js";
 import type { IndexSnapshot, IndexRecord, SemanticCandidate } from "./semantic-types.js";
+import type { ConversationWindow } from "./memory-query.js";
 
 const stateSchema = z.object({
   id: z.string(), scope: z.string(), revision: z.number().int(),
@@ -277,9 +278,9 @@ export class MemoryStore {
   }
   searchSnapshot<T>(query: string, pagination: { limit?: number; offset?: number },
     consume: (result: MemorySearchResult) => T | Promise<T>, candidates?: SemanticCandidate[], conversation = false,
-    conversationSession?: string) {
+    conversationSession?: string, relaxed = false) {
     validate(z.string().min(1).max(500).refine((value) => Boolean(value.trim())), query);
-    const terms = keywords(query);
+    const terms = relaxed ? searchKeywords(query) : keywords(query);
     if (terms.length > 64) throw new MemoryError("INVALID_INPUT");
     const { limit, offset } = validate(paginationSchema, pagination);
     const literal = normalizeText(query);
@@ -287,13 +288,22 @@ export class MemoryStore {
       ? `OR r.id IN (SELECT record_id FROM keyword_terms WHERE term IN (${terms.map(() => "?").join(",")})
         GROUP BY record_id HAVING count(*)>=?)` : "";
     return this.#transaction(() => {
-      const rows = this.#db.prepare(`${SELECT_CURRENT}
+      let rows = this.#db.prepare(`${SELECT_CURRENT}
         JOIN keyword_entries k ON k.record_id=r.id AND k.revision=r.revision
         WHERE r.scope=? AND r.status IN ('active','tentative')
         AND (instr(k.literal_text,?)>0 ${keywordMatch})
         ORDER BY (instr(k.literal_text,?)>0) DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)
         .all(this.#scope, literal, ...(terms.length ? [...terms, conversation ? 1 : terms.length] : []), literal,
           candidates ? 100 : limit, candidates ? 0 : offset).map(view);
+      if (relaxed && !rows.length && terms.length) {
+        rows = this.#db.prepare(`${SELECT_CURRENT}
+          JOIN (SELECT record_id,count(*) AS hits FROM keyword_terms
+            WHERE term IN (${terms.map(() => "?").join(",")}) GROUP BY record_id) AS matches
+            ON matches.record_id=r.id
+          WHERE r.scope=? AND r.status IN ('active','tentative')
+          ORDER BY matches.hits DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)
+          .all(...terms, this.#scope, candidates ? 100 : limit, candidates ? 0 : offset).map(view);
+      }
       let items = rows;
       if (candidates) {
         if (candidates.length > 50) throw new SemanticError("INVALID_SEMANTIC_CANDIDATES");
@@ -321,6 +331,26 @@ export class MemoryStore {
           seen.add(item.id); return true;
         }).slice(0, limit);
       }
+      return consume({ status: items.length ? "ok" : "no_match", items });
+    });
+  }
+  recentConversationSnapshot<T>(window: ConversationWindow, excludeSession: string,
+    consume: (result: MemorySearchResult) => T | Promise<T>) {
+    const timestamp = z.string().datetime({ offset: true });
+    const since = validate(timestamp, window.since), before = validate(timestamp, window.before);
+    const span = Date.parse(before) - Date.parse(since);
+    if (span <= 0 || span > 30 * 86_400_000) throw new MemoryError("INVALID_INPUT");
+    return this.#transaction(() => {
+      const items = this.#db.prepare(`${SELECT_CURRENT}
+        WHERE r.scope=? AND r.status IN ('active','tentative')
+        AND julianday(v.source_at)>=julianday(?) AND julianday(v.source_at)<julianday(?)
+        AND EXISTS (SELECT 1 FROM json_each(v.evidence_json) AS e
+          WHERE json_extract(e.value,'$.reference.type')='text'
+          AND instr(json_extract(e.value,'$.reference.value'),'pinocchio-conversation:v1:')=1)
+        AND NOT EXISTS (SELECT 1 FROM json_each(v.evidence_json) AS e
+          WHERE instr(json_extract(e.value,'$.reference.value'),?)=1)
+        ORDER BY julianday(v.source_at) DESC, r.id LIMIT 100`)
+        .all(this.#scope, since, before, `pinocchio-conversation:v1:${excludeSession}:`).map(view);
       return consume({ status: items.length ? "ok" : "no_match", items });
     });
   }

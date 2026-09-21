@@ -87,7 +87,11 @@ scope. Cleanup removes up to 100 expired/excess chunks per captured message;
 it runs during capture, not while the CLI is closed. Curated notes are not
 removed by this cleanup. Use the existing scoped `memory forget` command to
 delete individual captured notes. Deletion cannot retract prior model context.
-Automatic recall shares the existing per-request and per-session context budgets.
+Automatic recall shares the existing per-request byte budget; cumulative session
+usage is diagnostic, not a lifetime cap. Simple "what did we just discuss?"
+questions retrieve recent prior-session captures by timestamp, without requiring
+topic keywords. See [recent-history search](MEMORY-TOOLS.md#tool-behavior) for
+explicit time windows, partial-result limits, and empty-history diagnostics.
 
 ## Update or remove
 

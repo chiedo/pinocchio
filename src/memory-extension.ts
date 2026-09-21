@@ -5,7 +5,7 @@ import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
 import { captureConversation, conversationOwner } from "./conversation-memory.js";
 import type { ConversationOwner } from "./conversation-memory.js";
-import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, ToolError } from "./memory-protocol.js";
+import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, searchDescription, ToolError } from "./memory-protocol.js";
 import {
   CloudJobsError,
   checkCloudJobResultNotices,
@@ -253,7 +253,7 @@ session = await joinSession({
   }, ...[
     {
       name: EXTENSION_SEARCH_TOOL,
-      description: "Search the selected Pinocchio agent's scoped historical memory. Recall is best-effort.",
+      description: searchDescription,
       parameters: z.toJSONSchema(searchSchema, { io: "input" }),
     },
     {

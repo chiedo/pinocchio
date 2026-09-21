@@ -104,6 +104,46 @@ test("correction removes stale terms and forget removes all content without retr
   assert.equal(JSON.stringify(await store.operationStatus("original")).includes("cobalt"), false);
 });
 
+test("topic recall removes filler and ranks overlap without weakening administrative exact search", async (t) => {
+  const f = await fixture(t);
+  const store = await f.open();
+  await store.remember(note("Maple syrup pancakes are the breakfast choice."), "pancakes");
+  await store.remember(note("Maple leaves turn red."), "leaves");
+  const search = (query: string) => store.searchSnapshot(query, {}, (result) => result, [], false, undefined, true);
+  assert.equal((await search("What was our maple syrup breakfast preference?")).items[0]?.content,
+    "Maple syrup pancakes are the breakfast choice.");
+  assert.equal((await search("Maple syrup pancakes")).items.length, 1);
+  assert.equal((await search("What did we say about telescopes?")).status, "no_match");
+  assert.equal((await search("what was it")).status, "no_match");
+  assert.equal((await store.search("maple telescopes")).status, "no_match");
+});
+
+test("recent recall uses source timestamps, prior sessions, and only live captures in the bound scope", async (t) => {
+  const f = await fixture(t);
+  const store = await f.open();
+  const captured = (content: string, sourceAt: string, session: string): NoteInput => ({
+    ...note(content), sourceAt,
+    evidence: [{ kind: "user_statement", reference: { type: "text", value: `pinocchio-conversation:v1:${session}:message:0` } }],
+  });
+  await store.remember(captured("At window start", "2026-05-12T09:45:00-04:00", "old"), "start");
+  const latest = await store.remember(captured("Latest previous message", "2026-05-12T13:59:00Z", "old"), "latest");
+  await store.remember(captured("Older late write", "2026-05-12T13:44:59Z", "old"), "outside");
+  await store.remember(captured("At exclusive end", "2026-05-12T14:00:00Z", "old"), "end");
+  await store.remember(captured("Current request echo", "2026-05-12T13:59:59Z", "current"), "echo");
+  await store.remember({ ...note("Curated note is not a captured conversation"), sourceAt: "2026-05-12T13:59:59Z" }, "note");
+  await store.remember({ ...captured("Superseded capture", "2026-05-12T13:59:59Z", "old"), status: "superseded" }, "superseded");
+  const window = { since: "2026-05-12T13:45:00Z", before: "2026-05-12T14:00:00Z" };
+  const recent = () => store.recentConversationSnapshot(window, "current", (result) => result);
+  assert.deepEqual((await recent()).items.map((item) => item.content), ["Latest previous message", "At window start"]);
+  assert.ok(latest.recordId);
+  await store.forget(latest.recordId, 1, "forget-latest");
+  assert.deepEqual((await recent()).items.map((item) => item.content), ["At window start"]);
+  const other = await f.open(await f.bind("beta"));
+  assert.equal((await other.recentConversationSnapshot(window, "current", (result) => result)).status, "no_match");
+  await store.setDisabled(true, "disabled");
+  await assert.rejects(recent(), { code: "STORE_DISABLED" });
+});
+
 test("disabled scopes reject ordinary reads/writes but retain data and metadata recovery", async (t) => {
   const f = await fixture(t);
   const store = await f.open();
