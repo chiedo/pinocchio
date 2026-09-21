@@ -14,6 +14,7 @@ import { readPrivateJson, writeAtomic } from "./semantic-files.js";
 import { setConversationEnabled } from "./conversation-memory.js";
 import { setupRetrieval } from "./semantic-setup.js";
 import type { RetrievalMode } from "./semantic-files.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 const referenceSchema = z.object({
   configRoot: z.string(), bindingId: z.string().uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -122,12 +123,13 @@ export async function main(args: string[]) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)), null, 2)}\n`); }
+  const invocation = cliInvocation(process.argv.slice(2));
+  try { await writeCliResult(await main(invocation.args), invocation.json); }
   catch (error) {
     const code = isRecord(error) && typeof error.code === "string" ? error.code : "SETUP_FAILED";
-    process.stderr.write(`${JSON.stringify({ status: "error", code,
+    writeCliError({ code,
       repair: "Setup is incomplete. Resolve the reported error and rerun with the same agent and scope. Use --python /absolute/path/to/prepared/python for a custom runtime, or --keyword-only to explicitly opt out.",
-      ...(error instanceof ToolError ? error.details : {}) })}\n`);
+      ...(error instanceof ToolError ? { details: error.details } : {}) }, invocation.json);
     process.exitCode = 1;
   }
 }

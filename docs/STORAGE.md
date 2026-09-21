@@ -26,16 +26,16 @@ mkdir -m 700 "$DEMO/config" "$DEMO/repo" "$DEMO/agents"
 git init -q "$DEMO/repo"
 printf '%s\n' '---' 'name: example' 'description: Synthetic fixture' '---' \
   'Use only explicitly configured tools.' > "$DEMO/agents/example.agent.md"
-node dist/src/bindings-cli.js bind --config-root "$DEMO/config" \
+node dist/src/bindings-cli.js --json bind --config-root "$DEMO/config" \
   --definition "$DEMO/agents/example.agent.md" --origin user \
   --origin-root "$DEMO/agents" --repository "$DEMO/repo" > "$DEMO/binding.json"
 BINDING="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).reference.bindingId' "$DEMO/binding.json")"
 FINGERPRINT="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).reference.fingerprint' "$DEMO/binding.json")"
-node dist/src/bindings-cli.js status --config-root "$DEMO/config" \
+node dist/src/bindings-cli.js --json status --config-root "$DEMO/config" \
   --binding "$BINDING" --fingerprint "$FINGERPRINT" > "$DEMO/identity.json"
 NAMESPACE="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).identity.namespace' "$DEMO/identity.json")"
 memory() {
-  node dist/src/memory-cli.js "$@" --config-root "$DEMO/config" \
+  node dist/src/memory-cli.js --json "$@" --config-root "$DEMO/config" \
     --binding "$BINDING" --fingerprint "$FINGERPRINT" \
     --namespace "$NAMESPACE" --scope repository
 }
@@ -65,8 +65,9 @@ that launch reference, not every other authorized registration.
 `npm run memory -- <command> ...` is an equivalent development entry point.
 Input accepts `--input -` for stdin or a JSON file (128 KiB maximum), avoiding
 note content in command arguments. Do not put sensitive search queries in shell
-history. Exit 0 means a successful result, including explicit `no_match` or
-`not_found`; errors use exit 1 and a fixed JSON error code on stderr.
+history. Commands print readable terminal output by default; add `--json` for
+machine-readable output. Exit 0 means a successful result, including explicit
+`no_match` or `not_found`; errors use exit 1 and a fixed error code.
 
 | Command | Additional flags |
 |---|---|

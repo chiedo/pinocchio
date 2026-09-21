@@ -3,9 +3,11 @@ import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { acceptance, releaseVerdict } from "./evaluation.js";
 import { hasCode } from "./binding-registry.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 try {
-  const { values } = parseArgs({ strict: true, options: {
+  const invocation = cliInvocation(process.argv.slice(2));
+  const { values } = parseArgs({ args: invocation.args, strict: true, options: {
     reliability: { type: "string" }, live: { type: "string" }, workflow: { type: "string" }, commit: { type: "string" },
   } });
   async function input(path: string | undefined): Promise<unknown> {
@@ -16,8 +18,10 @@ try {
   const [reliability, live, workflow] = await Promise.all([input(values.reliability), input(values.live), input(values.workflow)]);
   const result = releaseVerdict(await acceptance(), values.commit ??
     execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), reliability, live, workflow);
-  process.stdout.write(JSON.stringify(result) + "\n");
+  await writeCliResult(result, invocation.json);
   process.exitCode = result.status === "pass" ? 0 : 2;
 } catch {
-  process.stderr.write("RELEASE_INPUT_FAILED\n"); process.exitCode = 1;
+  const invocation = cliInvocation(process.argv.slice(2));
+  writeCliError({ code: "RELEASE_INPUT_FAILED" }, invocation.json);
+  process.exitCode = 1;
 }

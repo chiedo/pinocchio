@@ -7,6 +7,7 @@ import { acknowledge, MemoryError, noteSchema, validate } from "./memory-types.j
 import type { MemoryReceipt } from "./memory-types.js";
 import { SemanticRuntime } from "./semantic-runtime.js";
 import { semanticFailure } from "./semantic-files.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 const INPUT_LIMIT = 128 * 1024;
 async function input(path: string | undefined) {
@@ -117,23 +118,20 @@ export async function main(args: string[]) {
   }
 }
 
-function writeResult(result: unknown) {
-  return new Promise<void>((resolve, reject) => {
-    process.stdout.write(`${JSON.stringify(result)}\n`, (error) => error ? reject(error) : resolve());
-  });
-}
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   // A failed pipe must report an unknown acknowledgement, not an unhandled EPIPE.
   process.stdout.on("error", () => { process.exitCode = 1; });
   try {
-    const result = await main(process.argv.slice(2));
+    const result = await main(invocation.args);
+    const writeResult = (value: unknown) => writeCliResult(value, invocation.json);
     if (result.status === "committed") await acknowledge(result satisfies MemoryReceipt, writeResult);
     else await writeResult(result);
   } catch (error) {
     const code = error instanceof MemoryError || error instanceof BindingError
       ? error.code : error instanceof TypeError ? "INVALID_INPUT" : "STORE_IO_ERROR";
     const details = error instanceof MemoryError ? error.details : {};
-    process.stderr.write(`${JSON.stringify({ status: "error", code, ...details })}\n`);
+    writeCliError({ code, details }, invocation.json);
     process.exitCode = 1;
   }
 }

@@ -20,6 +20,7 @@ import {
   publishCloudJob,
 } from "./cloud-jobs.js";
 import { isRecord } from "./identity.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 function confirmed(value: boolean | undefined) {
   if (!value) throw new CloudJobsError("EXPLICIT_CONFIRMATION_REQUIRED");
@@ -131,8 +132,9 @@ export async function main(args: string[]) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   try {
-    process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)), null, 2)}\n`);
+    await writeCliResult(await main(invocation.args), invocation.json);
   } catch (error) {
     const code = error instanceof CloudJobsError
       ? error.code
@@ -141,7 +143,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         : isRecord(error) && typeof error.code === "string"
           ? error.code
           : "CLOUD_JOBS_FAILED";
-    process.stderr.write(`${JSON.stringify({ status: "error", code })}\n`);
+    writeCliError({ code }, invocation.json);
     process.exitCode = 1;
   }
 }

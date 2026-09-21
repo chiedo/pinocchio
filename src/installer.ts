@@ -117,7 +117,7 @@ async function ownedApp(path: string, release: State["release"]) {
 }
 function quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
 async function launcher(paths: Locations) {
-  const text = `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(paths.app, "dist/src/install-cli.js"))} --config-root ${quote(paths.root)} "$@"\n`;
+  const text = `#!/bin/sh\nexec ${quote(process.execPath)} --disable-warning=ExperimentalWarning ${quote(join(paths.app, "dist/src/install-cli.js"))} --config-root ${quote(paths.root)} "$@"\n`;
   if (await exists(paths.launcher)) {
     const info = await lstat(paths.launcher);
     if (!info.isFile() || info.isSymbolicLink() || await readFile(paths.launcher, "utf8") !== text) {

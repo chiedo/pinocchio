@@ -7,6 +7,7 @@ import { CloudJobsError } from "./cloud-jobs.js";
 import { isRecord } from "./identity.js";
 import { JobsStore } from "./jobs-store.js";
 import { LocalJobs } from "./local-jobs.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 export async function main(args: string[]) {
   const { positionals, values } = parseArgs({
@@ -81,15 +82,16 @@ export async function main(args: string[]) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   try {
-    process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)), null, 2)}\n`);
+    await writeCliResult(await main(invocation.args), invocation.json);
   } catch (error) {
     const code = error instanceof CloudJobsError
       ? error.code
       : error instanceof z.ZodError
         ? "INVALID_ARGUMENTS"
         : isRecord(error) && typeof error.code === "string" ? error.code : "JOBS_FAILED";
-    process.stderr.write(`${JSON.stringify({ status: "error", code })}\n`);
+    writeCliError({ code }, invocation.json);
     process.exitCode = 1;
   }
 }

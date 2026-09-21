@@ -10,6 +10,7 @@ import {
   publishBroadcast, withBroadcastLock,
 } from "./broadcast.js";
 import type { BroadcastRequest } from "./broadcast.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 export async function upgradeBroadcast(root: string) {
   return withBroadcastLock(root, async () => {
@@ -47,13 +48,14 @@ export async function main(args: string[]) {
   return positionals[0] === "upgrade" ? upgradeBroadcast(root) : broadcastStatus(root);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   try {
-    const result = await main(process.argv.slice(2));
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const result = await main(invocation.args);
+    await writeCliResult(result, invocation.json);
     if (result.agents.some((agent) => agent.status === "failed") ||
         result.sessions.some((session) => ["failed", "restart-required"].includes(session.status))) process.exitCode = 1;
   } catch (error) {
-    process.stderr.write(`${JSON.stringify({ status: "error", code: broadcastCode(error) })}\n`);
+    writeCliError({ code: broadcastCode(error) }, invocation.json);
     process.exitCode = 1;
   }
 }

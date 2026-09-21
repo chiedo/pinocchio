@@ -56,7 +56,7 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
     const app = join(config, "pinocchio-runtime", "app");
     const cli = join(app, "dist/src/install-cli.js");
     async function installed(...args: string[]) {
-      const result = await execute(process.execPath, [cli, "--config-root", config, ...args],
+      const result = await execute(process.execPath, [cli, "--json", "--config-root", config, ...args],
         { cwd: root, timeout: 30_000, maxBuffer: 16_384 });
       return JSON.parse(result.stdout) as Record<string, unknown>;
     }
