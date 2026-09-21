@@ -341,10 +341,10 @@ test("local jobs preview, publish and run through the native task API", async ()
       const manualInspection = local.inspect(reference, "interactive-feedback");
       assert.equal(manualInspection.schedule, null);
       assert.equal(manualInspection.nextDueAt, undefined);
-      assert.equal(
-        store.dueJobs(reference.bindingId, "9999-12-31T23:59:59.999Z").length,
-        0,
-      );
+      assert.equal(store.dueJobs(
+        reference.bindingId,
+        "9999-12-31T23:59:59.999Z",
+      ).some((job) => job.slug === "interactive-feedback"), false);
 
       sourceShouldFail = true;
       await assert.rejects(

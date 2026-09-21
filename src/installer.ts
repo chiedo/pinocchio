@@ -174,7 +174,7 @@ export async function install(paths: Locations, upgrade: boolean, stopped: boole
     try {
       const result = await measured("doctor", () =>
         executeDiagnostic(join(stage, "dist/src/install-cli.js"), [
-          "doctor",
+          "--json", "doctor",
           ...(previewPlatform ? ["--preview-platform"] : []),
         ]));
       diagnostic = JSON.parse(result.stdout);
