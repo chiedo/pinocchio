@@ -298,7 +298,7 @@ export class MemoryStore {
       if (relaxed && !rows.length && terms.length) {
         rows = this.#db.prepare(`${SELECT_CURRENT}
           JOIN (SELECT record_id,count(*) AS hits FROM keyword_terms
-            WHERE term IN (${terms.map(() => "?").join(",")}) GROUP BY record_id) AS matches
+            WHERE term IN (${terms.map(() => "?").join(",")}) GROUP BY record_id HAVING count(*)>=2) AS matches
             ON matches.record_id=r.id
           WHERE r.scope=? AND r.status IN ('active','tentative')
           ORDER BY matches.hits DESC, r.updated_at DESC, r.id LIMIT ? OFFSET ?`)

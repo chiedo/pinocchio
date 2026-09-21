@@ -131,6 +131,8 @@ not a general natural-language date parser. Set `mode:"topic"` to force topic se
 
 Topic tool queries ignore common English filler words, prefer literal/all-term
 matches, then fall back to ranked word overlap if no exact match exists.
+Fallback requires at least two meaningful query words, avoiding unrelated
+results that share only one generic word. Single-term searches still work normally.
 Optional semantic retrieval is unchanged. The administrative storage CLI keeps
 its exact-search semantics for precise inspection and deletion checks.
 

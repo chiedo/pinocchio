@@ -109,12 +109,14 @@ test("topic recall removes filler and ranks overlap without weakening administra
   const store = await f.open();
   await store.remember(note("Maple syrup pancakes are the breakfast choice."), "pancakes");
   await store.remember(note("Maple leaves turn red."), "leaves");
+  await store.remember(note("Maple syrup is sold at the market."), "market");
   const search = (query: string) => store.searchSnapshot(query, {}, (result) => result, [], false, undefined, true);
-  assert.equal((await search("What was our maple syrup breakfast preference?")).items[0]?.content,
-    "Maple syrup pancakes are the breakfast choice.");
+  assert.deepEqual((await search("What was our maple syrup breakfast preference?")).items.map((item) => item.content),
+    ["Maple syrup pancakes are the breakfast choice.", "Maple syrup is sold at the market."]);
   assert.equal((await search("Maple syrup pancakes")).items.length, 1);
   assert.equal((await search("What did we say about telescopes?")).status, "no_match");
   assert.equal((await search("what was it")).status, "no_match");
+  assert.equal((await search("Maple telescope marker")).status, "no_match");
   assert.equal((await store.search("maple telescopes")).status, "no_match");
 });
 
