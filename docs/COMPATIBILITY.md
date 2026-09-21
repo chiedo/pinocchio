@@ -61,7 +61,7 @@ is not configured`. Shutdown explicitly detaches the extension connection.
 This is a documented prerequisite, not an inferred identity fallback.
 
 Worker-level synthetic cases additionally cover three-snippet/800-unit responses,
-800-unit recipient requests, the shared 6,000-unit session cap, persisted dedup,
+800-unit recipient requests, cumulative session accounting without a lifetime cap, persisted dedup,
 simulated compaction/redelivery accounting, signed argument/repository context,
 queue/deadline failures, save recovery and reversible enrollment. Token charging
 uses conservative serialized UTF-8 bytes, not claimed model-specific precision.

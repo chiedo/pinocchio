@@ -229,7 +229,7 @@ test("real hybrid retrieval through the model worker preserves recipient budgets
     assert.equal(result.chargedTokens, Buffer.byteLength(JSON.stringify(result.snippets)));
     const repeat = await call();
     assert.equal(repeat.status, "already_delivered");
-    assert.equal(repeat.sessionRemaining, result.sessionRemaining);
+    assert.equal(repeat.sessionUsed, result.sessionUsed);
     report.workerBudgetsAndWarmup = true;
   } finally { worker.close(); ledger.close(); }
 });

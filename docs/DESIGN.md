@@ -166,9 +166,9 @@ Initial values are proposals to calibrate, not performance guarantees:
 
 | Control | Initial proposal |
 |---|---|
-| Search result size | At most 3 snippets / 800 retrieved-memory tokens. |
-| Per recipient request | At most 800 memory tokens across repeated searches. |
-| Aggregate session allowance | 6,000 memory-content tokens across the session, including helpers. |
+| Search result size | At most 3 snippets / 800 serialized UTF-8 bytes. |
+| Per recipient request | At most 800 serialized bytes across repeated searches. |
+| Aggregate session usage | Recorded across foreground and helpers, without a lifetime retrieval cutoff. |
 | Backend deadline | 1 second including queueing and identity lookup. |
 | Warm backend latency target | p95 below 250 ms, excluding the model/tool round trip. |
 | Recency | A small boost with a 30-day half-life as a starting point. |
@@ -178,13 +178,16 @@ revision, not globally across agents. A new instance can need a fact previously
 provided to another instance; count the new delivery again.
 
 Persist accounting across restart/reload/compaction. Compaction can invalidate
-assumptions that a note is still visible, but must not reset the cumulative
+assumptions that a note is still visible, but must not reset the current request
 allowance. Needed notes may be returned and charged again.
 
 At exhaustion, return an explicit budget status without more memory text. Local
-inspection remains available. A new session has a fresh allowance. These limits
+inspection remains available. A new recipient request has a fresh allowance;
+later requests are not blocked by earlier session usage. These limits
 do not cap the rest of the conversation, tool definitions or small status replies.
 They do not erase notes already present in host history.
+The extension/direct-MCP fallback uses a per-call request boundary; see
+[the implemented accounting contract](MEMORY-TOOLS.md#bounds-and-persistent-accounting).
 
 ## Workers, indexing and failure handling
 

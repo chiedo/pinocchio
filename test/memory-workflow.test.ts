@@ -33,7 +33,7 @@ test("enrolled native profiles recall independently through the production conte
   const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const f = await createProductionFixture();
   const launches = new Map<string, ReturnType<typeof memoryLaunch>>();
-  const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown; sessionRemaining?: unknown }[] = [];
+  const observations: { status: unknown; snippets?: unknown; operationId?: unknown; code?: unknown; sessionUsed?: unknown }[] = [];
   const cases: string[] = [];
   const lifecycle: string[] = [];
   const waiters = new Set<() => void>();
@@ -82,7 +82,7 @@ test("enrolled native profiles recall independently through the production conte
       try {
         const value: unknown = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
         if (isRecord(value)) observations.push({ status: value.status, snippets: value.snippets,
-          operationId: value.operationId, code: value.code, sessionRemaining: value.sessionRemaining });
+          operationId: value.operationId, code: value.code, sessionUsed: value.sessionUsed });
         for (const notify of waiters) notify();
       } catch { /* Non-memory built-in results are not part of this gate. */ }
     });
@@ -182,7 +182,7 @@ test("enrolled native profiles recall independently through the production conte
     assert.ok(compaction.messagesRemoved > 0);
     assert.ok(compaction.summaryContent);
     const compacted = await own(session, "FOREGROUND SEARCH after compaction.", "ok");
-    assert.ok(Number(compacted.sessionRemaining) < Number(beforeCompaction.sessionRemaining));
+    assert.ok(Number(compacted.sessionUsed) > Number(beforeCompaction.sessionUsed));
     cases.push("native-compaction-preserves-accounting");
     stage = "extension-reload";
     await session.rpc.extensions.reload();
@@ -192,7 +192,7 @@ test("enrolled native profiles recall independently through the production conte
     await session.rpc.agent.select({ name: "memory-foreground" });
     await session.rpc.tools.initializeAndValidate();
     const reloaded = await own(session, "FOREGROUND SEARCH after extension reload.", "ok");
-    assert.ok(Number(reloaded.sessionRemaining) < Number(recalled.sessionRemaining));
+    assert.ok(Number(reloaded.sessionUsed) > Number(recalled.sessionUsed));
     cases.push("extension-reload");
     const sessionId = session.sessionId;
     stop();
@@ -211,7 +211,7 @@ test("enrolled native profiles recall independently through the production conte
     await session.rpc.agent.select({ name: "memory-foreground" });
     await session.rpc.tools.initializeAndValidate();
     const cold = await own(session, "FOREGROUND SEARCH after cold resume.", "ok");
-    assert.ok(Number(cold.sessionRemaining) < Number(reloaded.sessionRemaining));
+    assert.ok(Number(cold.sessionUsed) > Number(reloaded.sessionUsed));
     cases.push("cold-resume");
     assert.ok(lifecycle.includes("resume"));
     stop();
@@ -223,7 +223,7 @@ test("enrolled native profiles recall independently through the production conte
     await session.rpc.tools.initializeAndValidate();
     const fresh = await own(session, "FOREGROUND SEARCH in a new root session.", "ok");
     assert.match(JSON.stringify(fresh.snippets), /memory-foreground/);
-    assert.ok(Number(fresh.sessionRemaining) > Number(cold.sessionRemaining));
+    assert.ok(Number(fresh.sessionUsed) < Number(cold.sessionUsed));
     cases.push("new-session-recall");
     stop();
     await disableExtension(session, extensionId);

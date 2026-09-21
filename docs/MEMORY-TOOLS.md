@@ -37,7 +37,7 @@ The context ledger and signing key live privately under
 usage counters and delivered record/revision IDs are stored there: no prompt,
 query or recalled note text. Back up this directory together with private stores
 when preserving ongoing sessions. Do not delete it to reset an active session's
-allowance. Filesystem access by the same user is not an OS security boundary.
+request allowance. Filesystem access by the same user is not an OS security boundary.
 The extension also registers `pinocchio_memory_context_status`, a bounded,
 content-free service-health diagnostic. It does not select an owner or expose
 session identifiers, usage history or notes.
@@ -58,7 +58,7 @@ failures are explicit, never disguised as no match.
 |---|---|
 | Search response | At most three snippets and 800 conservative memory-token units |
 | Recipient request | At most 800 units across repeated calls and agent namespaces |
-| Root session | At most 6,000 units across foreground and all helpers |
+| Root session | Cumulative usage is recorded, but does not disable later requests |
 
 One charged unit is one UTF-8 byte of the serialized snippet array, including
 record IDs, evidence kinds and dates. This deliberately conservative byte bound
@@ -70,9 +70,23 @@ Delivery deduplication keys include root session, actual recipient, request,
 visibility generation, namespace, scope, record ID and exact revision.
 Another helper instance pays for its own delivery. Reload/resume preserve both
 deduplication and counters. Compaction invalidates visibility (conservatively for
-the entire root session) but never resets either allowance; any redelivery is
+the entire root session) but never resets the request allowance; any redelivery is
 charged again. A new request resets only that recipient's request allowance.
-A new root session gets a new session allowance.
+A new root session starts a new cumulative usage counter. Foreground and helpers
+each retain their request bounds; there is no aggregate lifetime cap across them.
+Long-running conversations can therefore keep retrieving small results.
+
+Responses report `requestRemaining` and cumulative `sessionUsed` in byte-based
+units. `sessionUsed` replaces the old `sessionRemaining` field; it is diagnostic,
+not an allowance. Existing ledgers need no migration or reset. `budget_exhausted`
+now reports `budgetScope: "recipient_request"` and means the current request has
+too little room for another result, not that later requests are blocked. A new
+host prompt renews the recipient request on the hook-driven path.
+
+On the extension/direct-MCP fallback paths, a request is currently one tool call,
+not a verified user turn. Those paths retain the 800-byte call limit and no
+longer stop after 6,000 cumulative bytes. This change does not claim to make
+fallback accounting turn-aware or provide an aggregate helper budget.
 
 Search and accounting commit while holding a validated memory snapshot, so
 corrections, forget and disable cannot race an unchecked result. Accounting may
@@ -89,6 +103,14 @@ writes those exact names into the profile's tool list and instruction block.
 Snippets include record ID, revision, memory kind, evidence kinds,
 source/confirmation dates and recording date. They remain historical evidence,
 not higher-priority instructions.
+
+`no_match` is distinct from budget exhaustion. In keyword-only mode, explicit
+search matches a literal phrase or all extracted query terms; long natural-
+language questions and timestamps can miss otherwise relevant records. Start
+with a few distinctive topic words. Query text such as "last 15 minutes" is not
+a structured time filter. Automatic conversation recall has a separate
+recent-conversation fallback; neither path guarantees that an earlier message
+was captured. Removing the budget cutoff does not change capture or matching.
 
 `agent_memory_save` supports these strict argument shapes:
 

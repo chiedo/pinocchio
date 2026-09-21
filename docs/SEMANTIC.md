@@ -96,7 +96,7 @@ node dist/src/memory-cli.js search --hybrid --query "recover lost commits" \
 Omit `--hybrid` to retain the administrative keyword-only baseline. Administrative
 hybrid search may wait for local model startup; model-facing dispatch never waits
 for cold startup. Its one-second total deadline, three snippets, 800-unit
-recipient limit and 6,000-unit root-session allowance remain enforced.
+recipient limit remains enforced; root-session usage is diagnostic, not a lifetime cutoff.
 
 ## Ranking and freshness
 
