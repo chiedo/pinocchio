@@ -36,6 +36,11 @@ test("native cold-session recap recalls captured history without topic keywords 
     const recalled = await f.turn(recalledSession, "What did we discuss in the past 15 minutes?");
     assert.match(recalled, /Pinocchio conversation memory/);
     assert.match(recalled, /Indigo Heron/);
+    await f.disconnect(recalledSession);
+    const unrelatedSession = await f.open(client, "automatic-alpha");
+    const unrelated = await f.turn(unrelatedSession, "Can you help with work?");
+    assert.doesNotMatch(unrelated, /Pinocchio conversation memory/);
+    assert.doesNotMatch(unrelated, /Indigo Heron/);
     assert.equal(f.provider.counts().toolRequests, 0);
     assert.equal(f.provider.counts().failures, 0);
   } finally {

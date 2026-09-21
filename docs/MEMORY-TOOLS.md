@@ -136,6 +136,26 @@ results that share only one generic word. Single-term searches still work normal
 Optional semantic retrieval is unchanged. The administrative storage CLI keeps
 its exact-search semantics for precise inspection and deletion checks.
 
+Automatic topic recall is more selective than an explicit search:
+- It never appends unrelated recent captures just to return something. A healthy
+  search with no relevant result adds no memory context; operational failures
+  still produce the existing warning.
+- Generic words such as "help" and "work" cannot trigger recall. Multiple
+  meaningful query terms must overlap (a single specific-term query is allowed),
+  or a live semantic candidate must meet the existing similarity threshold.
+  Capture timestamps and speaker labels do not count as topical evidence.
+- Relevance determines eligibility and order; source recency only breaks ties.
+  Current-session captures are excluded before candidate limits are applied.
+- Short follow-ups such as "improve relevance" can use up to two preceding user
+  prompts, each redacted and capped at 800 characters. This context is transient,
+  bounded to the same agent, session, and working directory, and cleared on
+  agent selection changes, observed pause, or a new self-contained topic.
+  Extension reload starts without this transient context.
+
+Explicit date-based recaps still retrieve captures chronologically without
+requiring a topical match. These relevance gates do not delete or rewrite notes,
+expand scope, backfill transcripts, or change byte budgets or retention.
+
 `no_match` remains distinct from budget exhaustion. `reason` is
 `NO_CAPTURED_CONVERSATION_IN_WINDOW` for empty recent history and
 `NO_MATCHING_MEMORY` for an empty topic search. No retained capture does **not**

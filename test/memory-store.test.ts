@@ -146,6 +146,32 @@ test("recent recall uses source timestamps, prior sessions, and only live captur
   await assert.rejects(recent(), { code: "STORE_DISABLED" });
 });
 
+test("automatic topic retrieval excludes current-session noise before limiting candidates and never pads with recent captures", async (t) => {
+  const f = await fixture(t);
+  const store = await f.open();
+  const capture = (content: string, session: string): NoteInput => ({
+    ...note(content), evidence: [{ kind: "user_statement",
+      reference: { type: "text", value: `pinocchio-conversation:v1:${session}:message:0` } }],
+  });
+  const match = await store.remember(capture("Kestrel memory ranking uses TOPAZ-319.", "prior"), "relevant");
+  const noise = await store.remember(capture("Recording instructions for meetings.", "prior"), "unrelated");
+  for (let index = 0; index < 101; index++) {
+    await store.remember(capture("Kestrel memory ranking current prompt echo.", "current"), `echo-${index}`);
+  }
+  const automatic = (query: string) => store.searchSnapshot(query, { limit: 3 },
+    (result) => result, [], true, "current", true);
+  assert.deepEqual((await automatic("Kestrel memory ranking")).items.map((item) => item.id), [match.recordId]);
+  assert.equal((await automatic("memory relevance")).status, "no_match");
+  assert.equal((await automatic("help with work")).status, "no_match");
+  assert.ok(noise.recordId);
+  assert.equal((await store.inspect(noise.recordId)).status, "ok");
+  assert.ok(match.recordId);
+  await store.forget(match.recordId, 1, "forget");
+  assert.equal((await automatic("Kestrel memory ranking")).status, "no_match");
+  await store.setDisabled(true, "disable");
+  await assert.rejects(automatic("Kestrel"), { code: "STORE_DISABLED" });
+});
+
 test("disabled scopes reject ordinary reads/writes but retain data and metadata recovery", async (t) => {
   const f = await fixture(t);
   const store = await f.open();

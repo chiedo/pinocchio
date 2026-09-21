@@ -9,6 +9,7 @@ import { EXTENSION_MEMORY_SERVER, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, To
 import { MemoryWorker } from "./memory-worker-client.js";
 import { isRecord } from "./identity.js";
 import { recentConversationWindow } from "./memory-query.js";
+import { automaticRecallQuery } from "./automatic-recall.js";
 
 export const conversationSettingsSchema = z.object({ enabled: z.boolean() }).strict();
 export async function conversationEnabled(reference: BindingReference) {
@@ -82,16 +83,16 @@ export async function conversationOwner(configRoot: string, current: unknown): P
   return reference ? { reference, server: EXTENSION_MEMORY_SERVER } : undefined;
 }
 
-const stopWords = new Set("a an and are as at be did do does for from have how i in is it its me my of on or our that the this to was we what when which who with you your about".split(" "));
 export async function recallConversation(worker: MemoryWorker, owner: ConversationOwner, input: {
-  sessionId: string; directory: string; prompt: string;
+  sessionId: string; directory: string; prompt: string; previousPrompts?: readonly string[];
 }) {
   if (!await conversationEnabled(owner.reference)) return "";
-  const terms = [...new Set(redactConversation(input.prompt).toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])]
-    .filter((term) => !stopWords.has(term)).slice(0, 12);
   const recent = recentConversationWindow(input.prompt);
+  const query = automaticRecallQuery(redactConversation(input.prompt),
+    input.previousPrompts?.map(redactConversation));
+  if (!recent && !query) return "";
   const args = recent ? { mode: "recent", ...recent }
-    : { query: terms.join(" ").slice(0, 500) || "conversation", mode: "topic" };
+    : { query, mode: "topic" };
   const deadline = Date.now() + 1000;
   const ticket = await worker.call({
     action: "ticket", configRoot: owner.reference.configRoot, root: input.sessionId, recipient: input.sessionId,
