@@ -94,6 +94,8 @@ node dist/src/semantic-cli.js setup --all
 
 This preserves explicit opt-outs. Instruction broadcasts do not install
 dependencies. See [setup and repair](docs/SEMANTIC.md#setup-and-upgrade).
+Commands print readable summaries and actionable errors by default. Add
+`--json` to any command when piping its output to another program.
 
 ### 3. Give it instructions
 

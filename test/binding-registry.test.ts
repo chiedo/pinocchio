@@ -294,7 +294,7 @@ test("CLI registration/status is durable across separate processes", async () =>
   const f = await createProductionFixture();
   async function run(args: string[]) {
     const child = spawn(process.execPath, [
-      fileURLToPath(new URL("../src/bindings-cli.js", import.meta.url)), ...args,
+      fileURLToPath(new URL("../src/bindings-cli.js", import.meta.url)), "--json", ...args,
     ], { env: f.env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";

@@ -9,6 +9,7 @@ import { main as semantic } from "./semantic-cli.js";
 import { main as bindings } from "./bindings-cli.js";
 import { isRecord } from "./identity.js";
 import { ToolError } from "./memory-protocol.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 export async function main(args: string[]) {
   // Administrative subcommands retain their explicit scope/record validation.
@@ -65,15 +66,16 @@ export async function main(args: string[]) {
   });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   try {
-    const result = await main(process.argv.slice(2));
-    const output = result === undefined ? "" : `${JSON.stringify(result)}\n`;
-    process.stdout.write(output, () => process.exit(isRecord(result) && "status" in result && result.status === "degraded" ? 1 : 0));
+    const result = await main(invocation.args);
+    if (result !== undefined) await writeCliResult(result, invocation.json);
+    process.exitCode = isRecord(result) && "status" in result && result.status === "degraded" ? 1 : 0;
   } catch (error) {
     const code = isRecord(error) && typeof error.code === "string" ? error.code : "INSTALL_COMMAND_FAILED";
-    process.stderr.write(`${JSON.stringify({ status: "error", code,
+    writeCliError({ code,
       repair: "For incomplete agent retrieval setup, resolve the error then run semantic setup --all with this same config root.",
-      ...(error instanceof ToolError ? error.details : {}) })}\n`, () =>
-      process.exit(1));
+      ...(error instanceof ToolError ? { details: error.details } : {}) }, invocation.json);
+    process.exitCode = 1;
   }
 }

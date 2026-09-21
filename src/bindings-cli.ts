@@ -7,6 +7,7 @@ import {
 import type { BindingReference, DefinitionOrigin } from "./binding-registry.js";
 import { BoundIdentityAdapter } from "./bound-identity.js";
 import { createBoundMcpServer, BOUND_IDENTITY_TOOL } from "./bound-mcp.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 export function bindingLaunch(reference: BindingReference) {
   return {
@@ -76,15 +77,16 @@ export async function main(args: string[]) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   try {
-    const result = await main(process.argv.slice(2));
+    const result = await main(invocation.args);
     if (result !== undefined) {
-      process.stdout.write(`${JSON.stringify(result)}\n`);
+      await writeCliResult(result, invocation.json);
       if (result.status === "unavailable") process.exitCode = 1;
     }
   } catch (error) {
     const code = error instanceof BindingError ? error.code : "REGISTRY_IO_ERROR";
-    process.stderr.write(`Pinocchio: ${code}\n`);
+    writeCliError({ code }, invocation.json);
     process.exitCode = 1;
   }
 }

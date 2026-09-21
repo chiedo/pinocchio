@@ -7,6 +7,7 @@ import type { BindingReference } from "./binding-registry.js";
 import { enroll, prepareContextExtension, refreshEnrollment, removeEnrollment } from "./enrollment.js";
 import { ToolError } from "./memory-protocol.js";
 import { isRecord } from "./identity.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 export async function main(args: string[], beforeEnroll?: (reference: BindingReference) => Promise<void>) {
   const { positionals, values } = parseArgs({ args, allowPositionals: true, strict: true, options: {
@@ -58,9 +59,12 @@ export async function main(args: string[], beforeEnroll?: (reference: BindingRef
   throw new ToolError("INVALID_ARGUMENTS");
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)))}\n`); }
+  const invocation = cliInvocation(process.argv.slice(2));
+  try { await writeCliResult(await main(invocation.args), invocation.json); }
   catch (error) {
-    process.stderr.write(`${JSON.stringify({ status: "error", code: isRecord(error) && typeof error.code === "string" ? error.code : "ENROLLMENT_FAILED" })}\n`);
+    writeCliError({
+      code: isRecord(error) && typeof error.code === "string" ? error.code : "ENROLLMENT_FAILED",
+    }, invocation.json);
     process.exitCode = 1;
   }
 }

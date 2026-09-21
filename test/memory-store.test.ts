@@ -364,7 +364,8 @@ test("schema ownership, migration checksums and unrelated databases cannot be si
 test("local CLI requires scope, reads JSON from stdin, and supports the complete lifecycle", async (t) => {
   const f = await fixture(t);
   const args = await cliArgs(f.ref);
-  const run = (command: string, extra: string[] = [], stdin?: string) => child(cli, [command, ...args, ...extra], stdin);
+  const run = (command: string, extra: string[] = [], stdin?: string) =>
+    child(cli, ["--json", command, ...args, ...extra], stdin);
   const saved = await run("remember", ["--operation", "cli-save", "--input", "-"], JSON.stringify(note()));
   assert.equal(saved.code, 0, saved.stderr);
   const record = JSON.parse(saved.stdout) as { recordId: string };
@@ -384,7 +385,7 @@ test("local CLI requires scope, reads JSON from stdin, and supports the complete
   assert.equal((await run("list")).code, 1);
   assert.equal((await run("enable", ["--operation", "cli-on"])).code, 0);
   assert.equal((await run("status", ["--query", "not-allowed"])).code, 1);
-  assert.equal((await child(cli, ["status"])).code, 1);
+  assert.equal((await child(cli, ["--json", "status"])).code, 1);
 });
 
 test("documented Bash example completes using only synthetic local data", async (t) => {

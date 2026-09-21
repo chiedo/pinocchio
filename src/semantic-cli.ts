@@ -12,6 +12,7 @@ import { MODEL_ID, MODEL_REVISION, SemanticError } from "./semantic-types.js";
 import type { SemanticConfig } from "./semantic-types.js";
 import { setupRetrieval } from "./semantic-setup.js";
 import { isRecord } from "./identity.js";
+import { cliInvocation, writeCliError, writeCliResult } from "./cli-output.js";
 
 const execute = promisify(execFile);
 export async function main(args: string[]) {
@@ -36,25 +37,29 @@ export async function main(args: string[]) {
     if (!references.length) throw new SemanticError("NO_ENROLLED_AGENTS");
     const agents = [];
     for (const reference of references) {
+      let agent: string | undefined;
       try {
         if (values.all) {
           const binding = await loadBinding(reference);
+          agent = basename(binding.definition.path, ".agent.md");
           if (!(await readFile(binding.definition.path, "utf8")).includes("<!-- pinocchio-memory:v1 -->")) {
-            agents.push({ bindingId: reference.bindingId, status: "skipped", reason: "AGENT_NOT_ENROLLED" });
+            agents.push({ agent, bindingId: reference.bindingId, status: "skipped", reason: "AGENT_NOT_ENROLLED" });
             continue;
           }
         }
-        agents.push({ bindingId: reference.bindingId, ...await setupRetrieval(reference, {
+        agents.push({ ...(agent ? { agent } : {}), bindingId: reference.bindingId, ...await setupRetrieval(reference, {
           mode: values["keyword-only"] ? "keyword" : values.hybrid ? "hybrid" : undefined, python: values.python,
         }) });
       } catch (error) {
-        agents.push({ bindingId: reference.bindingId, status: "failed",
+        agents.push({ ...(agent ? { agent } : {}), bindingId: reference.bindingId, status: "failed",
           code: isRecord(error) && typeof error.code === "string" ? error.code : "SEMANTIC_SETUP_FAILED" });
       }
       if (agents.every((agent) => agent.status === "skipped")) throw new SemanticError("NO_ENROLLED_AGENTS");
     }
-    return { status: agents.some((agent) => agent.status === "failed") ? "degraded" : "ready", agents,
-      repair: "Resolve failed agents and rerun semantic setup. Use --hybrid to enable a previous opt-out, --python for a prepared runtime, or --keyword-only to opt out explicitly." };
+    const status = agents.some((agent) => agent.status === "failed") ? "degraded" : "ready";
+    return { status, agents, ...(status === "degraded" ? {
+      repair: "Resolve failed agents and rerun semantic setup. Use --hybrid to enable a previous opt-out, --python for a prepared runtime, or --keyword-only to opt out explicitly.",
+    } : {}) };
   }
   if (command === "prepare") {
     if (!values.python || !isAbsolute(values.python)) throw new SemanticError("EXPLICIT_PYTHON_PATH_REQUIRED");
@@ -83,15 +88,16 @@ export async function main(args: string[]) {
   throw new SemanticError("INVALID_ARGUMENTS");
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const invocation = cliInvocation(process.argv.slice(2));
   try {
-    const result = await main(process.argv.slice(2));
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    const result = await main(invocation.args);
+    await writeCliResult(result, invocation.json);
     if ("status" in result && result.status === "degraded") process.exitCode = 1;
   }
   catch (error) {
     const code = error instanceof SemanticError || error instanceof BindingError || error instanceof MemoryError
       ? error.code : "SEMANTIC_COMMAND_FAILED";
-    process.stderr.write(`${JSON.stringify({ status: "error", code })}\n`);
+    writeCliError({ code }, invocation.json);
     process.exitCode = 1;
   }
 }
