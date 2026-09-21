@@ -114,9 +114,8 @@ function refreshCloudInventory(owner: ConversationOwner, force = false) {
 function activateJobsOwner(
   owner: ConversationOwner,
   agentName: string,
-  workingDirectory: string,
 ) {
-  localJobs?.setActiveOwner(owner.reference, agentName, workingDirectory);
+  localJobs?.setActiveOwner(owner.reference, agentName);
   if (cloudMonitorOwner === owner.reference.bindingId) return;
   stopCloudMonitor();
   cloudMonitorOwner = owner.reference.bindingId;
@@ -200,7 +199,7 @@ const context = createMemoryHooks(configRoot, async (input) => {
   const agentName = current.agent?.path
     ? basename(current.agent.path, ".agent.md")
     : current.agent?.name ?? "";
-  activateJobsOwner(owner, agentName, input.workingDirectory);
+  activateJobsOwner(owner, agentName);
   const recalled = await context.recall(owner, {
     sessionId: input.sessionId, directory: input.workingDirectory, prompt: input.prompt,
   });
@@ -419,7 +418,7 @@ async function checkBroadcast() {
     const agent = current.agent;
     const owner = await conversationOwner(configRoot, current);
     if (!owner || !agent) {
-      localJobs?.setActiveOwner(undefined, "", directory);
+      localJobs?.setActiveOwner(undefined, "");
       stopCloudMonitor();
       stopCloudMonitor = () => {};
       cloudMonitorOwner = "";
@@ -434,7 +433,6 @@ async function checkBroadcast() {
     activateJobsOwner(
       owner,
       agent.path ? basename(agent.path, ".agent.md") : agent.name,
-      directory,
     );
     await broadcast.heartbeat(owner.reference);
     let metadata = await active.rpc.tools.getCurrentMetadata();

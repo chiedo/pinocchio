@@ -55,8 +55,10 @@ npm run jobs -- publish \
   --confirm
 ```
 
-The selected root session must be in the approved working directory and have
-all required tools initialized before a scheduled or manual run can start.
+The selected root session may be opened from any directory, but it must use the
+job's enrolled agent and have all required tools initialized before a scheduled
+or manual run can start. Each background invocation still runs only in the
+approved working directory.
 Background job agents cannot create, change, or recursively run other jobs.
 Agent-owned local artifacts such as scripts, static files, caches, and job
 support files belong under `~/.pinocchio/<agent-id>/`. Files intended as

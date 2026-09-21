@@ -179,7 +179,6 @@ function publicJob(job: StoredJob, history: StoredRun[] = []) {
 export class LocalJobs {
   private ownerReference: BindingReference | undefined;
   private ownerAgent = "";
-  private workingDirectory = "";
   private timer: NodeJS.Timeout | undefined;
   private ticking = false;
   private forceSourceSync = false;
@@ -194,15 +193,12 @@ export class LocalJobs {
   setActiveOwner(
     reference: BindingReference | undefined,
     agent: string,
-    workingDirectory: string,
   ) {
     const changed = this.ownerReference?.bindingId !== reference?.bindingId ||
       this.ownerReference?.fingerprint !== reference?.fingerprint ||
-      this.ownerAgent !== agent ||
-      this.workingDirectory !== workingDirectory;
+      this.ownerAgent !== agent;
     this.ownerReference = reference;
     this.ownerAgent = agent;
-    this.workingDirectory = workingDirectory;
     if (changed) {
       this.forceSourceSync = true;
       void this.cancelHostedRuns("OWNER_SESSION_CHANGED");
@@ -391,9 +387,7 @@ export class LocalJobs {
     const active = this.ownerReference?.bindingId === reference.bindingId &&
       this.ownerReference.fingerprint === reference.fingerprint &&
       job.ownerFingerprint === reference.fingerprint &&
-      this.ownerAgent === job.ownerAgent &&
-      (this.workingDirectory === job.workingDirectory ||
-        job.source?.workingDirectoryMode === "source");
+      this.ownerAgent === job.ownerAgent;
     if (!this.session || !active) {
       throw Object.assign(new Error("LOCAL_OWNER_SESSION_UNAVAILABLE"), {
         code: "LOCAL_OWNER_SESSION_UNAVAILABLE",
@@ -554,9 +548,7 @@ export class LocalJobs {
         this.ownerReference.bindingId,
         now.toISOString(),
       )) {
-        if (job.ownerAgent !== this.ownerAgent ||
-            (job.workingDirectory !== this.workingDirectory &&
-              job.source?.workingDirectoryMode !== "source")) continue;
+        if (job.ownerAgent !== this.ownerAgent) continue;
         this.store.setNextDue(
           job.uid,
           nextCronOccurrence(job.cron, job.timezone, now).toISOString(),

@@ -298,7 +298,7 @@ test("local jobs preview, publish and run through the native task API", async ()
     const store = await JobsStore.open(configRoot);
     const local = new LocalJobs(store, fakeSession, resolveSource);
     try {
-      local.setActiveOwner(reference, "local-agent", work);
+      local.setActiveOwner(reference, "local-agent");
       const preview = await local.preview(reference, {
         id: "daily-summary",
         prompt: "Summarize approved inputs.",
