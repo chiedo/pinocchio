@@ -104,13 +104,43 @@ Snippets include record ID, revision, memory kind, evidence kinds,
 source/confirmation dates and recording date. They remain historical evidence,
 not higher-priority instructions.
 
-`no_match` is distinct from budget exhaustion. In keyword-only mode, explicit
-search matches a literal phrase or all extracted query terms; long natural-
-language questions and timestamps can miss otherwise relevant records. Start
-with a few distinctive topic words. Query text such as "last 15 minutes" is not
-a structured time filter. Automatic conversation recall has a separate
-recent-conversation fallback; neither path guarantees that an earlier message
-was captured. Removing the budget cutoff does not change capture or matching.
+Both the extension's `pinocchio_memory_search` and MCP's `agent_memory_search`
+accept recent-history requests without topic keywords:
+
+```json
+{"mode":"recent","since":"2026-05-12T13:45:00Z","before":"2026-05-12T14:00:00Z"}
+```
+
+Recent mode reads captured conversations by source timestamp, newest first:
+`since` is inclusive and `before` is exclusive. The maximum window is 30 days;
+omitting `before` uses now and omitting `since` uses 30 days before the end.
+Explicit bounds should be used for calendar periods and ambiguous date phrases.
+Offsets are normalized to UTC. Query keywords are ignored in this mode.
+Only active/tentative captures in the bound agent scope qualify, not curated
+notes, forgotten/superseded entries, or messages from the requesting session.
+The direct-MCP fallback cannot identify a real host session and can only exclude
+its synthetic process session. Results remain partial, subject to the existing
+three-snippet/800-byte cap; evidence labels and timestamps are preserved.
+
+Simple query-only recaps such as "What did we just discuss?" or "What did we
+discuss in the past 15 minutes?" also select recent mode. Numeric minute/hour/day
+windows and an optional `before <ISO timestamp>` anchor are recognized. Automatic
+prompt recall detects these questions before removing filler words, so the first
+response can use recent history without a model tool call. This is deliberately
+not a general natural-language date parser. Set `mode:"topic"` to force topic search.
+
+Topic tool queries ignore common English filler words, prefer literal/all-term
+matches, then fall back to ranked word overlap if no exact match exists.
+Fallback requires at least two meaningful query words, avoiding unrelated
+results that share only one generic word. Single-term searches still work normally.
+Optional semantic retrieval is unchanged. The administrative storage CLI keeps
+its exact-search semantics for precise inspection and deletion checks.
+
+`no_match` remains distinct from budget exhaustion. `reason` is
+`NO_CAPTURED_CONVERSATION_IN_WINDOW` for empty recent history and
+`NO_MATCHING_MEMORY` for an empty topic search. No retained capture does **not**
+prove no conversation happened: capture may have been paused, unavailable, or
+pruned. This change neither backfills transcripts nor changes retention.
 
 `agent_memory_save` supports these strict argument shapes:
 

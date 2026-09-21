@@ -55,6 +55,10 @@ export function normalizeText(value: string) {
 export function keywords(value: string) {
   return [...new Set(normalizeText(value).match(/[\p{L}\p{N}_]+/gu) ?? [])];
 }
+const searchStopWords = new Set("a an and are as at be been did do does for from had has have how i in is it its me my of on or our that the this to was we were what when which who with you your about please remember recall memory".split(" "));
+export function searchKeywords(value: string) {
+  return keywords(value).filter((term) => !searchStopWords.has(term));
+}
 export async function validateEvidence(note: Note, binding: BindingRecord): Promise<ValidatedEvidence[]> {
   return Promise.all(note.evidence.map(async (evidence): Promise<ValidatedEvidence> => {
     const { reference } = evidence;
