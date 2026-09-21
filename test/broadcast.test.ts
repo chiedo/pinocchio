@@ -17,7 +17,7 @@ import { MANAGED_AGENT_TOOLS } from "../src/enrollment.js";
 
 async function fixture(tools?: string) {
   const root = await mkdtemp(join(tmpdir(), "pinocchio-broadcast-"));
-  const options = { configRoot: root, name: "first", global: true, ...(tools ? { tools } : {}) };
+  const options = { configRoot: root, name: "first", global: true, retrieval: "keyword" as const, ...(tools ? { tools } : {}) };
   try {
     await setup(options);
     const profile = join(root, "agents", "first.agent.md");
@@ -267,7 +267,7 @@ test("changed snapshots retry while revoked bindings and switched agents cannot 
     assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "updated");
     request = await f.request();
     await f.listener.prepare(f.reference, request.targets[0]!.tools);
-    await setup({ configRoot: f.root, name: "second", global: true });
+    await setup({ configRoot: f.root, name: "second", global: true, retrieval: "keyword" });
     const second = await bindingForDefinition(f.root, join(f.root, "agents", "second.agent.md"));
     assert.ok(second);
     await f.listener.heartbeat(second);
@@ -282,13 +282,13 @@ test("changed snapshots retry while revoked bindings and switched agents cannot 
 test("broadcast excludes removed agents and reports partial refresh failures", async () => {
   const f = await fixture();
   try {
-    await setup({ configRoot: f.root, name: "second", global: true });
+    await setup({ configRoot: f.root, name: "second", global: true, retrieval: "keyword" });
     const second = join(f.root, "agents", "second.agent.md");
     await writeFile(second, (await readFile(second, "utf8")).replace("<!-- /pinocchio-memory:v1 -->", ""));
     const result = await upgradeBroadcast(f.root);
     assert.equal(result.agents.find((agent) => agent.agent === "first")?.status, "refreshed");
     assert.equal(result.agents.find((agent) => agent.agent === "second")?.code, "MANAGED_BLOCK_CHANGED");
-    await setup({ ...f.options, remove: true });
+    await setup({ configRoot: f.root, name: f.options.name, remove: true });
     assert.equal((await upgradeBroadcast(f.root)).agents.some((agent) => agent.agent === "first"), false);
   } finally { await rm(f.root, { recursive: true }); }
 });

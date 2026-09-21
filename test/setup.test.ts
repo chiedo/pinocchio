@@ -10,7 +10,7 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
   try {
     const native = '{"model":"unchanged"}\n';
     await writeFile(join(root, "config.json"), native);
-    const options = { configRoot: root, name: "synthetic-agent", global: true };
+    const options = { configRoot: root, name: "synthetic-agent", global: true, retrieval: "keyword" as const };
     assert.equal((await setup(options)).status, "ready");
     const profile = join(root, "agents", "synthetic-agent.agent.md");
     const original = await readFile(profile, "utf8");
@@ -30,7 +30,7 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
     assert.equal(await readFile(profile, "utf8"), original);
     assert.equal(await readFile(join(root, "config.json"), "utf8"), native);
     await writeFile(profile, original + "\nPreserve this user instruction.\n");
-    assert.equal((await setup({ ...options, remove: true })).status, "removed");
+    assert.equal((await setup({ configRoot: root, name: options.name, remove: true })).status, "removed");
     const removed = await readFile(profile, "utf8");
     assert.doesNotMatch(removed, /pinocchio-memory:v1|pinocchio_jobs/);
     assert.match(removed, /Preserve this user instruction/);
@@ -46,7 +46,7 @@ test("agents share one instructions file without overwriting authored rules", as
   try {
     const shared = join(root, "pinocchio", "AGENTS.md");
     for (const name of ["first", "second"]) {
-      const result = await setup({ configRoot: root, name, global: true });
+      const result = await setup({ configRoot: root, name, global: true, retrieval: "keyword" });
       assert.equal(result.sharedInstructions, shared);
       const profile = await readFile(join(root, "agents", `${name}.agent.md`), "utf8");
       assert.ok(profile.includes(`Shared Pinocchio instructions: ${JSON.stringify(shared)}`));
@@ -58,7 +58,7 @@ test("agents share one instructions file without overwriting authored rules", as
         await writeFile(shared, "User-authored shared rule.\n");
       }
     }
-    await setup({ configRoot: root, name: "first", global: true });
+    await setup({ configRoot: root, name: "first", global: true, retrieval: "keyword" });
     assert.equal(await readFile(shared, "utf8"), "User-authored shared rule.\n");
     await setup({ configRoot: root, name: "first", remove: true });
     assert.equal(await readFile(shared, "utf8"), "User-authored shared rule.\n");
@@ -68,7 +68,7 @@ test("agents share one instructions file without overwriting authored rules", as
 test("setup migrates pre-shared profiles exactly and rejects unsafe shared files", async () => {
   const root = await mkdtemp(join(tmpdir(), "pinocchio-shared-upgrade-"));
   try {
-    const options = { configRoot: root, name: "old-agent", global: true };
+    const options = { configRoot: root, name: "old-agent", global: true, retrieval: "keyword" as const };
     await setup(options);
     const path = join(root, "agents", "old-agent.agent.md");
     const shared = join(root, "pinocchio", "AGENTS.md");
@@ -91,7 +91,7 @@ test("setup migrates pre-shared profiles exactly and rejects unsafe shared files
 test("setup upgrades legacy guidance without changing custom text, CRLF, settings, or binding", async () => {
   const root = await mkdtemp(join(tmpdir(), "pinocchio-setup-$&-"));
   try {
-    const options = { configRoot: root, name: "legacy-agent", global: true };
+    const options = { configRoot: root, name: "legacy-agent", global: true, retrieval: "keyword" as const };
     await setup(options);
     const profile = join(root, "agents", "legacy-agent.agent.md");
     const receipt = join(root, "pinocchio", "setup", "legacy-agent.json");

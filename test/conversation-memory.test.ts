@@ -20,7 +20,7 @@ test("capture persists without model saves; next-session recall is automatic and
   const root = await mkdtemp(join(tmpdir(), "pinocchio-conversation-"));
   const worker = new MemoryWorker();
   try {
-    await setup({ configRoot: root, name: "synthetic-conversation", global: true });
+    await setup({ configRoot: root, name: "synthetic-conversation", global: true, retrieval: "keyword" });
     const reference = JSON.parse(await readFile(join(root, "pinocchio/setup/synthetic-conversation.json"), "utf8")) as BindingReference;
     const binding = await loadBinding(reference);
     const owner = { reference, server: EXTENSION_MEMORY_SERVER };

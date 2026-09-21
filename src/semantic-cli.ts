@@ -1,28 +1,61 @@
 import { execFile } from "node:child_process";
 import { promisify, parseArgs } from "node:util";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { BindingError, configRootPath, privateDirectory } from "./binding-registry.js";
+import { BindingError, configRootPath, listBindingReferences, loadBinding, privateDirectory } from "./binding-registry.js";
 import { MemoryError } from "./memory-types.js";
 import { rebuildIndex, cleanupIndex, indexStatus } from "./semantic-index.js";
 import { SemanticProcess, ENGINE_PATH } from "./semantic-process.js";
 import { semanticConfig, writeAtomic } from "./semantic-files.js";
 import { MODEL_ID, MODEL_REVISION, SemanticError } from "./semantic-types.js";
 import type { SemanticConfig } from "./semantic-types.js";
+import { setupRetrieval } from "./semantic-setup.js";
+import { isRecord } from "./identity.js";
 
 const execute = promisify(execFile);
 export async function main(args: string[]) {
   const { positionals, values } = parseArgs({ args, strict: true, allowPositionals: true, options: {
     "config-root": { type: "string" }, python: { type: "string" },
     binding: { type: "string" }, fingerprint: { type: "string" },
+    all: { type: "boolean" }, "keyword-only": { type: "boolean" }, hybrid: { type: "boolean" },
   } });
   if (positionals.length !== 1) throw new SemanticError("INVALID_ARGUMENTS");
   const command = positionals[0];
-  const allowed = command === "prepare" ? ["config-root", "python"]
+  const allowed = command === "setup" ? ["config-root", "python", "binding", "fingerprint", "all", "keyword-only", "hybrid"]
+    : command === "prepare" ? ["config-root", "python"]
     : ["config-root", "binding", "fingerprint"];
   if (Object.keys(values).some((key) => !allowed.includes(key))) throw new SemanticError("INVALID_ARGUMENTS");
   const root = configRootPath(values["config-root"]);
+  if (command === "setup") {
+    if ((values["keyword-only"] && (values.hybrid || values.python)) ||
+        (values.all && (values.binding || values.fingerprint)) ||
+        (!values.all && (!values.binding || !values.fingerprint))) throw new SemanticError("INVALID_ARGUMENTS");
+    const references = values.all ? await listBindingReferences(root)
+      : [{ configRoot: root, bindingId: values.binding!, fingerprint: values.fingerprint! }];
+    if (!references.length) throw new SemanticError("NO_ENROLLED_AGENTS");
+    const agents = [];
+    for (const reference of references) {
+      try {
+        if (values.all) {
+          const binding = await loadBinding(reference);
+          if (!(await readFile(binding.definition.path, "utf8")).includes("<!-- pinocchio-memory:v1 -->")) {
+            agents.push({ bindingId: reference.bindingId, status: "skipped", reason: "AGENT_NOT_ENROLLED" });
+            continue;
+          }
+        }
+        agents.push({ bindingId: reference.bindingId, ...await setupRetrieval(reference, {
+          mode: values["keyword-only"] ? "keyword" : values.hybrid ? "hybrid" : undefined, python: values.python,
+        }) });
+      } catch (error) {
+        agents.push({ bindingId: reference.bindingId, status: "failed",
+          code: isRecord(error) && typeof error.code === "string" ? error.code : "SEMANTIC_SETUP_FAILED" });
+      }
+      if (agents.every((agent) => agent.status === "skipped")) throw new SemanticError("NO_ENROLLED_AGENTS");
+    }
+    return { status: agents.some((agent) => agent.status === "failed") ? "degraded" : "ready", agents,
+      repair: "Resolve failed agents and rerun semantic setup. Use --hybrid to enable a previous opt-out, --python for a prepared runtime, or --keyword-only to opt out explicitly." };
+  }
   if (command === "prepare") {
     if (!values.python || !isAbsolute(values.python)) throw new SemanticError("EXPLICIT_PYTHON_PATH_REQUIRED");
     await mkdir(root, { recursive: true, mode: 0o700 });
@@ -50,7 +83,11 @@ export async function main(args: string[]) {
   throw new SemanticError("INVALID_ARGUMENTS");
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)))}\n`); }
+  try {
+    const result = await main(process.argv.slice(2));
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if ("status" in result && result.status === "degraded") process.exitCode = 1;
+  }
   catch (error) {
     const code = error instanceof SemanticError || error instanceof BindingError || error instanceof MemoryError
       ? error.code : "SEMANTIC_COMMAND_FAILED";

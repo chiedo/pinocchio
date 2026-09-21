@@ -59,6 +59,7 @@ export async function createBroadcastFixture(
     await setup({
       configRoot: config,
       name: "broadcast-agent",
+      retrieval: "keyword",
       tools: "view,web_search,exec",
       ...(scoped ? { repository } : { global: true }),
     });
@@ -66,6 +67,7 @@ export async function createBroadcastFixture(
       await setup({
         configRoot: config,
         name: "other-agent",
+        retrieval: "keyword",
         global: true,
       });
       const otherProfile = join(config, "agents", "other-agent.agent.md");

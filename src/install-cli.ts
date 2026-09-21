@@ -22,11 +22,12 @@ export async function main(args: string[]) {
     "config-root": { type: "string" }, "preview-platform": { type: "boolean" },
     "host-stopped": { type: "boolean" }, name: { type: "string" }, repository: { type: "string" },
     global: { type: "boolean" }, tools: { type: "string" }, agent: { type: "string" },
+    "keyword-only": { type: "boolean" }, hybrid: { type: "boolean" }, python: { type: "string" },
   } });
   const command = positionals[0] ?? "";
   const allowed: Record<string, string[]> = {
     install: ["preview-platform"], upgrade: ["preview-platform", "host-stopped"],
-    doctor: ["preview-platform"], create: ["name", "repository", "global", "tools"],
+    doctor: ["preview-platform"], create: ["name", "repository", "global", "tools", "keyword-only", "hybrid", "python"],
     status: [], start: ["agent"], disable: [], enable: [],
     uninstall: ["host-stopped"], rollback: ["host-stopped"], "discard-previous": ["host-stopped"],
   };
@@ -48,13 +49,16 @@ export async function main(args: string[]) {
       case "discard-previous": return discardPrevious(paths, values["host-stopped"] ?? false);
       case "create": {
         if (!values.name || !/^[a-z][a-z0-9-]{0,39}$/.test(values.name) ||
+            (values["keyword-only"] && (values.hybrid || values.python)) ||
             Boolean(values.global) === Boolean(values.repository)) throw new ToolError("EXPLICIT_NAME_AND_SCOPE_REQUIRED");
         const agents = join(paths.root, "agents");
         await mkdir(agents, { recursive: true, mode: 0o700 });
         return createAgent(paths, ["--name", values.name, "--origin-root", agents,
           "--definition", join(agents, `${values.name}.agent.md`),
           ...(values.repository ? ["--repository", values.repository] : ["--global"]),
-          ...(values.tools ? ["--tools", values.tools] : [])]);
+          ...(values.tools ? ["--tools", values.tools] : [])], {
+            mode: values["keyword-only"] ? "keyword" : values.hybrid ? "hybrid" : undefined, python: values.python,
+          });
       }
       default: throw new ToolError("INVALID_ARGUMENTS");
     }
@@ -64,10 +68,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const result = await main(process.argv.slice(2));
     const output = result === undefined ? "" : `${JSON.stringify(result)}\n`;
-    process.stdout.write(output, () => process.exit(0));
+    process.stdout.write(output, () => process.exit(isRecord(result) && "status" in result && result.status === "degraded" ? 1 : 0));
   } catch (error) {
     const code = isRecord(error) && typeof error.code === "string" ? error.code : "INSTALL_COMMAND_FAILED";
     process.stderr.write(`${JSON.stringify({ status: "error", code,
+      repair: "For incomplete agent retrieval setup, resolve the error then run semantic setup --all with this same config root.",
       ...(error instanceof ToolError ? error.details : {}) })}\n`, () =>
       process.exit(1));
   }

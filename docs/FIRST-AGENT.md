@@ -25,6 +25,11 @@ If you already have an agent with this name, use a new name rather than replacin
 its role. For project-only memory, use `--repository /absolute/path/to/project`
 instead of `--global`.
 
+Default setup requires Python 3.12 and prepares local semantic search, including
+about 24 MB of model files plus pinned Python dependencies. Notes stay local
+during embedding. To opt out, append `--keyword-only`; that agent stays
+keyword-only until you explicitly rerun with `--hybrid`.
+
 ## 2. Give it a useful role and tools
 
 Use [the Chief of Staff template](../examples/chief-of-staff.agent.md).
