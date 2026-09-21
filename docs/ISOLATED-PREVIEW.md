@@ -69,8 +69,9 @@ export PINOCCHIO="$CONFIG_ROOT/pinocchio-runtime/pinocchio"
 "$PINOCCHIO" status
 ```
 
-No automatic embedding download occurs. The initial preview uses keyword search
-with an explicit degradation reason. Optional hybrid setup is below.
+Installing the runtime alone does not download embeddings. Agent creation below
+prepares hybrid search by default and requires Python 3.12. Add `--keyword-only`
+to the create command to opt out persistently.
 
 ## 2. Create each agent from a blank CLI session
 
@@ -143,7 +144,7 @@ Try the same question in `reviewer`: it should not receive `builder`'s record.
 Search/save invocation by a real model remains **best-effort**, not guaranteed.
 An unavailable tool or unknown save outcome must not be described as success.
 
-## Controls and optional hybrid search
+## Controls and local hybrid search
 
 ```bash
 "$PINOCCHIO" disable
@@ -156,13 +157,13 @@ Disable preserves records and profiles; it stops managed scopes' model reads and
 writes. Enable preserves a scope that was already disabled before the installer
 disabled it. Administrative inspection remains available.
 
-For local embeddings, create a separate private environment:
+Agent creation manages a private Python environment and prepares local
+embeddings by default. For existing agents after a runtime upgrade:
 
 ```bash
-python3.12 -m venv "$CONFIG_ROOT/pinocchio-python"
-"$CONFIG_ROOT/pinocchio-python/bin/pip" install \
-  -r "$CONFIG_ROOT/pinocchio-runtime/app/semantic/requirements.txt"
-"$PINOCCHIO" semantic prepare --python "$CONFIG_ROOT/pinocchio-python/bin/python"
+"$PINOCCHIO" semantic setup --all
+# Preserve keyword-only choices by default; override only when intended:
+"$PINOCCHIO" semantic setup --all --hybrid
 ```
 
 This **explicitly downloads** 23,684,031 bytes of pinned Apache-2.0 MiniLM
@@ -170,7 +171,13 @@ model/tokenizer assets. Python packages need additional disk space; allow
 approximately 1 GiB RAM for query/build processes. Model hashes are verified.
 See [SEMANTIC.md](SEMANTIC.md) for the pinned versions, limits and cache behavior.
 Python wheel dependencies are version-pinned; npm dependencies additionally use
-the integrity-checked lockfile. macOS hybrid retrieval is not certified.
+the integrity-checked lockfile. A macOS ARM64 semantic smoke probe is not full
+packaged-host certification.
+
+Use `--python /absolute/path/to/prepared/python` for your own pinned environment,
+or `--keyword-only` to opt out. Failed retrieval preparation preserves enrollment:
+repair with `semantic setup`, not a second `create`. Setup exits nonzero for
+incomplete indexes or runtimes instead of claiming hybrid readiness.
 
 The launcher also forwards `bindings`, `memory`, and `semantic` commands:
 use the exact binding/fingerprint, namespace and scope returned during setup.

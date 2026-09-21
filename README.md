@@ -41,6 +41,7 @@ their own history instead of sharing one pool.
 - macOS or Linux
 - [Copilot CLI](https://github.com/github/copilot-cli), Git, npm
 - Node.js **22.18–22.x**
+- Python **3.12** for default local semantic search (or explicitly use `--keyword-only`)
 
 ## Quick start
 
@@ -76,6 +77,23 @@ npm run setup -- --name reviewer --repository /absolute/path/to/your/project
 Run this again with a different `--name` for each agent you want — a
 `builder`, a `reviewer`, a `researcher`, whatever your workflow needs. Setup
 preserves any custom instructions already in an existing profile.
+
+Setup now prepares **local semantic + keyword search by default**. The first
+agent downloads about 24 MB of pinned model files plus Python dependencies into
+a managed environment; subsequent agents share that runtime, not their memories.
+Nothing is uploaded for embedding. Setup reports ready only after indexing and
+a real local search succeed. Add `--keyword-only` to opt out persistently, or
+`--hybrid` to re-enable later.
+
+For existing enrolled agents, after building the reviewed update:
+
+```bash
+npm run build
+node dist/src/semantic-cli.js setup --all
+```
+
+This preserves explicit opt-outs. Instruction broadcasts do not install
+dependencies. See [setup and repair](docs/SEMANTIC.md#setup-and-upgrade).
 
 ### 3. Give it instructions
 

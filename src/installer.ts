@@ -13,6 +13,8 @@ import { MemoryStore } from "./memory-store.js";
 import { ToolError } from "./memory-protocol.js";
 import { readPrivateJson, writeAtomic } from "./semantic-files.js";
 import { pinnedCliPath, PUBLIC_NODE, packageRelease, releaseRoot, releaseSchema, verifyRelease } from "./release.js";
+import { setupRetrieval } from "./semantic-setup.js";
+import type { RetrievalSetupOptions } from "./semantic-setup.js";
 
 const execute = promisify(execFile);
 const stateSchema = z.object({
@@ -211,7 +213,7 @@ export async function status(paths: Locations) {
     rollbackAvailable: Boolean(state.previous), liveCertification: state.release.liveCertification,
     runtime: paths.app, privateState: [join(paths.root, "pinocchio"), join(paths.root, "agent-memories")] };
 }
-export async function createAgent(paths: Locations, args: string[]) {
+export async function createAgent(paths: Locations, args: string[], retrieval: RetrievalSetupOptions = {}) {
   const state = await stateAt(paths);
   if (!state.installed || !state.enabled) throw new ToolError("INSTALLATION_DISABLED");
   const result = await enrollmentCommand(["create", "--config-root", paths.root, ...args],
@@ -219,7 +221,8 @@ export async function createAgent(paths: Locations, args: string[]) {
       state.enrollments.push(reference);
       await writeAtomic(paths.state, state);
     });
-  return result;
+  if (!("reference" in result)) throw new ToolError("SETUP_REFERENCE_MISSING");
+  return { ...result, retrieval: await setupRetrieval(result.reference, retrieval) };
 }
 async function storeFor(reference: BindingReference) {
   const binding = await loadBinding(reference);

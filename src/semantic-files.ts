@@ -43,6 +43,22 @@ export async function semanticConfig(root: string) {
   }
   return value.data;
 }
+const retrievalSchema = z.object({ mode: z.enum(["hybrid", "keyword"]) }).strict();
+export type RetrievalMode = z.infer<typeof retrievalSchema>["mode"];
+export async function retrievalMode(reference: BindingReference): Promise<RetrievalMode> {
+  await loadBinding(reference);
+  try {
+    await privateDirectory(join(reference.configRoot, "pinocchio", "retrieval"), false);
+    return retrievalSchema.parse(await readPrivateJson(
+      join(reference.configRoot, "pinocchio", "retrieval", `${reference.bindingId}.json`), 4096)).mode;
+  } catch (error) { if (hasCode(error, "ENOENT")) return "hybrid"; throw error; }
+}
+export async function setRetrievalMode(reference: BindingReference, mode: RetrievalMode) {
+  await loadBinding(reference);
+  const directory = join(reference.configRoot, "pinocchio", "retrieval");
+  await privateDirectory(directory, true);
+  await writeAtomic(join(directory, `${reference.bindingId}.json`), retrievalSchema.parse({ mode }));
+}
 export async function indexDirectory(reference: BindingReference, create = false) {
   const binding = await loadBinding(reference);
   const database = await storePath(reference.configRoot, binding.namespace, false);

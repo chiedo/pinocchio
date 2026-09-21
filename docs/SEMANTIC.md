@@ -1,6 +1,7 @@
 # Local semantic retrieval
 
-Semantic retrieval is optional. SQLite remains authoritative; an unavailable,
+Semantic retrieval is enabled by default during agent setup, with an explicit
+per-agent keyword-only opt-out. SQLite remains authoritative; an unavailable,
 warming, corrupt or incompatible semantic index explicitly falls back to keyword
 search. No model-facing tool name, namespace authority, snippet limit or context
 budget changes.
@@ -37,25 +38,71 @@ wheels; each vector requires 1,536 bytes before metadata. Each scope is bounded
 to 5,000 active/tentative records and 4 MiB of raw content per rebuild, with an
 8 MiB IPC-frame cap. Exceeding a bound is explicit; no partial index is published.
 
-## Explicit setup
+## Setup and upgrade
 
-Build the checkout and prepare an isolated Python environment. These are
-development commands, not a production installer:
+Normal `npm run setup -- --name builder --global` and packaged `create` now
+prepare hybrid retrieval before reporting ready. Python 3.12 must already be
+available as `python3.12` or `python3`; Pinocchio does not install Python itself.
+Setup creates `<config-root>/pinocchio/semantic-runtime/venv`, checks its runtime,
+and installs the pinned binary wheels if that check fails. Model preparation
+checks exact sizes/hashes. It then indexes the agent's existing records (or an
+empty store), performs a real search, and verifies index/cleanup state.
+
+The runtime and public model are shared within a config root. Memory stores and
+derived indexes remain agent/scope-isolated. No real or synthetic readiness
+notes are written to your memory.
+
+Upgrade existing enrolled bindings without changing their profiles or identity:
 
 ```bash
-npm ci
 npm run build
-python3 -m venv .venv
-.venv/bin/pip install -r semantic/requirements.txt
+node dist/src/semantic-cli.js setup --config-root "$CONFIG_ROOT" --all
+# Explicit opt-out for every enrolled binding:
+node dist/src/semantic-cli.js setup --config-root "$CONFIG_ROOT" --all --keyword-only
+# Explicitly re-enable previous opt-outs:
+node dist/src/semantic-cli.js setup --config-root "$CONFIG_ROOT" --all --hybrid
 ```
 
-Use Python 3.12 for the validated setup. Dependencies require at least 3.12;
-other interpreter versions are not certified here. Then choose the same
-private config root used by your bindings:
+For one binding, replace `--all` with `--binding "$BINDING_ID" --fingerprint
+"$FINGERPRINT"`. Repeating normal setup with the same name and scope also
+upgrades that agent. Omitted mode flags preserve an existing opt-out; older
+bindings without a preference default to hybrid. Removed enrollments and revoked
+bindings are not re-enabled. Disabled memory remains disabled and cannot claim
+hybrid readiness.
+
+Preferences live in `pinocchio/retrieval/<binding-id>.json`; choosing keyword
+mode prevents semantic searches even when another agent has enabled the shared
+runtime. Opting out does not delete records, models, indexes, or cached vectors.
+
+Batch setup reports each failure and exits nonzero if any agent fails. An
+interrupted preparation preserves the enrolled identity and memories: fix the
+error and rerun, rather than creating another agent. `--keyword-only` is an
+explicit alternative, not an automatic success-shaped fallback.
+
+| Failure | Repair |
+|---|---|
+| `SEMANTIC_PYTHON_3_12_REQUIRED` | Install Python 3.12 yourself, supply a prepared interpreter with `--python`, or opt out. |
+| `SEMANTIC_DEPENDENCY_INSTALL_FAILED` | Check network access and binary-wheel availability for the pinned requirements; retry. |
+| `SEMANTIC_EXPLICIT_PYTHON_DEPENDENCIES_REQUIRED` | Supply an existing absolute Python path with all pinned requirements; Pinocchio never pip-modifies that interpreter. |
+| `SEMANTIC_MODEL_PREPARE_FAILED` | Check network access and the pinned model cache's integrity/permissions; retry preparation after resolving the cause. |
+| Invalid/unavailable existing runtime | Existing configuration is not silently replaced. Repair it or explicitly prepare a replacement with `--python`. |
+| `SEMANTIC_SETUP_BUSY` | Wait for the current setup. After verifying no setup process remains, remove only `pinocchio/semantic-setup.lock` and retry. |
+| `SEMANTIC_INDEX_NOT_CURRENT` | Resolve pending index/cleanup work and retry; readiness is not claimed for an incomplete index. |
+
+Instruction broadcasts and packaged **runtime** upgrades do not install Python
+dependencies. After a reviewed runtime upgrade, run `semantic setup --all` to
+provision existing agents. Normal search never downloads dependencies/models.
+
+### Bring your own Python environment
+
+The low-level preparation command remains available. Use Python 3.12 for the
+validated runtime and keep the environment private:
 
 ```bash
+python3.12 -m venv /absolute/path/to/private/venv
+/absolute/path/to/private/venv/bin/pip install -r semantic/requirements.txt
 node dist/src/semantic-cli.js prepare \
-  --config-root "$CONFIG_ROOT" --python "$PWD/.venv/bin/python"
+  --config-root "$CONFIG_ROOT" --python /absolute/path/to/private/venv/bin/python
 ```
 
 **Prepare downloads the pinned public model files.** It checks exact sizes and
@@ -145,11 +192,11 @@ ID/revision set still matches the snapshot, atomically replaces and syncs the
 active pointer, and completes matching pending index jobs. A concurrent edit
 returns `STALE_INDEX_BUILD`; source records remain untouched and jobs retry.
 
-The authoritative SQLite schema is unchanged. To revert to keyword-only mode,
-stop the memory processes and move `pinocchio/semantic.json` aside, then restart.
-This preserves records, runtime assets and derived generations; it does not
-claim to delete cached vectors. The previous keyword-only runtime ignores
-these derived files. Restoring the configuration re-enables local retrieval.
+The authoritative SQLite schema is unchanged. To switch an agent to keyword-only,
+use `semantic setup --keyword-only` with its explicit binding/fingerprint, or
+repeat normal setup with `--keyword-only`. This preserves records and derived
+generations; it does not claim to delete cached vectors. Use `--hybrid` to
+re-enable retrieval.
 
 The filesystem pointer and SQLite are **not a distributed transaction**. A crash
 after pointer publication but before job commit can leave a valid generation

@@ -60,7 +60,7 @@ test("clean custom-root install, native CLI diagnostic and reversible agent life
         { cwd: root, timeout: 30_000, maxBuffer: 16_384 });
       return JSON.parse(result.stdout) as Record<string, unknown>;
     }
-    const created = await installed("create", "--name", "synthetic-agent", "--global", "--tools", "view,task");
+    const created = await installed("create", "--name", "synthetic-agent", "--global", "--tools", "view,task", "--keyword-only");
     assert.ok(created.reference);
     const reference = created.reference as BindingReference;
     const binding = await loadBinding(reference);

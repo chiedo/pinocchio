@@ -14,6 +14,8 @@ behavior after restarting the CLI with the rebuilt extension.
 ## Install
 
 Requires an existing `copilot` on PATH, Node.js 22.18 or newer **22.x**, and npm.
+Default hybrid search also requires Python **3.12** on PATH; setup does not
+install the interpreter. Add `--keyword-only` if you do not want embeddings.
 Linux and macOS are preview targets; live-model certification remains unvalidated.
 
 Clone this repository into a location you will keep, then run:
@@ -28,6 +30,34 @@ This creates the `pinocchio` agent in your existing Copilot configuration
 unrelated agent files or change your login, model, native memory, or permissions.
 For another name, append `--name builder`. For intentionally cross-repository
 memory, use `--global` instead of `--repository`.
+
+Setup creates a private managed Python environment, installs pinned binary
+dependencies, downloads about 24 MB of hash-verified model/tokenizer files, and
+builds this agent's index. It reuses a healthy runtime for later agents. Only
+public dependencies/models are downloaded; notes are embedded locally. A ready
+result includes the retrieval mode and follows a successful real search.
+
+Repeat the same setup command to upgrade one agent without changing its
+identity, instructions, scope, or memories. `--keyword-only` persists for that
+agent even when another agent enables the shared runtime; `--hybrid` reverses
+that choice. `--python /absolute/path/to/prepared/python` uses an existing
+environment with the exact `semantic/requirements.txt` dependencies without
+installing into it.
+
+For all existing enrolled agents, build the reviewed update and run:
+
+```bash
+npm run build
+node dist/src/semantic-cli.js setup --all
+# Add --config-root /absolute/path/to/config for a custom installation.
+```
+
+Explicit opt-outs are retained. Failures exit nonzero with per-agent results,
+not a misleading ready status. Enrollment survives an interrupted preparation:
+fix the reported problem and repeat the same command, or choose `--keyword-only`.
+Do not delete/recreate the agent. See [semantic repair](SEMANTIC.md#setup-and-upgrade).
+`broadcast -- upgrade` remains a dependency-free instruction/runtime refresh;
+it does not provision semantic search.
 
 The generated profile tells the agent its filename-based ID, exact profile path,
 configuration root, and memory scope. It also explains the YAML settings, authored
@@ -76,8 +106,8 @@ by removing the agent's memory integration.
 
 Captured text is chunked into SQLite notes with speaker, time, and source IDs.
 Assistant text is marked tentative, never treated as a user-confirmed fact.
-Keyword/recency recall works immediately; optional FAISS retrieval is used when
-configured. Raw tool output, hidden reasoning, attachments, and system-injected
+Topic recall uses local FAISS plus keywords after default setup; chronological
+recall does not require embeddings. Raw tool output, hidden reasoning, attachments, and system-injected
 messages are excluded. Recognizable credentials and identifiers are redacted,
 but pattern matching cannot guarantee that all sensitive text is detected.
 Pause before discussing anything you do not want retained.

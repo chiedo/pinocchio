@@ -98,13 +98,21 @@ def offline(event, _args):
         raise RuntimeError("SEMANTIC_NETWORK_DISABLED")
 
 
+def check_runtime():
+    for line in Path(__file__).with_name("requirements.txt").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            package, version = line.strip().split("==")
+            require(importlib.metadata.version(package) == version, "SEMANTIC_RUNTIME_VERSION_MISMATCH")
+    import faiss
+    import numpy
+    import onnxruntime
+    import tokenizers
+
+
 class Engine:
     def __init__(self, root):
         sys.addaudithook(offline)
-        for package, version in {
-            "faiss-cpu": "1.15.0", "numpy": "2.5.3", "onnxruntime": "1.30.0", "tokenizers": "0.23.2",
-        }.items():
-            require(importlib.metadata.version(package) == version, "SEMANTIC_RUNTIME_VERSION_MISMATCH")
+        check_runtime()
         checked_model(root)
         import faiss
         import numpy as np
@@ -208,6 +216,10 @@ def error_code(error):
 
 
 def main():
+    if sys.argv[1] == "check-runtime":
+        check_runtime()
+        print(json.dumps({"status": "ready"}))
+        return
     root = Path(sys.argv[2])
     if sys.argv[1] == "prepare":
         print(json.dumps(prepare(root)))

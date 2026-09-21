@@ -8,8 +8,10 @@ belong outside the checkout. The requirements below govern contributions and fut
 The context ledger contains hashed execution IDs, request timestamps, usage and
 delivery metadata; its signing key is private. Neither belongs in public
 artifacts. Recalled snippets enter the configured model's context.
-Optional embeddings run locally; model preparation downloads only pinned public
-artifacts. Vector generations are private, rebuildable data. Forgotten vectors
+Embeddings run locally and are prepared by default during agent setup, with an
+explicit per-agent `--keyword-only` opt-out. Setup downloads pinned public model
+artifacts and Python dependencies; it never uploads notes for embedding.
+Vector generations are private, rebuildable data. Forgotten vectors
 may remain on disk or in process caches until cleanup, but SQLite revision/status
 checks prevent their return. See [semantic cleanup](docs/SEMANTIC.md#forget-and-cleanup).
 

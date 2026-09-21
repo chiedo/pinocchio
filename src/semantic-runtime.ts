@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { BindingReference } from "./binding-registry.js";
 import { loadBinding } from "./binding-registry.js";
-import { activeIndex, semanticConfig, semanticFailure } from "./semantic-files.js";
+import { activeIndex, retrievalMode, semanticConfig, semanticFailure } from "./semantic-files.js";
 import { rebuildIndex } from "./semantic-index.js";
 import { SemanticProcess } from "./semantic-process.js";
 import { candidateSchema } from "./semantic-types.js";
@@ -18,6 +18,9 @@ export class SemanticRuntime {
     Promise<{ candidates?: SemanticCandidate[]; retrieval: RetrievalState }> {
     await loadBinding(reference);
     try {
+      if (await retrievalMode(reference) === "keyword") {
+        return { retrieval: { mode: "keyword", reason: "KEYWORD_ONLY_CONFIGURED" } };
+      }
       const config = await semanticConfig(reference.configRoot);
       const key = JSON.stringify(config);
       let engine = this.#engines.get(key);
@@ -53,6 +56,7 @@ export class SemanticRuntime {
     }
   }
   async warm(reference: BindingReference) {
+    if (await retrievalMode(reference) === "keyword") return;
     const config = await semanticConfig(reference.configRoot);
     const key = JSON.stringify(config);
     let engine = this.#engines.get(key);

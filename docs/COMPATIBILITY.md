@@ -45,7 +45,14 @@ Only aggregate `test-results/semantic.json` is published. No paid inference,
 notes, vectors or model files are uploaded. This small synthetic corpus is not
 the live-model compliance, answer-benefit or p95 release certification required
 by #6. See [SEMANTIC.md](SEMANTIC.md) for the pinned assets, resource bounds,
-offline setup, degradation states and publication/cleanup protocol.
+local setup, degradation states and publication/cleanup protocol.
+
+**macOS ARM64 semantic smoke probe (September 21, 2026): PASS.** With Python
+3.12.9, the exact pinned wheels and hash-verified model successfully indexed
+three invented notes and returned the intended paraphrase match through hybrid
+search where exact keyword search returned none. This is narrow evidence for
+the embedding/index runtime, not full packaged-CLI, desktop, real-model recall
+quality, or latency certification.
 
 **Keyword-memory development gate: PASS on the pinned public host with root
 hook capability enabled.** The [passing integration run](https://github.com/chiedo/pinocchio/actions/runs/34540221637)
