@@ -50,7 +50,9 @@ local setup, degradation states and publication/cleanup protocol.
 **macOS ARM64 semantic smoke probe (September 21, 2026): PASS.** With Python
 3.12.9, the exact pinned wheels and hash-verified model successfully indexed
 three invented notes and returned the intended paraphrase match through hybrid
-search where exact keyword search returned none. This is narrow evidence for
+search where exact keyword search returned none. Default source-CLI setup also
+provisioned a fresh isolated configuration without an explicit interpreter.
+This is narrow evidence for
 the embedding/index runtime, not full packaged-CLI, desktop, real-model recall
 quality, or latency certification.
 

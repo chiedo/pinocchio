@@ -10,7 +10,7 @@ import { activeIndex, retrievalMode, semanticConfig, setRetrievalMode, writeAtom
 import type { RetrievalMode } from "./semantic-files.js";
 import { rebuildIndex, indexStatus } from "./semantic-index.js";
 import { ENGINE_PATH, SemanticProcess } from "./semantic-process.js";
-import { candidateSchema, MODEL_ID, MODEL_REVISION, SemanticError } from "./semantic-types.js";
+import { candidateSchema, DIMENSIONS, MODEL_ID, MODEL_REVISION, SemanticError } from "./semantic-types.js";
 import type { SemanticConfig } from "./semantic-types.js";
 
 const execute = promisify(execFile);
@@ -18,7 +18,11 @@ export interface RetrievalSetupOptions { mode?: RetrievalMode | undefined; pytho
 
 async function runtimeReady(config: SemanticConfig) {
   const engine = new SemanticProcess(config);
-  try { await engine.ready(); } finally { engine.close(); }
+  try {
+    await engine.ready();
+    z.object({ status: z.literal("ready"), dimensions: z.literal(DIMENSIONS) })
+      .parse(await engine.call({ action: "probe" }, 10_000));
+  } finally { engine.close(); }
 }
 
 async function prepareRuntime(root: string, explicitPython?: string) {

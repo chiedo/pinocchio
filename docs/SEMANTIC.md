@@ -46,7 +46,9 @@ available as `python3.12` or `python3`; Pinocchio does not install Python itself
 Setup creates `<config-root>/pinocchio/semantic-runtime/venv`, checks its runtime,
 and installs the pinned binary wheels if that check fails. Model preparation
 checks exact sizes/hashes. It then indexes the agent's existing records (or an
-empty store), performs a real search, and verifies index/cleanup state.
+empty store), performs a real search, and verifies index/cleanup state. A
+separate inference probe validates a finite 384-dimensional vector even when
+the agent has no notes yet; an empty search result alone is not readiness.
 
 The runtime and public model are shared within a config root. Memory stores and
 derived indexes remain agent/scope-isolated. No real or synthetic readiness

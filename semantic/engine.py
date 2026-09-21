@@ -166,6 +166,11 @@ class Engine:
                 raise
             self.lock = fd
             return {"status": "locked"}
+        if action == "probe":
+            vector = self.embed(["Semantic retrieval readiness"])[0]
+            require(len(vector) == SPEC["dimensions"] and self.np.isfinite(vector).all(),
+                    "SEMANTIC_EMBEDDING_INVALID")
+            return {"status": "ready", "dimensions": len(vector)}
         if action == "build":
             require(self.lock is not None, "BUILDER_LOCK_REQUIRED")
             records = request["records"]
