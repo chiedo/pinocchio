@@ -400,7 +400,7 @@ test("documented Bash example completes using only synthetic local data", async 
   const result = await promisify(execFile)("bash", ["-e", "-o", "pipefail", "-c", script], {
     env: { ...process.env, PINOCCHIO_EXAMPLE_ROOT: root }, timeout: 30_000,
   });
-  assert.match(result.stdout, /"action":"forget"/);
-  assert.match(result.stdout, /"disabled":true/);
-  assert.match(result.stdout, /"action":"enable"/);
+  assert.match(result.stdout, /"action": "forget"/);
+  assert.match(result.stdout, /"disabled": true/);
+  assert.match(result.stdout, /"action": "enable"/);
 });

@@ -323,7 +323,10 @@ test("CLI registration/status is durable across separate processes", async () =>
     assert.match(revoked.stdout, /REVOKED_BINDING/);
     const invalid = await run(["bind", "--definition", "synthetic-only"]);
     assert.equal(invalid.code, 1);
-    assert.equal(invalid.stderr.trim(), "Pinocchio: INVALID_BINDING");
+    assert.deepEqual(JSON.parse(invalid.stderr), {
+      status: "error",
+      code: "INVALID_BINDING",
+    });
   } finally { await f.close(); }
 });
 
