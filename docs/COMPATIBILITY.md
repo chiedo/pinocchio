@@ -15,6 +15,10 @@ starts across multiple windows. Closing or retargeting the hosting session
 requests cancellation and records confirmed interruption separately from an
 unknown outcome.
 
+The hosting root session may be opened from any directory. The approved working
+directory applies to the background invocation, not to eligibility of the
+session hosting it.
+
 **CLI preview installation:** [INSTALL.md](INSTALL.md) provides the separate pinned
 runtime and blank-session agent setup. The full suite publishes
 `installation.json` for a clean custom-root installation, native CLI saves,
