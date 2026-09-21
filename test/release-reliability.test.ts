@@ -141,24 +141,30 @@ test("release fault gate: killed generation publication recovers pending jobs wi
   }
   cases.push("interrupted-index-publication");
 });
-test("release gate: long sessions, failed searches, delayed request hooks and compaction preserve cumulative limits", { timeout: 120_000 }, async (t) => {
+test("release gate: long sessions keep recalling within request limits across restarts and compaction", { timeout: 120_000 }, async (t) => {
   const f = await fixture(t);
   await f.store.remember({ content: "Project Lumen release marker LARCH-704.", kind: "decision",
     evidence: [{ kind: "user_statement", reference: { type: "text", value: "synthetic source" } }] }, "seed");
-  let charged = 0, exhausted = 0, misses = 0;
+  let charged = 0, exhausted = 0, misses = 0, maxRequestCharge = 0, recalled = 0;
   for (let i = 0; i < contract.config.longSessionRequests; i++) {
     const stamp = new Date(Date.UTC(2026, 0, 1) + i * 1_000).toISOString();
     const recipient = `recipient-${i % 4}`;
     if (i && i % 16 === 0) { await f.restart(); f.ledger.invalidate("root"); }
     const result = await f.call({ query: i % 5 === 0 ? "nonexistent-identifier" : "Lumen" }, "root", recipient, stamp);
-    charged += Number(result.value.chargedTokens ?? 0);
     exhausted += Number(result.value.status === "budget_exhausted");
+    assert.equal(result.value.status, i % 5 === 0 ? "no_match" : "ok");
+    maxRequestCharge = Math.max(maxRequestCharge, Number(result.value.chargedTokens ?? 0));
+    recalled += Number(result.value.status === "ok");
+    charged += Number(result.value.chargedTokens ?? 0);
     misses += Number(result.value.status === "no_match");
-    assert.ok(charged <= 6_000);
+    assert.ok(maxRequestCharge <= 800);
+    assert.equal(result.value.sessionUsed, charged);
     f.ledger.start("root", recipient, "2025-01-01T00:00:00.000Z");
   }
-  assert.ok(exhausted > 0 && misses > 0);
-  report.longSession = { requests: contract.config.longSessionRequests, charged, exhausted, misses, restarts: 7 };
+  assert.equal(exhausted, 0);
+  assert.ok(charged > 6_000 && misses > 0);
+  report.longSession = { requests: contract.config.longSessionRequests, charged, exhausted, misses,
+    recalled, maxRequestCharge, restarts: 7 };
   cases.push("long-session-compaction");
   const db = new DatabaseSync(f.store.path);
   try {
@@ -173,7 +179,7 @@ test("release gate: long sessions, failed searches, delayed request hooks and co
     assert.equal(repeated.value.status, "already_delivered");
     assert.equal(repeated.value.chargedTokens, 0);
     assert.equal(repeated.value.requestRemaining, first.value.requestRemaining);
-    assert.equal(repeated.value.sessionRemaining, first.value.sessionRemaining);
+    assert.equal(repeated.value.sessionUsed, first.value.sessionUsed);
   }
   report.toolChain = { callbacks: contract.config.longSessionRequests, additionalCharge: 0 };
 });

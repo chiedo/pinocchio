@@ -11,9 +11,9 @@ Desktop support is not advertised.
 The normal CLI does not currently provide the extension pre-MCP metadata used by
 the stronger SDK-driven accounting path. The preview therefore derives fallback
 request context inside each immutable per-agent MCP process. Identity, scope,
-argument integrity, the 800-byte call limit and a 6,000-byte process limit remain
-enforced. The process limit is not shared across separate helper processes or
-CLI restarts; this narrower boundary is explicit preview behavior.
+argument integrity and the 800-byte call limit remain enforced. There is no
+lifetime process cutoff. This fallback does not share a per-turn allowance
+across separate helper processes; this narrower boundary is explicit preview behavior.
 
 ## 1. Install once
 

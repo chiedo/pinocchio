@@ -69,7 +69,7 @@ test("release decisions recompute thresholds and reject missing, stale, incomple
   const contract = await acceptance(), { config } = contract, commit = "synthetic-commit";
   const reliability = { status: "pass", contractHash: contract.hash, commit, host: config.host,
     corpusPerNamespace: 128, cases: releaseFaults, backendMs: { count: 100, p50: 20, p95: 40 },
-    longSession: { requests: 128, charged: 5_999, exhausted: 90, misses: 5 } };
+    longSession: { requests: 128, charged: 30_000, exhausted: 0, misses: 26, recalled: 102, maxRequestCharge: 300 } };
   const live = { status: "pass", contractHash: contract.hash, commit, model: config.model, effort: config.effort,
     roles: roles.map((role) => ({ role, recall: 4, baseline: 0, searched: 4, retrieved: 4, saved: 4, unknown: 1,
       leaks: 0, recallSamples: 4, baselineSamples: 4, saveSamples: 4, failures: 0, followup: 1, attempted: 14, completed: 14 })),
@@ -88,6 +88,14 @@ test("release decisions recompute thresholds and reject missing, stale, incomple
   assert.equal(verdict(reliability, live, { ...workflow, contractHash: "stale" }), "fail");
   assert.equal(verdict({ ...reliability, backendMs: { count: 100, p50: 20, p95: 250 } }), "fail");
   assert.equal(verdict({ ...reliability, cases: [] }), "fail");
+  for (const invalid of [
+    { charged: 6_000 },
+    { exhausted: 1 },
+    { maxRequestCharge: 801 },
+    { recalled: 1 },
+  ]) {
+    assert.equal(verdict({ ...reliability, longSession: { ...reliability.longSession, ...invalid } }), "fail");
+  }
   assert.equal(verdict(reliability, { ...live, roles: live.roles.map((r) => ({ ...r, searched: 0 })) }), "fail");
   assert.equal(verdict(reliability, { ...live, roles: [live.roles[0], live.roles[0]] }), "fail");
   assert.equal(verdict(reliability, { ...live, omissions: [{ role: "foreground", trials: 1 }] }), "fail");

@@ -62,8 +62,13 @@ async function execute(raw: unknown): Promise<unknown> {
           throw new ToolError("INVALID_ACCOUNTING_STATE");
         }
         const sessionUsed = session.used, requestUsed = request.used, generation = session.generation;
-        const available = Math.min(800, 800 - request.used, 6_000 - session.used);
-        if (available <= 2) { ledger.db.exec("COMMIT"); return { status: "budget_exhausted", snippets: [] }; }
+        const available = Math.max(0, Math.min(800, 800 - requestUsed));
+        if (available <= 2) {
+          ledger.db.exec("COMMIT");
+          return { status: "budget_exhausted", budgetScope: "recipient_request", snippets: [],
+            chargedTokens: 0, accounting: "conservative_utf8_bytes",
+            requestRemaining: available, sessionUsed };
+        }
         return await store.searchSnapshot(args.query, { limit: 100 }, async (matches) => {
         const snippets: { recordId: string; revision: number; content: string; kind: string;
           evidenceKinds: string[]; sourceAt: string | null; confirmedAt: string | null; recordedAt: string }[] = [];
@@ -104,11 +109,12 @@ async function execute(raw: unknown): Promise<unknown> {
         await loadBinding(command.reference);
         ledger.current(ticket);
         ledger.db.exec("COMMIT");
+        const status = snippets.length ? "ok" : matches.items.length ? (duplicate ? "already_delivered" : "budget_exhausted") : "no_match";
         return {
-          status: snippets.length ? "ok" : matches.items.length ? (duplicate ? "already_delivered" : "budget_exhausted") : "no_match",
+          status, ...(status === "budget_exhausted" ? { budgetScope: "recipient_request" } : {}),
           retrieval: retrieval.retrieval,
           snippets, chargedTokens: cost, accounting: "conservative_utf8_bytes",
-          requestRemaining: 800 - requestUsed - cost, sessionRemaining: 6_000 - sessionUsed - cost,
+          requestRemaining: available - cost, sessionUsed: sessionUsed + cost,
         };
         }, retrieval.candidates ?? [], command.conversation ?? false, command.conversationSession);
       } catch (error) {

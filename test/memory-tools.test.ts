@@ -60,31 +60,58 @@ test("memory snippets and recipient budgets persist across worker restart and co
   f.restart();
   const repeated = await f.call();
   assert.ok(["already_delivered", "budget_exhausted"].includes(String(repeated.status)));
-  assert.equal(repeated.sessionRemaining, first.sessionRemaining);
+  assert.equal(repeated.sessionUsed, first.sessionUsed);
   f.ledger.invalidate("root");
   const compacted = await f.call();
   assert.equal(compacted.status, "budget_exhausted");
+  assert.equal(compacted.budgetScope, "recipient_request");
   f.ledger.start("root", "helper", "2026-01-01T00:00:01.000Z");
   const helper = await f.call(undefined, "helper");
   assert.equal(helper.status, "ok");
-  assert.ok(Number(helper.sessionRemaining) < Number(first.sessionRemaining));
+  assert.ok(Number(helper.sessionUsed) > Number(first.sessionUsed));
 });
-test("session budget includes helpers and cannot reset through new recipient requests", async (t) => {
+test("new requests and helpers can recall beyond the former lifetime session cap", async (t) => {
   const f = await fixture(t);
   let spent = 0;
-  let exhausted = false;
-  for (let index = 0; index < 12; index++) {
-    const recipient = `helper-${index}`;
-    f.ledger.start("root", recipient, `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`);
+  for (let index = 0; index < 24; index++) {
+    const recipient = index % 2 ? `helper-${index}` : "foreground";
+    f.ledger.start("root", recipient, `2026-01-01T00:00:${String(index + 1).padStart(2, "0")}.000Z`);
     const result = await f.call(undefined, recipient);
+    assert.equal(result.status, "ok");
+    assert.ok(Number(result.chargedTokens) <= 800);
+    assert.equal(Number(result.requestRemaining) + Number(result.chargedTokens), 800);
     spent += Number(result.chargedTokens ?? 0);
-    if (result.status === "budget_exhausted") exhausted = true;
+    assert.equal(result.sessionUsed, spent);
   }
-  assert.ok(exhausted);
-  assert.ok(spent <= 6_000);
+  assert.ok(spent > 6_000);
   f.restart();
   f.ledger.start("root", "last-helper", "2026-01-01T00:01:00.000Z");
-  assert.equal((await f.call(undefined, "last-helper")).status, "budget_exhausted");
+  assert.equal((await f.call(undefined, "last-helper")).status, "ok");
+});
+test("an exhausted legacy session counter does not block new recalls or erase accounting", async (t) => {
+  const f = await fixture(t);
+  f.ledger.db.prepare("UPDATE sessions SET used=6000").run();
+  f.restart();
+  const result = await f.call();
+  assert.equal(result.status, "ok");
+  assert.equal(result.sessionUsed, 6_000 + Number(result.chargedTokens));
+  assert.equal(result.requestRemaining, 800 - Number(result.chargedTokens));
+});
+test("exhausted request limits report their scope and renew only for a new request", async (t) => {
+  const f = await fixture(t);
+  f.ledger.db.prepare("UPDATE requests SET used=800").run();
+  const result = await f.call();
+  assert.equal(result.status, "budget_exhausted");
+  assert.equal(result.budgetScope, "recipient_request");
+  assert.equal(result.requestRemaining, 0);
+  assert.equal(result.chargedTokens, 0);
+  assert.equal(result.sessionUsed, 0);
+  f.restart();
+  f.ledger.invalidate("root");
+  f.ledger.start("root", "foreground", "2026-01-01T00:00:00.000Z");
+  assert.equal((await f.call()).status, "budget_exhausted");
+  f.ledger.start("root", "foreground", "2026-01-01T00:00:01.000Z");
+  assert.equal((await f.call()).status, "ok");
 });
 test("compaction redelivery is charged again without resetting usage or restart deduplication", async (t) => {
   const f = await fixture(t);
@@ -94,7 +121,7 @@ test("compaction redelivery is charged again without resetting usage or restart 
   f.ledger.invalidate("root");
   const again = await f.call({ query: "note 0" });
   assert.equal(again.status, "ok");
-  assert.equal(Number(again.sessionRemaining), Number(first.sessionRemaining) - Number(again.chargedTokens));
+  assert.equal(Number(again.sessionUsed), Number(first.sessionUsed) + Number(again.chargedTokens));
   assert.equal(Number(again.requestRemaining), Number(first.requestRemaining) - Number(again.chargedTokens));
   f.restart();
   assert.equal((await f.call({ query: "note 0" })).status, "already_delivered");

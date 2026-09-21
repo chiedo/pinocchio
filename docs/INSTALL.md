@@ -242,7 +242,9 @@ produce an explicit conflict rather than being overwritten.
 ## Preview limitations
 
 The normal CLI path uses extension-local fallback accounting: 800 bytes per call
-and 6,000 bytes per extension process. Keyword search works without downloading
+without a lifetime process/session cutoff. Hook-driven requests retain a shared
+800-byte recipient-request allowance. Cumulative usage remains diagnostic;
+restart/reload does not erase stored request accounting. Keyword search works without downloading
 embeddings. See [optional semantic search](SEMANTIC.md),
 [memory administration](STORAGE.md), and [privacy](../PRIVACY.md).
 

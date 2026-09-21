@@ -109,7 +109,8 @@ export function releaseVerdict(contract: { config: Acceptance; hash: string }, c
     status: z.literal("pass"), contractHash: z.literal(contract.hash), commit: z.literal(commit),
     host: acceptanceSchema.shape.host, corpusPerNamespace: count,
     cases: z.array(z.string()), backendMs: latency,
-    longSession: z.object({ requests: count, charged: nonnegative, exhausted: count, misses: count }),
+    longSession: z.object({ requests: count, charged: nonnegative, exhausted: z.literal(0), misses: count,
+      recalled: count, maxRequestCharge: positive.max(800) }),
   }).safeParse(reliability);
   const measured = z.object({
     status: z.literal("pass"), contractHash: z.literal(contract.hash), commit: z.literal(commit),
@@ -133,7 +134,8 @@ export function releaseVerdict(contract: { config: Acceptance; hash: string }, c
     if (JSON.stringify(s.host) !== JSON.stringify(config.host) || s.corpusPerNamespace !== config.corpusPerNamespace ||
         !releaseFaults.every((name) => s.cases.includes(name)) || s.backendMs.count !== config.backendSamples ||
         s.backendMs.p95 === null || s.backendMs.p95 >= config.thresholds.backendP95Ms ||
-        s.longSession.requests !== config.longSessionRequests || s.longSession.charged > 6_000) result.failures.push("SYNTHETIC_GATE_FAILED");
+        s.longSession.requests !== config.longSessionRequests || s.longSession.charged <= 6_000 ||
+        s.longSession.recalled + s.longSession.misses !== s.longSession.requests) result.failures.push("SYNTHETIC_GATE_FAILED");
   }
   if (measured.success) {
     const m = measured.data, n = config.recallSamplesPerRole;
