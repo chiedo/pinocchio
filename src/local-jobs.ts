@@ -487,7 +487,7 @@ export class LocalJobs {
       const task = tasks.get(run.runtimeTaskId);
       if (!task) {
         this.finishRun(run, "outcome_unknown", undefined, "RUNTIME_TASK_MISSING");
-      } else if (task.status === "completed") {
+      } else if (task.status === "completed" || task.status === "idle") {
         const result = task.result ?? task.latestResponse ?? "";
         this.finishRun(
           run,

@@ -236,7 +236,11 @@ test("local jobs preview, publish and run through the native task API", async ()
       originRoot: agents,
       scope: { kind: "global" },
     });
-    let taskStatus: "running" | "completed" = "running";
+    let taskStatus: "running" | "idle" | "completed" = "running";
+    let taskId = 0;
+    let currentTaskId = "";
+    let taskResult: string | undefined;
+    let taskLatestResponse: string | undefined;
     let sourceCalls = 0;
     let sourceShouldFail = false;
     const resolveSource = async (locator: string): Promise<ResolvedRepositoryJob> => {
@@ -277,18 +281,22 @@ test("local jobs preview, publish and run through the native task API", async ()
           }),
         },
         tasks: {
-          startAgent: async () => ({ agentId: "native-task-1" }),
+          startAgent: async () => {
+            currentTaskId = `native-task-${++taskId}`;
+            return { agentId: currentTaskId };
+          },
           list: async () => ({
             tasks: [{
               type: "agent",
-              id: "native-task-1",
+              id: currentTaskId,
               toolCallId: "tool-1",
               description: "Local job test",
               status: taskStatus,
               startedAt: "2026-09-16T14:00:00Z",
               agentType: "local-agent",
               prompt: "test",
-              result: taskStatus === "completed" ? "Completed local work." : undefined,
+              result: taskResult,
+              latestResponse: taskLatestResponse,
             }],
           }),
           cancel: async () => ({ cancelled: true }),
@@ -318,12 +326,35 @@ test("local jobs preview, publish and run through the native task API", async ()
       assert.equal(started?.status, "running");
       assert.equal(started?.runtimeTaskId, "native-task-1");
       taskStatus = "completed";
+      taskResult = "Completed local work.";
       await local.reconcile("native-task-1");
       const latest = local.latest(reference, "daily-summary", true);
       assert.equal(latest.status, "ready");
       if (latest.status !== "ready") throw new Error("LOCAL_RESULT_MISSING");
       assert.equal(latest.outcome, "succeeded");
       assert.equal(latest.result, "Completed local work.");
+
+      taskStatus = "idle";
+      taskResult = undefined;
+      taskLatestResponse = "Completed from an idle agent turn.";
+      const idleStarted = await local.run(reference, "daily-summary");
+      assert.equal(idleStarted?.runtimeTaskId, "native-task-2");
+      await local.reconcile("native-task-2");
+      const idleLatest = local.latest(reference, "daily-summary", true);
+      assert.equal(idleLatest.status, "ready");
+      if (idleLatest.status !== "ready") throw new Error("LOCAL_RESULT_MISSING");
+      assert.equal(idleLatest.outcome, "succeeded");
+      assert.equal(idleLatest.result, "Completed from an idle agent turn.");
+
+      taskLatestResponse = undefined;
+      const emptyIdleStarted = await local.run(reference, "daily-summary");
+      assert.equal(emptyIdleStarted?.runtimeTaskId, "native-task-3");
+      await local.reconcile("native-task-3");
+      const emptyIdleLatest = local.latest(reference, "daily-summary", true);
+      assert.equal(emptyIdleLatest.status, "ready");
+      if (emptyIdleLatest.status !== "ready") throw new Error("LOCAL_RESULT_MISSING");
+      assert.equal(emptyIdleLatest.outcome, "failed");
+      assert.equal(emptyIdleLatest.errorCode, "REQUIRED_OUTPUT_MISSING");
 
       const manualPreview = await local.preview(reference, {
         definition:
@@ -355,6 +386,7 @@ test("local jobs preview, publish and run through the native task API", async ()
 
       sourceShouldFail = false;
       taskStatus = "running";
+      taskResult = undefined;
       const manualStarted = await local.run(reference, "interactive-feedback");
       assert.equal(manualStarted?.status, "running");
       assert.equal(manualStarted?.sourceCommit, sourceCalls.toString(16).padStart(40, "0"));
