@@ -24,7 +24,9 @@ active scheduled run.
 Changing the selected agent or closing the hosting session requests targeted
 cancellation. Pinocchio distinguishes a confirmed interruption from a task
 whose final outcome could not be recovered. A successful run must return
-non-empty output.
+non-empty output. Native agents that finish a turn in the multi-turn `idle`
+state are reconciled immediately: their latest response becomes the run result,
+or the run fails with `REQUIRED_OUTPUT_MISSING` when no response was produced.
 
 ## Preview and publish
 
