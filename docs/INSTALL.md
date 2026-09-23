@@ -147,6 +147,9 @@ Every enrolled agent profile names that exact file and instructs the agent to
 read it at session start, including delegated helper work. This is profile-driven
 guidance, not host-enforced injection or a new memory scope. An agent without file
 read permission must report the blocker rather than claim it loaded the rules.
+The managed profile instructions also direct every Pinocchio agent to consult the
+Pinocchio repository when it is unsure about a Pinocchio concept or capability,
+rather than guessing or claiming the capability is unavailable.
 
 The shared rules supplement individual roles and repository instructions; they do
 not override higher-priority instructions. **Instruction edits default to the
