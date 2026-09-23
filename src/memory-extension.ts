@@ -15,7 +15,12 @@ import {
   releaseCloudJobResultNotices,
   startOwnerCloudJobDriftMonitor,
 } from "./cloud-jobs.js";
-import { JOBS_TOOL, extensionJobsToolInputSchema, handleJobsTool } from "./jobs.js";
+import {
+  JOBS_TOOL,
+  extensionJobsToolInputSchema,
+  handleJobsTool,
+  jobsErrorRepair,
+} from "./jobs.js";
 import type { CloudJobResultNoticeResult } from "./cloud-jobs.js";
 import { z } from "zod";
 import { BroadcastListener, BROADCAST_HEARTBEAT_MS, broadcastCode, broadcastRuntimeVersion } from "./broadcast.js";
@@ -317,10 +322,16 @@ session = await joinSession({
             : isRecord(error) && typeof error.code === "string"
               ? error.code
             : "CLOUD_JOBS_UNAVAILABLE";
+        const repair = jobsErrorRepair(code);
         return {
           resultType: "failure" as const,
-          textResultForLlm: JSON.stringify({ status: "unavailable", code }),
-          error: code,
+          textResultForLlm: JSON.stringify({
+            status: "unavailable",
+            code,
+            ...(repair ? { repair } : {}),
+          }),
+          error: repair ? `${code}: ${repair}` : code,
+          ...(repair ? { sessionLog: `Pinocchio jobs: ${repair}` } : {}),
         };
       } finally {
         toolOwners.delete(invocation.toolCallId);

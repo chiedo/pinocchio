@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
@@ -8,7 +8,8 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
-  BindingError, configRootPath, loadBinding, registerBinding, revokeBinding,
+  BindingError, configRootPath, loadBinding, privateDirectory, registerBinding,
+  revokeBinding,
 } from "../src/binding-registry.js";
 import { BoundIdentityAdapter, BINDING_BUDGET_MS } from "../src/bound-identity.js";
 import { createBoundMcpServer, BOUND_IDENTITY_TOOL } from "../src/bound-mcp.js";
@@ -96,6 +97,10 @@ test("custom roots, registry permissions and durable concurrent registration", a
     assert.equal(new Set(records.map((record) => record.namespace)).size, 1);
     for (const ref of refs) assert.equal((await stat(fileFor(ref))).mode & 0o777, 0o600);
     assert.equal((await stat(join(f.config, "pinocchio", "bindings"))).mode & 0o777, 0o700);
+    const repairable = join(f.config, "agent-artifacts");
+    await mkdir(repairable, { mode: 0o755 });
+    await privateDirectory(repairable, false, true);
+    assert.equal((await stat(repairable)).mode & 0o777, 0o700);
     const ref = refs[0];
     assert.ok(ref);
     await chmod(fileFor(ref), 0o644);

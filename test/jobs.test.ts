@@ -5,10 +5,17 @@ import { join } from "node:path";
 import test from "node:test";
 import type { CopilotSession } from "@github/copilot-sdk";
 import { registerBinding } from "../src/binding-registry.js";
-import { JOBS_TOOL, jobsToolInputSchema } from "../src/jobs.js";
+import {
+  extensionJobsToolInputSchema,
+  handleJobsTool,
+  JOBS_TOOL,
+  jobsErrorRepair,
+  jobsToolInputSchema,
+} from "../src/jobs.js";
 import {
   githubJobSourceSchema,
   parseGitHubJobLocator,
+  parseRepositoryJobDefinition,
   repositoryJobSchema,
   sourcePolicyAllows,
 } from "../src/local-job-sources.js";
@@ -56,6 +63,14 @@ test("unified jobs input exposes local and cloud jobs", () => {
     workingDirectory: "/tmp",
   });
   assert.equal(sourced.definition?.includes("github/example-jobs"), true);
+  assert.match(
+    JSON.stringify(extensionJobsToolInputSchema),
+    /GitHub locator for a YAML local-job definition/,
+  );
+  assert.match(
+    jobsErrorRepair("INVALID_JOB_SOURCE_DEFINITION") ?? "",
+    /Markdown prompt file alone is not a job definition/,
+  );
 });
 
 test("repository-backed local job locators and policies are constrained", () => {
@@ -88,6 +103,10 @@ test("repository-backed local job locators and policies are constrained", () => 
     parseGitHubJobLocator(
       "github://github/example-jobs/../private.yml?ref=main",
     ));
+  assert.throws(
+    () => parseRepositoryJobDefinition("# Markdown prompt only"),
+    /INVALID_JOB_SOURCE_DEFINITION/,
+  );
   const source: GitHubJobSource = {
     kind: "github",
     locator: "github://github/example-jobs/job.yml?ref=main",
@@ -322,6 +341,16 @@ test("local jobs preview, publish and run through the native task API", async ()
         preview.approvalToken,
       );
       assert.equal(published.status, "published");
+      await assert.rejects(
+        handleJobsTool(reference, {
+          action: "preview",
+          backend: "local",
+          definition:
+            "github://github/example-jobs/.pinocchio/jobs/feedback.yml?ref=main",
+          cron: "0 10 * * 1-5",
+        }, undefined, local),
+        /JOB_SOURCE_CONFIGURATION_CONFLICT/,
+      );
       const started = await local.run(reference, "daily-summary");
       assert.equal(started?.status, "running");
       assert.equal(started?.runtimeTaskId, "native-task-1");

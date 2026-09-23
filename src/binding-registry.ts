@@ -95,16 +95,43 @@ function validateReference(reference: BindingReference) {
     !digestSchema.safeParse(reference.fingerprint).success
   ) throw new BindingError("INVALID_BINDING");
 }
-export async function privateDirectory(path: string, create: boolean) {
+export async function privateDirectory(
+  path: string,
+  create: boolean,
+  repairPermissions = false,
+) {
   if (create) {
     try { await mkdir(path, { mode: 0o700 }); }
     catch (error) { if (!hasCode(error, "EEXIST")) throw error; }
   }
-  const info = await lstat(path);
-  if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
+  let info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink() ||
       (process.getuid && info.uid !== process.getuid())) {
     throw new BindingError("INSECURE_REGISTRY");
   }
+  if ((info.mode & 0o077) !== 0 && repairPermissions) {
+    let handle;
+    try {
+      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const opened = await handle.stat();
+      if (!opened.isDirectory() ||
+          (process.getuid && opened.uid !== process.getuid())) {
+        throw new BindingError("INSECURE_REGISTRY");
+      }
+      await handle.chmod(0o700);
+      info = await lstat(path);
+      if (info.isSymbolicLink() || info.dev !== opened.dev ||
+          info.ino !== opened.ino) {
+        throw new BindingError("INSECURE_REGISTRY");
+      }
+    } catch (error) {
+      if (error instanceof BindingError) throw error;
+      throw new BindingError("INSECURE_REGISTRY");
+    } finally {
+      await handle?.close();
+    }
+  }
+  if ((info.mode & 0o077) !== 0) throw new BindingError("INSECURE_REGISTRY");
 }
 async function checkRegistry(configRoot: string, create = false) {
   supportedPlatform();
