@@ -57,6 +57,11 @@ publishes only:
 - a small job manifest; and
 - the GitHub Actions workflow.
 
+Generated `job.yml` manifests start with a link to the
+[non-Pinocchio runner contract](NON-PINOCCHIO-JOBS.md). This makes the
+repository copy manually executable by another agent and reusable from an
+external scheduler without requiring Pinocchio.
+
 The prompt, agent instructions, workflow logs and retained results are still
 cloud data. Review the preview before publishing.
 

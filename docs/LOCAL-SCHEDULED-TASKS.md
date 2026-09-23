@@ -94,6 +94,10 @@ machine's existing Git credentials.
 Scheduled definitions use this format:
 
 ```yaml
+# Non-Pinocchio agents: run this job manually by following
+# https://github.com/chiedo/pinocchio/blob/main/docs/NON-PINOCCHIO-JOBS.md
+# Resolve this definition, its prompt, and support files from one commit.
+
 version: 1
 id: feedback-summary
 
@@ -113,6 +117,10 @@ prompt-file: ./prompts/feedback-summary.md
 For a manual-only repository-backed job, omit `schedule`:
 
 ```yaml
+# Non-Pinocchio agents: run this job manually by following
+# https://github.com/chiedo/pinocchio/blob/main/docs/NON-PINOCCHIO-JOBS.md
+# Resolve this definition, its prompt, and support files from one commit.
+
 version: 1
 id: interactive-feedback
 
@@ -124,6 +132,12 @@ execution:
 
 prompt-file: ./prompts/interactive-feedback.md
 ```
+
+Use that three-line comment header on every new repository job definition. It
+points non-Pinocchio agents at the portable manual-run contract, so a direct
+link to the YAML is enough to discover how to execute it. A complete,
+self-contained example is available at
+[`examples/repository-job.yml`](../examples/repository-job.yml).
 
 The tool flow is the same as the CLI flow:
 

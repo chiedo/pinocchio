@@ -29,6 +29,7 @@ import {
   releaseCloudJobResultNotices,
   resolveCloudJobOwner,
   runCloudJobNow,
+  serializeCloudJobManifest,
 } from "../src/cloud-jobs.js";
 
 test("extension cloud tool schema is a host-compatible object", () => {
@@ -203,6 +204,14 @@ test("local configuration and preview keep agent history local", async () => {
     assert.match(preview.exactUpload.workflow, /2>&1 \| tee result\.md/);
     assert.doesNotMatch(preview.exactUpload.workflow, /--max-ai-credits/);
     assert.equal(preview.manifest.max_ai_credits, null);
+    assert.match(
+      serializeCloudJobManifest(preview.manifest),
+      /^# Non-Pinocchio agents:/,
+    );
+    assert.match(
+      preview.exactUpload.manifest,
+      /docs\/NON-PINOCCHIO-JOBS\.md/,
+    );
     assert.match(preview.exactUpload.profile, /Research public release notes/);
     assert.doesNotMatch(preview.exactUpload.profile, /pinocchio-memory|Search local memory/);
     assert.doesNotMatch(JSON.stringify(preview.manifest), new RegExp(home));
