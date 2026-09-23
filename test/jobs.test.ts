@@ -14,6 +14,7 @@ import {
 } from "../src/jobs.js";
 import {
   githubJobSourceSchema,
+  NON_PINOCCHIO_JOB_HEADER,
   parseGitHubJobLocator,
   parseRepositoryJobDefinition,
   repositoryJobSchema,
@@ -74,6 +75,10 @@ test("unified jobs input exposes local and cloud jobs", () => {
 });
 
 test("repository-backed local job locators and policies are constrained", () => {
+  assert.match(
+    NON_PINOCCHIO_JOB_HEADER,
+    /docs\/NON-PINOCCHIO-JOBS\.md/,
+  );
   assert.deepEqual(repositoryJobSchema.parse({
     version: 1,
     id: "feedback",
@@ -107,6 +112,14 @@ test("repository-backed local job locators and policies are constrained", () => 
     () => parseRepositoryJobDefinition("# Markdown prompt only"),
     /INVALID_JOB_SOURCE_DEFINITION/,
   );
+  assert.equal(parseRepositoryJobDefinition([
+    NON_PINOCCHIO_JOB_HEADER,
+    "",
+    "version: 1",
+    "id: portable-job",
+    "prompt: Run the portable job.",
+    "",
+  ].join("\n")).id, "portable-job");
   const source: GitHubJobSource = {
     kind: "github",
     locator: "github://github/example-jobs/job.yml?ref=main",

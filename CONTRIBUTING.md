@@ -12,6 +12,11 @@ The full suite includes clean installation and native CLI synthetic diagnostics.
 Read [the design](docs/DESIGN.md), [installation requirements](docs/INSTALL.md)
 and [privacy policy](PRIVACY.md) before proposing changes.
 
+Repository-backed Pinocchio job definitions must start with the standard
+non-Pinocchio runner header documented in
+[NON-PINOCCHIO-JOBS.md](docs/NON-PINOCCHIO-JOBS.md). Reuse
+`NON_PINOCCHIO_JOB_HEADER` when generating definitions in code.
+
 ## Public-safe contributions
 
 - Use synthetic data and generic paths only. Do not upload private logs,

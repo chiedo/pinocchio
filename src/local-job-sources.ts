@@ -45,6 +45,12 @@ const promptPathSchema = z.string().min(1).max(500)
 const jobIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,49}$/);
 const requiredToolsSchema = z.array(z.string().min(1).max(200)).max(50).default([]);
 
+export const NON_PINOCCHIO_JOB_HEADER = [
+  "# Non-Pinocchio agents: run this job manually by following",
+  "# https://github.com/chiedo/pinocchio/blob/main/docs/NON-PINOCCHIO-JOBS.md",
+  "# Resolve this definition, its prompt, and support files from one commit.",
+].join("\n");
+
 export const repositoryJobSchema = z.object({
   version: z.literal(1),
   id: jobIdSchema,

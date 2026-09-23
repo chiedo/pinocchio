@@ -18,6 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { isMap, isSeq, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
+import { NON_PINOCCHIO_JOB_HEADER } from "./local-job-sources.js";
 import {
   configRootPath,
   loadBinding,
@@ -112,6 +113,12 @@ const jobManifestSchema = z.object({
 
 export type CloudJobManifest = z.infer<typeof jobManifestSchema>;
 export type CloudJobDriftResult = Awaited<ReturnType<typeof checkCloudJobDrift>>;
+
+export function serializeCloudJobManifest(manifest: CloudJobManifest) {
+  return `${NON_PINOCCHIO_JOB_HEADER}\n\n${
+    stringify(jobManifestSchema.parse(manifest), { lineWidth: 0 })
+  }`;
+}
 
 export const cloudJobToolInputSchema = z.discriminatedUnion("action", [
   z.object({
@@ -1114,7 +1121,7 @@ async function writeJob(root: string, draft: CloudJobDraft) {
   }
   await writeFile(
     manifestPath(root, remoteId),
-    stringify(draft.manifest, { lineWidth: 0 }),
+    serializeCloudJobManifest(draft.manifest),
   );
   await writeFile(join(directory, "prompt.md"), `${draft.prompt.trim()}\n`);
   await writeFile(
@@ -1253,7 +1260,7 @@ export async function prepareCloudJob(
       prompt: `${draft.prompt}\n`,
       profile: draft.profile,
       workflow: draft.workflow,
-      manifest: stringify(draft.manifest, { lineWidth: 0 }),
+      manifest: serializeCloudJobManifest(draft.manifest),
     },
   };
 }

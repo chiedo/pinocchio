@@ -1,0 +1,15 @@
+# Non-Pinocchio agents: run this job manually by following
+# https://github.com/chiedo/pinocchio/blob/main/docs/NON-PINOCCHIO-JOBS.md
+# Resolve this definition, its prompt, and support files from one commit.
+
+version: 1
+id: repository-summary
+
+execution:
+  working-directory: source
+  required-tools: []
+  timeout-minutes: 30
+
+prompt: |
+  Read the repository's own instructions and summarize its purpose, major
+  components, and the most important setup commands. Do not modify files.

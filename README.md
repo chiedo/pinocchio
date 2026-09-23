@@ -184,6 +184,9 @@ when your machine is off), and it will show you the exact schedule and ask
 for approval before publishing anything. See
 [Local scheduled tasks](docs/LOCAL-SCHEDULED-TASKS.md) and
 [Agent-owned jobs](docs/CLOUD-JOBS.md) if you want the underlying detail.
+Repository job files are also portable: a non-Pinocchio agent can follow
+[the manual runner contract](docs/NON-PINOCCHIO-JOBS.md), including when an
+external cron service or scheduler launches it.
 
 ## Managing memory
 
@@ -210,6 +213,7 @@ restart but keeps stored notes and the agent's other instructions.
 [Setup, updates & controls](docs/INSTALL.md) ·
 [Agent-owned jobs](docs/CLOUD-JOBS.md) ·
 [Local scheduled tasks](docs/LOCAL-SCHEDULED-TASKS.md) ·
+[Non-Pinocchio job runner](docs/NON-PINOCCHIO-JOBS.md) ·
 [Design](docs/DESIGN.md) ·
 [Privacy](PRIVACY.md) ·
 [Contributing](CONTRIBUTING.md) ·
