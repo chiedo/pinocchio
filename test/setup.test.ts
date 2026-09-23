@@ -19,6 +19,7 @@ test("existing CLI setup is repeatable, reversible, and preserves native setting
     assert.ok(original.includes(`- Agent profile: ${JSON.stringify(profile)}`));
     assert.ok(original.includes(`- Copilot configuration root: ${JSON.stringify(root)}`));
     assert.ok(original.includes('- Put agent-owned local artifacts, including scripts, static files, caches, and local-job support files, under "~/.pinocchio/synthetic-agent/".'));
+    assert.ok(original.includes("review https://github.com/chiedo/pinocchio before guessing or claiming the capability is unavailable"));
     assert.ok(original.includes("pinocchio_jobs"));
     assert.ok(original.includes(`Scheduled cloud jobs use this exact local profile as their source: ${JSON.stringify(profile)}`));
     assert.match(original, /Memory scope: global, available across repositories/);
