@@ -81,6 +81,11 @@ npm run jobs -- preview \
 
 The locator format is
 `github://OWNER/REPOSITORY/PATH?ref=BRANCH_TAG_OR_COMMIT`.
+The target must be a YAML job definition; a standalone Markdown prompt is not
+a definition. Repository-backed definitions own their ID, schedule, execution
+limits, and prompt reference, so preview them with `definition` and the approved
+subscriber working directory only rather than repeating those fields in the
+tool call.
 Pinocchio clones the repository into the owning agent's managed directory under
 `~/.pinocchio/<agent-id>/jobs/sources/`, fetches the selected ref, and resolves
 the definition from an exact detached commit. Private repositories use the

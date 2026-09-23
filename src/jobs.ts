@@ -35,13 +35,20 @@ const jobsInputSchema = z.object({
   branch: z.string().regex(/^[A-Za-z0-9._/-]+$/).max(200).optional(),
   tokenSecret: z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(100).optional(),
   confirmed: z.boolean().optional(),
-  id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/).optional(),
-  prompt: z.string().max(32 * 1024).optional(),
-  definition: z.string().max(1_000).optional(),
-  cron: z.string().optional(),
-  timezone: z.string().max(100).optional(),
-  workingDirectory: z.string().optional(),
-  tools: z.array(z.string().min(1).max(200)).max(50).optional(),
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/).optional()
+    .describe("Job ID. Required for inline previews; repository-backed definitions provide their own ID."),
+  prompt: z.string().max(32 * 1024).optional()
+    .describe("Inline job prompt. Required for inline local previews; do not combine with definition."),
+  definition: z.string().max(1_000).optional()
+    .describe("GitHub locator for a YAML local-job definition that owns its ID, schedule, execution limits, and prompt or prompt-file. Do not combine with id, prompt, cron, timezone, tools, timeoutMinutes, or maxAiCredits."),
+  cron: z.string().optional()
+    .describe("Five-field cron expression for inline previews. Repository-backed definitions provide their own schedule."),
+  timezone: z.string().max(100).optional()
+    .describe("IANA timezone for inline local previews. Repository-backed definitions provide their own timezone."),
+  workingDirectory: z.string().optional()
+    .describe("Approved local working directory. Required for inline local jobs and repository definitions using subscriber mode."),
+  tools: z.array(z.string().min(1).max(200)).max(50).optional()
+    .describe("Required tool allowlist for inline previews. Repository-backed definitions provide their own tools."),
   allowUrls: z.array(z.string()).optional(),
   maxAiCredits: z.number().int().min(30).max(100).optional(),
   unlimitedAiCredits: z.boolean().optional(),
@@ -63,6 +70,19 @@ const { $schema: _schema, ...extensionJobsToolInputSchema } = z.toJSONSchema(
 );
 export { extensionJobsToolInputSchema };
 
+const JOB_ERROR_REPAIRS: Record<string, string> = {
+  JOB_SOURCE_CONFIGURATION_CONFLICT:
+    "A repository-backed YAML definition owns its ID, schedule, prompt, tools, and runtime limits. Call preview with backend, definition, and workingDirectory only, or move the configuration into the YAML definition.",
+  INVALID_JOB_SOURCE_DEFINITION:
+    "The definition locator must target YAML with version, id, optional schedule, execution, and exactly one of prompt or prompt-file. A Markdown prompt file alone is not a job definition.",
+  LOCAL_JOB_PREVIEW_FIELDS_REQUIRED:
+    "For an inline local preview provide id, prompt, cron, timezone, and workingDirectory. For a repository-backed preview provide definition and, when it uses subscriber mode, workingDirectory.",
+};
+
+export function jobsErrorRepair(code: string) {
+  return JOB_ERROR_REPAIRS[code];
+}
+
 function requireField<T>(value: T | undefined, code = "INVALID_ARGUMENTS"): T {
   if (value === undefined) throw new CloudJobsError(code);
   return value;
@@ -82,18 +102,32 @@ export async function handleJobsTool(
   if (input.backend === "local") {
     if (!localJobs) throw new CloudJobsError("LOCAL_OWNER_SESSION_UNAVAILABLE");
     if (input.action === "preview") {
+      if (input.definition && (
+        input.id !== undefined || input.prompt !== undefined ||
+        input.cron !== undefined || input.timezone !== undefined ||
+        input.tools !== undefined || input.timeoutMinutes !== undefined ||
+        input.maxAiCredits !== undefined
+      )) {
+        throw new CloudJobsError("JOB_SOURCE_CONFIGURATION_CONFLICT");
+      }
       return localJobs.preview(reference, {
-        id: input.id,
-        prompt: input.prompt,
-        definition: input.definition,
-        cron: input.cron,
-        timezone: input.timezone ?? "UTC",
-        workingDirectory: input.workingDirectory,
-        requiredTools: input.tools ?? [],
-        timeoutMinutes: input.timeoutMinutes ?? 30,
-        ...(input.maxAiCredits === undefined
-          ? {}
-          : { maxAiCredits: input.maxAiCredits }),
+        ...(input.definition
+          ? {
+              definition: input.definition,
+              workingDirectory: input.workingDirectory,
+            }
+          : {
+              id: input.id,
+              prompt: input.prompt,
+              cron: input.cron,
+              timezone: input.timezone ?? "UTC",
+              workingDirectory: input.workingDirectory,
+              requiredTools: input.tools ?? [],
+              timeoutMinutes: input.timeoutMinutes ?? 30,
+              ...(input.maxAiCredits === undefined
+                ? {}
+                : { maxAiCredits: input.maxAiCredits }),
+            }),
       });
     }
     if (input.action === "publish") {

@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { bindingForDefinition, configRootPath } from "./binding-registry.js";
-import { handleJobsTool } from "./jobs.js";
+import { handleJobsTool, jobsErrorRepair } from "./jobs.js";
 import { CloudJobsError } from "./cloud-jobs.js";
 import { isRecord } from "./identity.js";
 import { JobsStore } from "./jobs-store.js";
@@ -63,7 +63,7 @@ export async function main(args: string[]) {
     const { readFile } = await import("node:fs/promises");
     if (values.definition) {
       if (values["prompt-file"] || values.cron) {
-        throw new CloudJobsError("INVALID_ARGUMENTS");
+        throw new CloudJobsError("JOB_SOURCE_CONFIGURATION_CONFLICT");
       }
     } else {
       if (!values["prompt-file"]) throw new CloudJobsError("INVALID_ARGUMENTS");
@@ -91,7 +91,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       : error instanceof z.ZodError
         ? "INVALID_ARGUMENTS"
         : isRecord(error) && typeof error.code === "string" ? error.code : "JOBS_FAILED";
-    writeCliError({ code }, invocation.json);
+    const repair = jobsErrorRepair(code);
+    writeCliError({ code, ...(repair ? { repair } : {}) }, invocation.json);
     process.exitCode = 1;
   }
 }

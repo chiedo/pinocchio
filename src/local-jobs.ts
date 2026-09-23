@@ -27,12 +27,7 @@ const localPreviewSchema = z.object({
   requiredTools: z.array(z.string().min(1).max(200)).max(50).default([]),
   timeoutMinutes: z.number().int().min(1).max(360).default(30),
   maxAiCredits: z.number().int().positive().max(100).optional(),
-}).strict().refine((input) =>
-  input.definition
-    ? input.prompt === undefined && input.cron === undefined
-    : input.id !== undefined && input.prompt !== undefined &&
-      input.cron !== undefined && input.workingDirectory !== undefined,
-);
+}).strict();
 
 export type LocalPreviewInput = z.infer<typeof localPreviewSchema>;
 
@@ -212,6 +207,21 @@ export class LocalJobs {
 
   async preview(reference: BindingReference, raw: unknown) {
     const input = localPreviewSchema.parse(raw);
+    if (input.definition) {
+      if (input.id !== undefined || input.prompt !== undefined ||
+          input.cron !== undefined || input.timezone !== "UTC" ||
+          input.requiredTools.length || input.maxAiCredits !== undefined ||
+          input.timeoutMinutes !== 30) {
+        throw Object.assign(new Error("JOB_SOURCE_CONFIGURATION_CONFLICT"), {
+          code: "JOB_SOURCE_CONFIGURATION_CONFLICT",
+        });
+      }
+    } else if (input.id === undefined || input.prompt === undefined ||
+        input.cron === undefined || input.workingDirectory === undefined) {
+      throw Object.assign(new Error("LOCAL_JOB_PREVIEW_FIELDS_REQUIRED"), {
+        code: "LOCAL_JOB_PREVIEW_FIELDS_REQUIRED",
+      });
+    }
     const binding = await loadBinding(reference);
     const owner = await this.store.owner(reference);
     const resolved = input.definition

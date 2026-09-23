@@ -119,7 +119,7 @@ async function sourceRoot(agent: string) {
   await mkdir(home, { recursive: true, mode: 0o700 });
   await privateDirectory(home, false);
   const agentRoot = join(home, agent);
-  await privateDirectory(agentRoot, true);
+  await privateDirectory(agentRoot, true, true);
   const jobs = join(agentRoot, "jobs");
   await privateDirectory(jobs, true);
   const sources = join(jobs, "sources");
@@ -319,15 +319,17 @@ export async function resolveGitHubJobSource(
     parsedLocator.repository,
     parsedLocator.ref,
   );
-  let definition: z.infer<typeof repositoryJobSchema>;
+  let definitionPath: string;
   try {
-    const definitionPath = await safeFile(checkout, parsedLocator.path);
-    definition = repositoryJobSchema.parse(parse(await readFile(definitionPath, "utf8")));
+    definitionPath = await safeFile(checkout, parsedLocator.path);
   } catch {
     throw Object.assign(new Error("INVALID_JOB_SOURCE_FILE"), {
       code: "INVALID_JOB_SOURCE_FILE",
     });
   }
+  const definition = parseRepositoryJobDefinition(
+    await readFile(definitionPath, "utf8"),
+  );
   let prompt = definition.prompt;
   if (prompt === undefined) {
     try {
@@ -377,6 +379,16 @@ export async function resolveGitHubJobSource(
       checkoutDirectory: checkout,
     },
   };
+}
+
+export function parseRepositoryJobDefinition(contents: string) {
+  try {
+    return repositoryJobSchema.parse(parse(contents));
+  } catch {
+    throw Object.assign(new Error("INVALID_JOB_SOURCE_DEFINITION"), {
+      code: "INVALID_JOB_SOURCE_DEFINITION",
+    });
+  }
 }
 
 export function sourcePolicyAllows(source: GitHubJobSource, resolved: ResolvedRepositoryJob) {
