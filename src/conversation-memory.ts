@@ -83,6 +83,25 @@ export async function conversationOwner(configRoot: string, current: unknown): P
   return reference ? { reference, server: EXTENSION_MEMORY_SERVER } : undefined;
 }
 
+export async function conversationOwnerForTask(
+  configRoot: string,
+  agentId: string,
+  tasks: readonly unknown[],
+  agents: readonly unknown[],
+): Promise<ConversationOwner | undefined> {
+  const matches = tasks.filter(isRecord).filter(
+    (task) => task.type === "agent" && task.id === agentId &&
+      (task.status === "running" || task.status === "idle"),
+  );
+  if (matches.length !== 1 || typeof matches[0]?.agentType !== "string") return;
+  const name = matches[0].agentType;
+  const definitions = agents.filter(isRecord);
+  const ids = definitions.filter((agent) => agent.id === name);
+  const selected = ids.length ? ids : definitions.filter((agent) => agent.name === name);
+  if (selected.length !== 1) return;
+  return conversationOwner(configRoot, { agent: selected[0] });
+}
+
 export async function recallConversation(worker: MemoryWorker, owner: ConversationOwner, input: {
   sessionId: string; directory: string; prompt: string; previousPrompts?: readonly string[];
 }) {

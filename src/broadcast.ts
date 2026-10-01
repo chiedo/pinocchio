@@ -145,7 +145,12 @@ export class BroadcastListener {
   private record: SessionRecord | undefined;
   private delivery: { request: BroadcastRequest; target: BroadcastTarget } | undefined;
   private instance = randomUUID();
-  constructor(private readonly root: string, private readonly sessionId: string, private readonly runtime: string) {}
+  constructor(
+    private readonly root: string,
+    private readonly sessionId: string,
+    private readonly runtime: string,
+    private readonly installedRuntime = broadcastRuntimeVersion,
+  ) {}
 
   private async save() {
     if (!this.record) return;
@@ -191,12 +196,16 @@ export class BroadcastListener {
     delete this.record.missingTools;
     delete this.record.unmatchedTools;
     const snapshot = await broadcastSnapshot(reference);
-    const reason = request.runtime !== this.runtime ? "RUNTIME_CHANGED"
+    const reason = request.runtime !== this.runtime
+      ? request.runtime === await this.installedRuntime()
+        ? "RUNTIME_CHANGED"
+        : "BROADCAST_RUNTIME_STALE"
       : snapshot.target.settingsHash !== this.record.settingsHash
         ? "AGENT_SETTINGS_CHANGED"
         : undefined;
     if (reason) {
-      this.record.status = "restart-required"; this.record.code = reason;
+      this.record.status = reason === "BROADCAST_RUNTIME_STALE" ? "failed" : "restart-required";
+      this.record.code = reason;
       await this.save();
       return;
     }

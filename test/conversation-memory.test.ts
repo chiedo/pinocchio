@@ -7,7 +7,7 @@ import test from "node:test";
 import { setup } from "../src/setup-cli.js";
 import { loadBinding } from "../src/binding-registry.js";
 import type { BindingReference } from "../src/binding-registry.js";
-import { captureConversation, conversationOwner, recallConversation, redactConversation, setConversationEnabled } from "../src/conversation-memory.js";
+import { captureConversation, conversationOwner, conversationOwnerForTask, recallConversation, redactConversation, setConversationEnabled } from "../src/conversation-memory.js";
 import { MemoryStore } from "../src/memory-store.js";
 import { MemoryWorker } from "../src/memory-worker-client.js";
 import {
@@ -78,6 +78,37 @@ test("capture persists without model saves; next-session recall is automatic and
       assert.equal((await store.search("unverified assistant guess")).items[0]?.status, "tentative");
     } finally { store.close(); }
   } finally { worker.close(); await rm(root, { recursive: true }); }
+});
+
+test("child owners recover from trusted task metadata without falling back to the selected parent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pinocchio-child-owner-"));
+  try {
+    await setup({ configRoot: root, name: "child-agent", global: true, retrieval: "keyword" });
+    const reference = JSON.parse(await readFile(join(root, "pinocchio/setup/child-agent.json"), "utf8")) as BindingReference;
+    const binding = await loadBinding(reference);
+    const agent = {
+      id: "child-agent", name: "child-agent", path: binding.definition.path,
+      tools: [EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL],
+    };
+    const task = { id: "child-task", type: "agent", agentType: "child-agent", status: "running" };
+    const owner = { reference, server: EXTENSION_MEMORY_SERVER };
+    assert.deepEqual(await conversationOwnerForTask(root, task.id, [task], [agent]), owner);
+    assert.deepEqual(await conversationOwnerForTask(root, task.id, [{ ...task, status: "idle" }], [agent]), owner);
+    assert.equal(await conversationOwnerForTask(root, "unknown-task", [task], [agent]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [task, task], [agent]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [{ ...task, type: "shell" }], [agent]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [{ ...task, status: "completed" }], [agent]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [{ ...task, agentType: "unenrolled" }], [agent]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [task], [{ ...agent, path: undefined }]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [task], [{ ...agent, tools: [] }]), undefined);
+    assert.equal(await conversationOwnerForTask(root, task.id, [task], [agent, agent]), undefined);
+    assert.deepEqual(await conversationOwnerForTask(root, task.id, [task], [
+      agent, { ...agent, id: "different-agent", path: "/not/the/child.agent.md" },
+    ]), owner);
+    assert.equal(await conversationOwnerForTask(root, task.id, [task], [
+      { ...agent, id: "first-copy" }, { ...agent, id: "second-copy" },
+    ]), undefined);
+  } finally { await rm(root, { recursive: true }); }
 });
 
 test("conversation redaction removes recognized credentials and identifiers", () => {

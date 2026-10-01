@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { canonicalRepository, configRootPath, fingerprint, loadBinding } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
-import { captureConversation, conversationOwner } from "./conversation-memory.js";
+import { captureConversation, conversationOwner, conversationOwnerForTask } from "./conversation-memory.js";
 import type { ConversationOwner } from "./conversation-memory.js";
 import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, searchDescription, ToolError } from "./memory-protocol.js";
 import {
@@ -50,6 +50,10 @@ const pendingSubagentOwners = new Map<string, {
   timer: NodeJS.Timeout;
 }>();
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
+const pendingToolOwners = new Map<string, {
+  resolve: (owner: ConversationOwner | PromiseLike<ConversationOwner | undefined> | undefined) => void;
+  timer: NodeJS.Timeout;
+}>();
 const subagentToolCalls = new Set<string>();
 let broadcastChecking = false;
 let broadcastStopped = false;
@@ -148,9 +152,17 @@ async function ownerForSession(sessionId: string) {
   if (sessionId === session.sessionId) return selectedOwner();
   return ownerForSubagent(sessionId);
 }
-function ownerForSubagent(agentId: string) {
+async function ownerForTask(agentId: string) {
+  if (!session) return;
+  const [tasks, agents] = await Promise.all([
+    session.rpc.tasks.list(),
+    session.rpc.agent.list(),
+  ]);
+  return conversationOwnerForTask(configRoot, agentId, tasks.tasks, agents.agents);
+}
+async function ownerForSubagent(agentId: string) {
   const known = subagentOwners.get(agentId);
-  if (known) return known;
+  if (known) return await known ?? ownerForTask(agentId);
   const pendingOwner = pendingSubagentOwners.get(agentId);
   if (pendingOwner) return pendingOwner.promise;
   let resolveOwner!: (
@@ -163,7 +175,7 @@ function ownerForSubagent(agentId: string) {
     const pending = pendingSubagentOwners.get(agentId);
     if (pending?.promise !== promise) return;
     pendingSubagentOwners.delete(agentId);
-    resolveOwner(undefined);
+    resolveOwner(ownerForTask(agentId));
   }, 1_000);
   timer.unref();
   pendingSubagentOwners.set(agentId, { promise, resolve: resolveOwner, timer });
@@ -193,6 +205,35 @@ async function ownerForTool(toolCallId: string) {
   if (toolOwners.has(toolCallId)) return toolOwners.get(toolCallId);
   if (subagentOwners.size) return;
   return selectedOwner();
+}
+function registerToolOwner(toolCallId: string, owner: Promise<ConversationOwner | undefined>) {
+  toolOwners.set(toolCallId, owner);
+  const pendingOwner = pendingToolOwners.get(toolCallId);
+  if (!pendingOwner) return;
+  clearTimeout(pendingOwner.timer);
+  pendingToolOwners.delete(toolCallId);
+  pendingOwner.resolve(owner);
+}
+function waitForToolOwner(toolCallId: string) {
+  if (toolOwners.has(toolCallId)) return;
+  let resolveOwner!: (
+    owner: ConversationOwner | PromiseLike<ConversationOwner | undefined> | undefined,
+  ) => void;
+  toolOwners.set(toolCallId, new Promise((resolve) => { resolveOwner = resolve; }));
+  const timer = setTimeout(() => {
+    pendingToolOwners.delete(toolCallId);
+    resolveOwner(undefined);
+  }, 1_000);
+  timer.unref();
+  pendingToolOwners.set(toolCallId, { resolve: resolveOwner, timer });
+}
+function releaseToolOwner(toolCallId: string) {
+  toolOwners.delete(toolCallId);
+  const pendingOwner = pendingToolOwners.get(toolCallId);
+  if (!pendingOwner) return;
+  clearTimeout(pendingOwner.timer);
+  pendingToolOwners.delete(toolCallId);
+  pendingOwner.resolve(undefined);
 }
 const context = createMemoryHooks(configRoot, async (input) => {
   directory = input.workingDirectory;
@@ -289,7 +330,8 @@ session = await joinSession({
           error: code,
         };
       } finally {
-        toolOwners.delete(invocation.toolCallId);
+        releaseToolOwner(invocation.toolCallId);
+        subagentToolCalls.delete(invocation.toolCallId);
       }
     },
   })), {
@@ -301,10 +343,10 @@ session = await joinSession({
     async handler(args: unknown, invocation) {
       try {
         if (!session) throw new CloudJobsError("CONVERSATION_CONTEXT_UNAVAILABLE");
+        const owner = await ownerForTool(invocation.toolCallId);
         if (subagentToolCalls.has(invocation.toolCallId)) {
           throw new CloudJobsError("RECURSIVE_JOB_MANAGEMENT_DENIED");
         }
-        const owner = await ownerForTool(invocation.toolCallId);
         if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
         const result = await handleJobsTool(owner.reference, args, undefined, localJobs);
         void refreshCloudInventory(owner);
@@ -334,7 +376,7 @@ session = await joinSession({
           ...(repair ? { sessionLog: `Pinocchio jobs: ${repair}` } : {}),
         };
       } finally {
-        toolOwners.delete(invocation.toolCallId);
+        releaseToolOwner(invocation.toolCallId);
         subagentToolCalls.delete(invocation.toolCallId);
       }
     },
@@ -349,11 +391,23 @@ for (const name of ["subagent.started", "subagent.selected"] as const) {
   });
 }
 session.on("tool.execution_start", (event) => {
-  if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
-    if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
-    toolOwners.set(event.data.toolCallId, event.agentId
-      ? ownerForSubagent(event.agentId)
-      : selectedOwner());
+  if (![EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) return;
+  if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
+  registerToolOwner(event.data.toolCallId, event.agentId
+    ? ownerForSubagent(event.agentId)
+    : subagentToolCalls.has(event.data.toolCallId) ? Promise.resolve(undefined) : selectedOwner());
+});
+session.on("external_tool.requested", (event) => {
+  if (![EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) return;
+  if (event.agentId) {
+    subagentToolCalls.add(event.data.toolCallId);
+    registerToolOwner(event.data.toolCallId, ownerForSubagent(event.agentId));
+  } else if (event.data.sessionId !== session?.sessionId) {
+    subagentToolCalls.add(event.data.toolCallId);
+    // Child requests can precede the root's mirrored execution event and omit agentId.
+    waitForToolOwner(event.data.toolCallId);
+  } else if (!toolOwners.has(event.data.toolCallId)) {
+    registerToolOwner(event.data.toolCallId, selectedOwner());
   }
 });
 for (const name of ["subagent.completed", "subagent.failed"] as const) {
@@ -377,7 +431,9 @@ async function reportBroadcastIssue(fallbackCode?: string) {
   if (broadcastWarning === issue.key) return;
   broadcastWarning = issue.key;
   process.stderr.write(`Pinocchio: ${issue.code}\n`);
-  const message = issue.restartRequired
+  const message = issue.code === "BROADCAST_RUNTIME_STALE"
+    ? "Pinocchio's instruction broadcast targets a runtime that is no longer installed. Run npm run broadcast -- upgrade in your Pinocchio checkout; restarting will not fix this."
+    : issue.restartRequired
     ? "Pinocchio instruction refresh needs a session restart."
     : "Pinocchio could not refresh this agent's instructions.";
   try {

@@ -25,7 +25,8 @@ async function fixture(tools?: string) {
     assert.ok(found);
     const reference = found;
     const runtime = await broadcastRuntimeVersion();
-    const listener = new BroadcastListener(root, "session-one", runtime);
+    let installedRuntime = runtime;
+    const listener = new BroadcastListener(root, "session-one", runtime, async () => installedRuntime);
     await listener.heartbeat(reference);
     async function request(overrides: Partial<BroadcastRequest> = {}) {
       const snapshot = await broadcastSnapshot(reference);
@@ -37,7 +38,10 @@ async function fixture(tools?: string) {
       await publishBroadcast(root, value);
       return value;
     }
-    return { root, options, profile, reference, runtime, listener, request };
+    return {
+      root, options, profile, reference, runtime, listener, request,
+      setInstalledRuntime(value: string) { installedRuntime = value; },
+    };
   } catch (error) { await rm(root, { recursive: true }); throw error; }
 }
 
@@ -149,6 +153,7 @@ test("runtime and settings changes expose guarded recovery actions", async (t) =
           await writeFile(f.profile, (await readFile(f.profile, "utf8")).replace("tools:", "model: changed-model\ntools:"));
         }
         const request = await f.request(reason === "RUNTIME_CHANGED" ? { runtime: "a".repeat(64) } : {});
+        if (reason === "RUNTIME_CHANGED") f.setInstalledRuntime(request.runtime);
         assert.equal(await f.listener.prepare(f.reference, request.targets[0]!.tools), undefined);
         const record = (await broadcastStatus(f.root)).sessions[0];
         assert.equal(record?.status, "restart-required");
@@ -165,6 +170,29 @@ test("runtime and settings changes expose guarded recovery actions", async (t) =
       } finally { await rm(f.root, { recursive: true }); }
     });
   }
+});
+
+test("stale broadcasts require republication rather than a restart or runtime reload", async () => {
+  const f = await fixture();
+  try {
+    const stale = await f.request({ runtime: "a".repeat(64) });
+    assert.equal(await f.listener.prepare(f.reference, stale.targets[0]!.tools), undefined);
+    assert.equal(f.listener.issue()?.code, "BROADCAST_RUNTIME_STALE");
+    assert.equal(f.listener.issue()?.restartRequired, false);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "failed");
+    await assert.rejects(f.listener.claimRuntimeReload(), { code: "BROADCAST_RUNTIME_RELOAD_NOT_REQUIRED" });
+    const restarted = new BroadcastListener(f.root, "session-one", f.runtime);
+    await f.listener.close();
+    await restarted.heartbeat(f.reference);
+    assert.equal(await restarted.prepare(f.reference, stale.targets[0]!.tools), undefined);
+    assert.equal(restarted.issue()?.code, "BROADCAST_RUNTIME_STALE");
+    const refreshed = await upgradeBroadcast(f.root);
+    assert.equal(refreshed.agents[0]?.status, "refreshed");
+    assert.ok(await restarted.prepare(f.reference, stale.targets[0]!.tools));
+    await restarted.acknowledge(f.reference);
+    assert.equal((await broadcastStatus(f.root)).sessions[0]?.status, "updated");
+    await restarted.close();
+  } finally { await rm(f.root, { recursive: true }); }
 });
 
 test("unmatched allowlist entries do not block delivery or modify agent permissions", async () => {
