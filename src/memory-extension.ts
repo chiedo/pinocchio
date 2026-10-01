@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { canonicalRepository, configRootPath, fingerprint, loadBinding } from "./binding-registry.js";
 import { createMemoryHooks } from "./memory-hooks.js";
 import { isRecord } from "./identity.js";
-import { captureConversation, conversationOwner } from "./conversation-memory.js";
+import { captureConversation, conversationOwner, conversationOwnerForTask } from "./conversation-memory.js";
 import type { ConversationOwner } from "./conversation-memory.js";
 import { extensionSaveInputSchema, EXTENSION_SAVE_TOOL, EXTENSION_SEARCH_TOOL, SAVE_TOOL, SEARCH_TOOL, searchSchema, searchDescription, ToolError } from "./memory-protocol.js";
 import {
@@ -148,9 +148,17 @@ async function ownerForSession(sessionId: string) {
   if (sessionId === session.sessionId) return selectedOwner();
   return ownerForSubagent(sessionId);
 }
-function ownerForSubagent(agentId: string) {
+async function ownerForTask(agentId: string) {
+  if (!session) return;
+  const [tasks, agents] = await Promise.all([
+    session.rpc.tasks.list(),
+    session.rpc.agent.list(),
+  ]);
+  return conversationOwnerForTask(configRoot, agentId, tasks.tasks, agents.agents);
+}
+async function ownerForSubagent(agentId: string) {
   const known = subagentOwners.get(agentId);
-  if (known) return known;
+  if (known) return await known ?? ownerForTask(agentId);
   const pendingOwner = pendingSubagentOwners.get(agentId);
   if (pendingOwner) return pendingOwner.promise;
   let resolveOwner!: (
@@ -163,7 +171,7 @@ function ownerForSubagent(agentId: string) {
     const pending = pendingSubagentOwners.get(agentId);
     if (pending?.promise !== promise) return;
     pendingSubagentOwners.delete(agentId);
-    resolveOwner(undefined);
+    resolveOwner(ownerForTask(agentId));
   }, 1_000);
   timer.unref();
   pendingSubagentOwners.set(agentId, { promise, resolve: resolveOwner, timer });
@@ -348,14 +356,16 @@ for (const name of ["subagent.started", "subagent.selected"] as const) {
     }
   });
 }
-session.on("tool.execution_start", (event) => {
-  if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
-    if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
-    toolOwners.set(event.data.toolCallId, event.agentId
-      ? ownerForSubagent(event.agentId)
-      : selectedOwner());
-  }
-});
+for (const name of ["tool.execution_start", "external_tool.requested"] as const) {
+  session.on(name, (event) => {
+    if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
+      if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
+      toolOwners.set(event.data.toolCallId, event.agentId
+        ? ownerForSubagent(event.agentId)
+        : selectedOwner());
+    }
+  });
+}
 for (const name of ["subagent.completed", "subagent.failed"] as const) {
   session.on(name, (event) => {
     if (event.agentId) {
@@ -377,7 +387,9 @@ async function reportBroadcastIssue(fallbackCode?: string) {
   if (broadcastWarning === issue.key) return;
   broadcastWarning = issue.key;
   process.stderr.write(`Pinocchio: ${issue.code}\n`);
-  const message = issue.restartRequired
+  const message = issue.code === "BROADCAST_RUNTIME_STALE"
+    ? "Pinocchio's instruction broadcast targets a runtime that is no longer installed. Run npm run broadcast -- upgrade in your Pinocchio checkout; restarting will not fix this."
+    : issue.restartRequired
     ? "Pinocchio instruction refresh needs a session restart."
     : "Pinocchio could not refresh this agent's instructions.";
   try {

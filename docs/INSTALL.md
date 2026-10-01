@@ -232,6 +232,10 @@ Runtime changes trigger one guarded extension reload in each live session.
 Changed YAML settings and stale managed-tool allowlists trigger an agent
 definition reload. If the runtime still does not match after reloading, status
 reports `restart-required` with `RUNTIME_RELOAD_FAILED` rather than looping.
+If the broadcast targets a runtime that is no longer installed, it reports
+`failed` with `BROADCAST_RUNTIME_STALE` instead of reloading or recommending a
+restart. Run `npm run broadcast -- upgrade` from the current checkout to publish
+the installed runtime and current instructions.
 Missing managed memory/job tools report `failed` with
 `code: TOOLS_NOT_AVAILABLE` and the exact `missingTools`. The listener rechecks
 these automatically every five seconds, so tools finishing initialization

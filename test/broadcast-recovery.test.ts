@@ -7,13 +7,64 @@ import {
   publishBroadcast,
 } from "../src/broadcast.js";
 import { upgradeBroadcast } from "../src/broadcast-cli.js";
+import { EXTENSION_SAVE_TOOL } from "../src/memory-protocol.js";
+import { offeredToolName } from "./support/provider.js";
 import {
   createBroadcastFixture,
   sessionChat,
   sessionWarnings,
 } from "./support/broadcast-fixture.js";
 
-test("unrecoverable runtime reloads show one actionable warning without model turns", {
+test("an already-running child keeps its own memory owner after an extension reload", {
+  timeout: 90_000,
+}, async () => {
+  let releaseRequest!: () => void;
+  const requestGate = new Promise<void>((resolve) => { releaseRequest = resolve; });
+  let markRequested!: () => void;
+  const requested = new Promise<void>((resolve) => { markRequested = resolve; });
+  const f = await createBroadcastFixture({
+    textOnly: false,
+    selectTool: (_messages, tools) => offeredToolName(tools, EXTENSION_SAVE_TOOL),
+    toolArguments: () => ({ action: "status", operationId: "synthetic-child-status" }),
+    async observeRequest() {
+      markRequested();
+      await requestGate;
+    },
+  }, false, false);
+  try {
+    const session = await f.openSession();
+    const original = (await session.rpc.agent.getCurrent()).agent;
+    const child = await session.rpc.tasks.startAgent({
+      agentType: "broadcast-agent",
+      name: "synthetic-memory-child",
+      description: "Synthetic scoped memory recovery",
+      prompt: "Check the status of the synthetic-child-status memory operation and return.",
+    });
+    await requested;
+    await session.rpc.extensions.reload();
+    await session.rpc.tools.initializeAndValidate();
+    releaseRequest();
+    const deadline = Date.now() + 30_000;
+    let events = await session.getEvents();
+    const completed = () => events.filter((event) =>
+      event.agentId === child.agentId && event.type === "tool.execution_complete");
+    while (completed().length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      events = await session.getEvents();
+    }
+    assert.ok(completed().length > 0, "CHILD_MEMORY_CALL_NOT_COMPLETED");
+    assert.match(JSON.stringify(completed()), /not_found/);
+    assert.doesNotMatch(JSON.stringify(completed()), /MEMORY_OWNER_UNAVAILABLE|MEMORY_UNAVAILABLE/);
+    assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
+    assert.equal(f.provider.counts().toolRequests, 1);
+    assert.equal(f.provider.counts().failures, 0);
+  } finally {
+    releaseRequest();
+    await f.close();
+  }
+});
+
+test("stale runtime broadcasts explain republication without unnecessary reloads or model turns", {
   timeout: 90_000,
 }, async () => {
   const f = await createBroadcastFixture({}, false, false);
@@ -30,18 +81,22 @@ test("unrecoverable runtime reloads show one actionable warning without model tu
       id: randomUUID(),
       runtime: "a".repeat(64),
     });
+
     await f.waitFor((status) => status.sessions.some((item) =>
-      item.status === "restart-required" &&
-      item.code === "RUNTIME_RELOAD_FAILED"));
+      item.status === "failed" &&
+      item.code === "BROADCAST_RUNTIME_STALE"));
     await new Promise((resolve) =>
       setTimeout(resolve, 2 * BROADCAST_HEARTBEAT_MS + 500));
     const notices = await sessionWarnings(session);
     assert.equal(notices.length, 1);
-    assert.match(JSON.stringify(notices), /needs a session restart/);
+    assert.match(JSON.stringify(notices), /restarting will not fix this/);
+    assert.match(JSON.stringify(notices), /npm run broadcast -- upgrade/);
     assert.match(JSON.stringify(notices), /npm run broadcast -- status/);
     assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
     assert.deepEqual(await sessionChat(session), []);
     assert.equal(f.provider.counts().requests, 0);
+    await upgradeBroadcast(f.config);
+    await f.waitFor((status) => status.sessions[0]?.status === "updated");
   } finally {
     await f.close();
   }
