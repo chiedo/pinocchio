@@ -28,13 +28,20 @@ test("an already-running child keeps its own memory owner after an extension rel
   const f = await createBroadcastFixture({
     textOnly: false,
     selectTool: (_messages, tools) => offeredToolName(tools, EXTENSION_SAVE_TOOL),
-    toolArguments: () => ({
-      action: "remember", operationId: "synthetic-child-save",
-      note: {
-        content: "Synthetic child ownership after reload.", kind: "fact",
-        evidence: [{ kind: "manual_entry", reference: { type: "text", value: "Synthetic regression fixture" } }],
-      },
-    }),
+    toolArguments: (messages) => {
+      const prompt = JSON.stringify(messages.findLast((message) => message.role === "user"));
+      // Completion notifications can also prompt the foreground agent.
+      if (!prompt?.includes("Save the synthetic-child-save memory operation and return.")) {
+        return { action: "status", operationId: "synthetic-child-save" };
+      }
+      return {
+        action: "remember", operationId: "synthetic-child-save",
+        note: {
+          content: "Synthetic child ownership after reload.", kind: "fact",
+          evidence: [{ kind: "manual_entry", reference: { type: "text", value: "Synthetic regression fixture" } }],
+        },
+      };
+    },
     async observeRequest() {
       markRequested();
       await requestGate;
@@ -65,7 +72,6 @@ test("an already-running child keeps its own memory owner after an extension rel
     assert.match(JSON.stringify(completed()), /committed/);
     assert.doesNotMatch(JSON.stringify(completed()), /MEMORY_OWNER_UNAVAILABLE|MEMORY_UNAVAILABLE/);
     assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
-    assert.equal(f.provider.counts().toolRequests, 1);
     assert.equal(f.provider.counts().failures, 0);
     for (const name of ["broadcast-agent", "other-agent"]) {
       const reference = await bindingForDefinition(f.config, join(f.config, "agents", `${name}.agent.md`));
