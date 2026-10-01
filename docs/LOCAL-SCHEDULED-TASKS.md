@@ -63,6 +63,8 @@ or manual run can start. Each background invocation still runs only in the
 approved working directory.
 Background job agents cannot create, change, or recursively run other jobs.
 Child memory calls are attributed using the host's external-tool request events.
+Requests from a child session that omit the task ID wait for the matching
+execution event; they never use the foreground owner's binding while waiting.
 If an extension reload misses a child's startup event, Pinocchio resolves the
 live task's exact agent type to its enrolled profile and binding. Unknown,
 ambiguous, completed, or unenrolled tasks remain blocked; they never inherit

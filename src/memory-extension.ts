@@ -50,6 +50,10 @@ const pendingSubagentOwners = new Map<string, {
   timer: NodeJS.Timeout;
 }>();
 const toolOwners = new Map<string, Promise<ConversationOwner | undefined>>();
+const pendingToolOwners = new Map<string, {
+  resolve: (owner: ConversationOwner | PromiseLike<ConversationOwner | undefined> | undefined) => void;
+  timer: NodeJS.Timeout;
+}>();
 const subagentToolCalls = new Set<string>();
 let broadcastChecking = false;
 let broadcastStopped = false;
@@ -202,6 +206,35 @@ async function ownerForTool(toolCallId: string) {
   if (subagentOwners.size) return;
   return selectedOwner();
 }
+function registerToolOwner(toolCallId: string, owner: Promise<ConversationOwner | undefined>) {
+  toolOwners.set(toolCallId, owner);
+  const pendingOwner = pendingToolOwners.get(toolCallId);
+  if (!pendingOwner) return;
+  clearTimeout(pendingOwner.timer);
+  pendingToolOwners.delete(toolCallId);
+  pendingOwner.resolve(owner);
+}
+function waitForToolOwner(toolCallId: string) {
+  if (toolOwners.has(toolCallId)) return;
+  let resolveOwner!: (
+    owner: ConversationOwner | PromiseLike<ConversationOwner | undefined> | undefined,
+  ) => void;
+  toolOwners.set(toolCallId, new Promise((resolve) => { resolveOwner = resolve; }));
+  const timer = setTimeout(() => {
+    pendingToolOwners.delete(toolCallId);
+    resolveOwner(undefined);
+  }, 1_000);
+  timer.unref();
+  pendingToolOwners.set(toolCallId, { resolve: resolveOwner, timer });
+}
+function releaseToolOwner(toolCallId: string) {
+  toolOwners.delete(toolCallId);
+  const pendingOwner = pendingToolOwners.get(toolCallId);
+  if (!pendingOwner) return;
+  clearTimeout(pendingOwner.timer);
+  pendingToolOwners.delete(toolCallId);
+  pendingOwner.resolve(undefined);
+}
 const context = createMemoryHooks(configRoot, async (input) => {
   directory = input.workingDirectory;
   await pending;
@@ -297,7 +330,8 @@ session = await joinSession({
           error: code,
         };
       } finally {
-        toolOwners.delete(invocation.toolCallId);
+        releaseToolOwner(invocation.toolCallId);
+        subagentToolCalls.delete(invocation.toolCallId);
       }
     },
   })), {
@@ -309,10 +343,10 @@ session = await joinSession({
     async handler(args: unknown, invocation) {
       try {
         if (!session) throw new CloudJobsError("CONVERSATION_CONTEXT_UNAVAILABLE");
+        const owner = await ownerForTool(invocation.toolCallId);
         if (subagentToolCalls.has(invocation.toolCallId)) {
           throw new CloudJobsError("RECURSIVE_JOB_MANAGEMENT_DENIED");
         }
-        const owner = await ownerForTool(invocation.toolCallId);
         if (!owner) throw new CloudJobsError("MEMORY_OWNER_UNAVAILABLE");
         const result = await handleJobsTool(owner.reference, args, undefined, localJobs);
         void refreshCloudInventory(owner);
@@ -342,7 +376,7 @@ session = await joinSession({
           ...(repair ? { sessionLog: `Pinocchio jobs: ${repair}` } : {}),
         };
       } finally {
-        toolOwners.delete(invocation.toolCallId);
+        releaseToolOwner(invocation.toolCallId);
         subagentToolCalls.delete(invocation.toolCallId);
       }
     },
@@ -356,16 +390,26 @@ for (const name of ["subagent.started", "subagent.selected"] as const) {
     }
   });
 }
-for (const name of ["tool.execution_start", "external_tool.requested"] as const) {
-  session.on(name, (event) => {
-    if ([EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) {
-      if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
-      toolOwners.set(event.data.toolCallId, event.agentId
-        ? ownerForSubagent(event.agentId)
-        : selectedOwner());
-    }
-  });
-}
+session.on("tool.execution_start", (event) => {
+  if (![EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) return;
+  if (event.agentId) subagentToolCalls.add(event.data.toolCallId);
+  registerToolOwner(event.data.toolCallId, event.agentId
+    ? ownerForSubagent(event.agentId)
+    : subagentToolCalls.has(event.data.toolCallId) ? Promise.resolve(undefined) : selectedOwner());
+});
+session.on("external_tool.requested", (event) => {
+  if (![EXTENSION_SEARCH_TOOL, EXTENSION_SAVE_TOOL, JOBS_TOOL].includes(event.data.toolName)) return;
+  if (event.agentId) {
+    subagentToolCalls.add(event.data.toolCallId);
+    registerToolOwner(event.data.toolCallId, ownerForSubagent(event.agentId));
+  } else if (event.data.sessionId !== session?.sessionId) {
+    subagentToolCalls.add(event.data.toolCallId);
+    // Child requests can precede the root's mirrored execution event and omit agentId.
+    waitForToolOwner(event.data.toolCallId);
+  } else if (!toolOwners.has(event.data.toolCallId)) {
+    registerToolOwner(event.data.toolCallId, selectedOwner());
+  }
+});
 for (const name of ["subagent.completed", "subagent.failed"] as const) {
   session.on(name, (event) => {
     if (event.agentId) {

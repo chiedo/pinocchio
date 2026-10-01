@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import test from "node:test";
 import {
   BROADCAST_HEARTBEAT_MS,
@@ -8,6 +9,8 @@ import {
 } from "../src/broadcast.js";
 import { upgradeBroadcast } from "../src/broadcast-cli.js";
 import { EXTENSION_SAVE_TOOL } from "../src/memory-protocol.js";
+import { bindingForDefinition, loadBinding } from "../src/binding-registry.js";
+import { MemoryStore } from "../src/memory-store.js";
 import { offeredToolName } from "./support/provider.js";
 import {
   createBroadcastFixture,
@@ -25,20 +28,26 @@ test("an already-running child keeps its own memory owner after an extension rel
   const f = await createBroadcastFixture({
     textOnly: false,
     selectTool: (_messages, tools) => offeredToolName(tools, EXTENSION_SAVE_TOOL),
-    toolArguments: () => ({ action: "status", operationId: "synthetic-child-status" }),
+    toolArguments: () => ({
+      action: "remember", operationId: "synthetic-child-save",
+      note: {
+        content: "Synthetic child ownership after reload.", kind: "fact",
+        evidence: [{ kind: "manual_entry", reference: { type: "text", value: "Synthetic regression fixture" } }],
+      },
+    }),
     async observeRequest() {
       markRequested();
       await requestGate;
     },
-  }, false, false);
+  });
   try {
-    const session = await f.openSession();
+    const session = await f.openSession(f.workspace.repository, "other-agent");
     const original = (await session.rpc.agent.getCurrent()).agent;
     const child = await session.rpc.tasks.startAgent({
       agentType: "broadcast-agent",
       name: "synthetic-memory-child",
       description: "Synthetic scoped memory recovery",
-      prompt: "Check the status of the synthetic-child-status memory operation and return.",
+      prompt: "Save the synthetic-child-save memory operation and return.",
     });
     await requested;
     await session.rpc.extensions.reload();
@@ -53,11 +62,21 @@ test("an already-running child keeps its own memory owner after an extension rel
       events = await session.getEvents();
     }
     assert.ok(completed().length > 0, "CHILD_MEMORY_CALL_NOT_COMPLETED");
-    assert.match(JSON.stringify(completed()), /not_found/);
+    assert.match(JSON.stringify(completed()), /committed/);
     assert.doesNotMatch(JSON.stringify(completed()), /MEMORY_OWNER_UNAVAILABLE|MEMORY_UNAVAILABLE/);
     assert.deepEqual((await session.rpc.agent.getCurrent()).agent, original);
     assert.equal(f.provider.counts().toolRequests, 1);
     assert.equal(f.provider.counts().failures, 0);
+    for (const name of ["broadcast-agent", "other-agent"]) {
+      const reference = await bindingForDefinition(f.config, join(f.config, "agents", `${name}.agent.md`));
+      assert.ok(reference);
+      const binding = await loadBinding(reference);
+      const store = await MemoryStore.open(reference, { namespace: binding.namespace, scope: "global" });
+      try {
+        assert.equal((await store.operationStatus("synthetic-child-save")).status,
+          name === "broadcast-agent" ? "committed" : "not_found");
+      } finally { store.close(); }
+    }
   } finally {
     releaseRequest();
     await f.close();
